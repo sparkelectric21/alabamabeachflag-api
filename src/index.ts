@@ -13,7 +13,7 @@ function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 }
 
 export default {
-	async fetch(request): Promise<Response> {
+	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (request.method !== "GET") {
@@ -54,7 +54,7 @@ if (url.pathname === "/debug/water-quality") {
 		}
 
 		if (url.pathname === "/v1/water-quality") {
-			return await handleWaterQualityRequest();
+			return await handleWaterQualityRequest(env);
 		}
 
 		return jsonResponse(
