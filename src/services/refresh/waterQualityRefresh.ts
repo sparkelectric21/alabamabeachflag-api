@@ -5,8 +5,11 @@ import {
 } from "../cache/kv";
 
 export interface WaterQualityCachePayload {
-	source: string;
+	status: "ok";
+	apiVersion: "1.0.0";
+	source: "ADEM";
 	generatedAt: string;
+	lastSuccessfulRefresh: string;
 	count: number;
 	waterQuality: Awaited<ReturnType<typeof getLatestWaterQuality>>;
 }
@@ -16,9 +19,14 @@ export async function refreshWaterQuality(
 ): Promise<WaterQualityCachePayload> {
 	const waterQuality = await getLatestWaterQuality();
 
+	const refreshedAt = new Date().toISOString();
+
 	const payload: WaterQualityCachePayload = {
-		source: "Alabama Beach Flag Water Quality Service",
-		generatedAt: new Date().toISOString(),
+		status: "ok",
+		apiVersion: "1.0.0",
+		source: "ADEM",
+		generatedAt: refreshedAt,
+		lastSuccessfulRefresh: refreshedAt,
 		count: waterQuality.length,
 		waterQuality,
 	};

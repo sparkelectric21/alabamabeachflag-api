@@ -1,6 +1,5 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
-import { handleDebugWaterQualityRequest } from "./routes/debugWaterQuality";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
@@ -44,9 +43,6 @@ export default {
 				status: "online",
 			});
 		}
-if (url.pathname === "/debug/water-quality") {
-	return await handleDebugWaterQualityRequest();
-}
 		if (url.pathname === "/v1/health") {
 			return jsonResponse({
 				status: "ok",

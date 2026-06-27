@@ -1,5 +1,3 @@
-
-
 import { refreshWaterQuality } from "../services/refresh/waterQualityRefresh";
 
 export async function handleRefreshWaterQualityRequest(
@@ -10,8 +8,11 @@ export async function handleRefreshWaterQualityRequest(
 
 		return Response.json({
 			status: "ok",
+			apiVersion: payload.apiVersion,
 			message: "Water quality cache refreshed successfully.",
+			source: payload.source,
 			generatedAt: payload.generatedAt,
+			lastSuccessfulRefresh: payload.lastSuccessfulRefresh,
 			count: payload.count,
 		});
 	} catch (error) {
