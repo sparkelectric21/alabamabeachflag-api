@@ -13,6 +13,12 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
+		}
 	]
 	/**
 	 * Smart Placement

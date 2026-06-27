@@ -1,6 +1,7 @@
 import { getLatestWaterQuality } from "../adem/service";
 import {
 	WATER_QUALITY_CACHE_KEY,
+	readCache,
 	writeCache,
 } from "../cache/kv";
 
@@ -31,8 +32,19 @@ export async function refreshWaterQuality(
 		waterQuality,
 	};
 
-	if (env.BEACH_DATA) {
-		await writeCache(env.BEACH_DATA, WATER_QUALITY_CACHE_KEY, payload);
+	if (!env.BEACH_DATA) {
+		throw new Error("Missing KV binding: BEACH_DATA");
+	}
+
+	await writeCache(env.BEACH_DATA, WATER_QUALITY_CACHE_KEY, payload);
+
+	const cachedPayload = await readCache<unknown>(
+		env.BEACH_DATA,
+		WATER_QUALITY_CACHE_KEY,
+	);
+
+	if (!cachedPayload) {
+		throw new Error("Water quality cache write verification failed.");
 	}
 
 	return payload;
