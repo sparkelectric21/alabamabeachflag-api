@@ -1,6 +1,7 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
+import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -79,5 +80,9 @@ export default {
 				status: 404,
 			},
 		);
+	},
+
+	async scheduled(_event, env): Promise<void> {
+		await refreshWaterQuality(env);
 	},
 } satisfies ExportedHandler<Env>;
