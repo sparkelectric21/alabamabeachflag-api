@@ -30,35 +30,40 @@ export async function getLatestWaterQuality(): Promise<WaterQuality[]> {
 
 	const supportedBeaches = beaches.filter((beach) => beach.supports.waterQuality);
 
-	return await Promise.all(
-		supportedBeaches.map(async (beach) => {
-			const location = locationMap.get(beach.ademCode);
+	const results: WaterQuality[] = [];
 
-			if (!location) {
-				return {
-					beachId: beach.id,
-					displayName: beach.displayName,
-					sampleDate: null,
-					enterococcus: null,
-					advisory: false,
-					status: "unavailable",
-					reportUrl: "",
-				} satisfies WaterQuality;
-			}
+	for (const beach of supportedBeaches) {
+		const location = locationMap.get(beach.ademCode);
 
-			try {
-				return await getWaterQualityForBeach(beach, location.reportUrl);
-			} catch {
-				return {
-					beachId: beach.id,
-					displayName: beach.displayName,
-					sampleDate: null,
-					enterococcus: null,
-					advisory: false,
-					status: "unavailable",
-					reportUrl: location.reportUrl,
-				} satisfies WaterQuality;
-			}
-		}),
-	);
+		if (!location) {
+			results.push({
+				beachId: beach.id,
+				displayName: beach.displayName,
+				sampleDate: null,
+				enterococcus: null,
+				advisory: false,
+				status: "unavailable",
+				reportUrl: "",
+			});
+			continue;
+		}
+
+		try {
+			results.push(await getWaterQualityForBeach(beach, location.reportUrl));
+		} catch (error) {
+			console.error(`Failed to parse water quality for ${beach.id}:`, error);
+
+			results.push({
+				beachId: beach.id,
+				displayName: beach.displayName,
+				sampleDate: null,
+				enterococcus: null,
+				advisory: false,
+				status: "unavailable",
+				reportUrl: location.reportUrl,
+			});
+		}
+	}
+
+	return results;
 }
