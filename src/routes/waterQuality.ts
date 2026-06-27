@@ -1,4 +1,3 @@
-import { refreshWaterQuality } from "../services/refresh/waterQualityRefresh";
 import {
 	readCache,
 	WATER_QUALITY_CACHE_KEY,
@@ -18,10 +17,14 @@ export async function handleWaterQualityRequest(env: Env): Promise<Response> {
 				return Response.json(cached);
 			}
 		}
-
-		const payload = await refreshWaterQuality(env);
-
-		return Response.json(payload);
+		return Response.json(
+			{
+				status: "unavailable",
+				message:
+					"Water quality cache is unavailable. Please try again shortly.",
+			},
+			{ status: 503 },
+		);
 	} catch (error) {
 		return Response.json(
 			{
