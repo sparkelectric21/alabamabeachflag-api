@@ -83,6 +83,10 @@ export default {
 	},
 
 	async scheduled(_event, env): Promise<void> {
-		await refreshWaterQuality(env);
+		try {
+			await refreshWaterQuality(env);
+		} catch (error) {
+			console.error("Scheduled water quality refresh failed:", error);
+		}
 	},
 } satisfies ExportedHandler<Env>;
