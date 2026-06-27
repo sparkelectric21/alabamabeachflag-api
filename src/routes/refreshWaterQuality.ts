@@ -1,8 +1,19 @@
 import { refreshWaterQuality } from "../services/refresh/waterQualityRefresh";
 
 export async function handleRefreshWaterQualityRequest(
+	request: Request,
 	env: Env,
 ): Promise<Response> {
+	const secret = request.headers.get("x-refresh-secret");
+
+	if (secret !== env.REFRESH_SECRET) {
+		return Response.json(
+			{
+				error: "Unauthorized",
+			},
+			{ status: 401 },
+		);
+	}
 	try {
 		const payload = await refreshWaterQuality(env);
 

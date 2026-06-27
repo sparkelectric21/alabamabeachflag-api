@@ -60,7 +60,10 @@ export default {
 			url.pathname === "/internal/refresh/water-quality" &&
 			request.method === "POST"
 		) {
-			return await handleRefreshWaterQualityRequest(env);
+			return await handleRefreshWaterQualityRequest(
+				request,
+				env,
+			);
 		}
 
 		if (url.pathname === "/v1/water-quality") {
