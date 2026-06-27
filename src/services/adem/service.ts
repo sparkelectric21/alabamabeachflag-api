@@ -1,34 +1,64 @@
-
-
 import { beaches } from "../../config/BeachRegistry";
-import { fetchBeachMonitoringLocations } from "../arcgis/client";
 import type { WaterQuality } from "../../models/WaterQuality";
+import { fetchBeachMonitoringLocations } from "../arcgis/client";
+import { fetchWaterQualityReport } from "./client";
+import { extractLatestSample } from "./mapper";
+import { parseWaterQualityWorkbook } from "./parser";
+
+async function getWaterQualityForBeach(
+	beach: (typeof beaches)[number],
+	reportUrl: string,
+): Promise<WaterQuality> {
+	const report = await fetchWaterQualityReport(reportUrl);
+	const rows = parseWaterQualityWorkbook(report);
+	const latestSample = extractLatestSample(rows);
+
+	return {
+		beachId: beach.id,
+		displayName: beach.displayName,
+		sampleDate: latestSample.sampleDate,
+		enterococcus: latestSample.enterococcus,
+		advisory: latestSample.advisory,
+		status: latestSample.status,
+		reportUrl,
+	};
+}
 
 export async function getLatestWaterQuality(): Promise<WaterQuality[]> {
-	// Temporary implementation.
-	// Next milestone: download each ADEM report, parse the latest sample,
-	// and populate the remaining WaterQuality fields.
-
 	const locations = await fetchBeachMonitoringLocations();
-
 	const locationMap = new Map(locations.map((location) => [location.code, location]));
 
-	return beaches
-		.map((beach) => {
+	const supportedBeaches = beaches.filter((beach) => beach.supports.waterQuality);
+
+	return await Promise.all(
+		supportedBeaches.map(async (beach) => {
 			const location = locationMap.get(beach.ademCode);
+
 			if (!location) {
-				return null;
+				return {
+					beachId: beach.id,
+					displayName: beach.displayName,
+					sampleDate: null,
+					enterococcus: null,
+					advisory: false,
+					status: "unavailable",
+					reportUrl: "",
+				} satisfies WaterQuality;
 			}
 
-			return {
-				beachId: beach.id,
-				displayName: beach.displayName,
-				sampleDate: null,
-				enterococcus: null,
-				advisory: false,
-				status: "unavailable",
-				reportUrl: location.reportUrl,
-			} satisfies WaterQuality;
-		})
-		.filter((item): item is WaterQuality => item !== null);
+			try {
+				return await getWaterQualityForBeach(beach, location.reportUrl);
+			} catch {
+				return {
+					beachId: beach.id,
+					displayName: beach.displayName,
+					sampleDate: null,
+					enterococcus: null,
+					advisory: false,
+					status: "unavailable",
+					reportUrl: location.reportUrl,
+				} satisfies WaterQuality;
+			}
+		}),
+	);
 }

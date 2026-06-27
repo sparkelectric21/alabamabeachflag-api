@@ -1,45 +1,94 @@
-
-
+import type { WaterQualityStatus } from "../../models/WaterQuality";
 import type { SpreadsheetRow } from "./parser";
 
-export interface WaterQualityRecord {
-	beachName: string;
+export interface LatestSample {
 	sampleDate: string | null;
 	enterococcus: number | null;
-	status: "excellent" | "elevated" | "advisory" | "unavailable";
+	advisory: boolean;
+	status: WaterQualityStatus;
+	rawEnterococcus: string | null;
 }
 
-export function mapWaterQuality(rows: SpreadsheetRow[]): WaterQualityRecord[] {
-	return rows.map((row) => {
-		const beachName = String(
-			row["Beach"] ?? row["Beach Name"] ?? row["Location"] ?? "Unknown",
-		).trim();
+function normalizeCell(cell: unknown): string {
+	return String(cell ?? "").trim();
+}
 
-		const sampleDate = row["Date"] ? String(row["Date"]) : null;
+function isSampleDate(value: string): boolean {
+	return /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(value);
+}
 
-		const rawValue = Number(
-			row["Enterococcus"] ?? row["ENT"] ?? row["Result"] ?? NaN,
-		);
+function normalizeSampleDate(value: string): string {
+	const [month, day, year] = value.split("/");
+	const fullYear = year.length === 2 ? `20${year}` : year;
 
-		const enterococcus = Number.isFinite(rawValue) ? rawValue : null;
+	return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
 
-		let status: WaterQualityRecord["status"] = "unavailable";
+function parseEnterococcus(row: SpreadsheetRow): {
+	value: number | null;
+	raw: string | null;
+} {
+	const qualifier = normalizeCell(row[2]);
+	const result = normalizeCell(row[3]);
 
-		if (enterococcus !== null) {
-			if (enterococcus < 35) {
-				status = "excellent";
-			} else if (enterococcus < 104) {
-				status = "elevated";
-			} else {
-				status = "advisory";
-			}
+	if (!result || /site closed/i.test(result) || /n\/a/i.test(result)) {
+		return { value: null, raw: result || null };
+	}
+
+	const raw = `${qualifier}${result}`.trim();
+	const match = result.match(/\d+/);
+
+	if (!match) {
+		return { value: null, raw };
+	}
+
+	return {
+		value: Number(match[0]),
+		raw,
+	};
+}
+
+function statusForEnterococcus(value: number | null): WaterQualityStatus {
+	if (value === null) {
+		return "unavailable";
+	}
+
+	if (value < 35) {
+		return "excellent";
+	}
+
+	if (value < 104) {
+		return "elevated";
+	}
+
+	return "advisory";
+}
+
+export function extractLatestSample(rows: SpreadsheetRow[]): LatestSample {
+	for (const row of rows) {
+		const firstCell = normalizeCell(row[0]);
+
+		if (!isSampleDate(firstCell)) {
+			continue;
 		}
 
+		const parsed = parseEnterococcus(row);
+		const status = statusForEnterococcus(parsed.value);
+
 		return {
-			beachName,
-			sampleDate,
-			enterococcus,
+			sampleDate: normalizeSampleDate(firstCell),
+			enterococcus: parsed.value,
+			advisory: status === "advisory",
 			status,
+			rawEnterococcus: parsed.raw,
 		};
-	});
+	}
+
+	return {
+		sampleDate: null,
+		enterococcus: null,
+		advisory: false,
+		status: "unavailable",
+		rawEnterococcus: null,
+	};
 }
