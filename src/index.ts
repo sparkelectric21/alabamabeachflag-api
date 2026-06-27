@@ -1,6 +1,7 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
 import { handleDebugWaterQualityRequest } from "./routes/debugWaterQuality";
+import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -16,7 +17,13 @@ export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
 
-		if (request.method !== "GET") {
+		if (
+			request.method !== "GET" &&
+			!(
+				request.method === "POST" &&
+				url.pathname === "/internal/refresh/water-quality"
+			)
+		) {
 			return jsonResponse(
 				{
 					error: "Method Not Allowed",
@@ -51,6 +58,13 @@ if (url.pathname === "/debug/water-quality") {
 
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();
+		}
+
+		if (
+			url.pathname === "/internal/refresh/water-quality" &&
+			request.method === "POST"
+		) {
+			return await handleRefreshWaterQualityRequest(env);
 		}
 
 		if (url.pathname === "/v1/water-quality") {

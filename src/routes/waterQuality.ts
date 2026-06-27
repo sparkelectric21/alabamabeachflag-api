@@ -1,7 +1,6 @@
-import { getLatestWaterQuality } from "../services/adem/service";
+import { refreshWaterQuality } from "../services/refresh/waterQualityRefresh";
 import {
 	readCache,
-	writeCache,
 	WATER_QUALITY_CACHE_KEY,
 } from "../services/cache/kv";
 
@@ -20,18 +19,7 @@ export async function handleWaterQualityRequest(env: Env): Promise<Response> {
 			}
 		}
 
-		const waterQuality = await getLatestWaterQuality();
-
-		const payload = {
-			source: "Alabama Beach Flag Water Quality Service",
-			generatedAt: new Date().toISOString(),
-			count: waterQuality.length,
-			waterQuality,
-		};
-
-		if (hasCache) {
-			await writeCache(env.BEACH_DATA, WATER_QUALITY_CACHE_KEY, payload);
-		}
+		const payload = await refreshWaterQuality(env);
 
 		return Response.json(payload);
 	} catch (error) {
