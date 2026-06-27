@@ -1,4 +1,5 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
+import { handleBeachesRequest } from "./routes/beaches";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -43,6 +44,10 @@ export default {
 				version: "1.0.0",
 				timestamp: new Date().toISOString(),
 			});
+		}
+
+		if (url.pathname === "/v1/beaches") {
+			return await handleBeachesRequest();
 		}
 
 		if (url.pathname === "/v1/water-quality") {
