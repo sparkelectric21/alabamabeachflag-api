@@ -1,6 +1,7 @@
 
 
 export const WATER_QUALITY_CACHE_KEY = "water-quality";
+export const WEATHER_CACHE_KEY = "weather";
 
 export async function readCache<T>(
 	kv: KVNamespace,

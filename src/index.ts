@@ -1,6 +1,8 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
+import { handleWeatherRequest } from "./routes/weather";
+import { handleRefreshWeatherRequest } from "./routes/refreshWeather";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
@@ -18,12 +20,23 @@ export default {
 		const url = new URL(request.url);
 
 		if (
-			request.method !== "GET" &&
-			!(
-				request.method === "POST" &&
-				url.pathname === "/internal/refresh/water-quality"
-			)
+			url.pathname === "/internal/refresh/water-quality" &&
+			request.method === "POST"
 		) {
+			return await handleRefreshWaterQualityRequest(
+				request,
+				env,
+			);
+		}
+
+		if (
+			url.pathname === "/internal/refresh/weather" &&
+			request.method === "POST"
+		) {
+			return await handleRefreshWeatherRequest(request, env);
+		}
+
+		if (request.method !== "GET") {
 			return jsonResponse(
 				{
 					error: "Method Not Allowed",
@@ -31,7 +44,7 @@ export default {
 				{
 					status: 405,
 					headers: {
-						Allow: "GET",
+						Allow: "GET, POST",
 					},
 				},
 			);
@@ -57,18 +70,12 @@ export default {
 			return await handleBeachesRequest();
 		}
 
-		if (
-			url.pathname === "/internal/refresh/water-quality" &&
-			request.method === "POST"
-		) {
-			return await handleRefreshWaterQualityRequest(
-				request,
-				env,
-			);
-		}
-
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);
+		}
+
+		if (url.pathname === "/v1/weather") {
+			return await handleWeatherRequest(env);
 		}
 
 		return jsonResponse(
