@@ -3,6 +3,8 @@ import { handleBeachesRequest } from "./routes/beaches";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
 import { handleBeachConditionsRequest } from "./routes/beach-conditions";
 import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
+import { handleBeachFlagsRequest } from "./routes/beachflags";
+import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlags";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
@@ -90,6 +92,13 @@ export default {
 			return await handleRefreshBeachConditionsRequest(request, env);
 		}
 
+		if (
+			url.pathname === "/internal/refresh/beach-flags" &&
+			request.method === "POST"
+		) {
+			return await handleRefreshBeachFlagsRequest(request, env);
+		}
+
 		if (request.method !== "GET") {
 			return jsonResponse(
 				{
@@ -130,6 +139,10 @@ export default {
 
 		if (url.pathname === "/v1/beach-conditions") {
 			return await handleBeachConditionsRequest(env);
+		}
+
+		if (url.pathname === "/v1/beach-flags") {
+			return await handleBeachFlagsRequest(env);
 		}
 
 		if (url.pathname === "/v1/weather") {

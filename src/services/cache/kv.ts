@@ -2,6 +2,7 @@
 
 export const WATER_QUALITY_CACHE_KEY = "water-quality";
 export const BEACH_CONDITIONS_CACHE_KEY = "beach-conditions";
+export const BEACH_FLAGS_CACHE_KEY = "beach-flags";
 
 // Temporary compatibility alias while the iOS app migrates.
 export const WEATHER_CACHE_KEY = BEACH_CONDITIONS_CACHE_KEY;
