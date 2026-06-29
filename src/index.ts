@@ -6,6 +6,8 @@ import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachCondit
 import { handleBeachFlagsRequest } from "./routes/beachflags";
 import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlags";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
+import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
+import { refreshBeachFlags } from "./services/refresh/beachFlagsRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -162,6 +164,18 @@ export default {
 	},
 
 	async scheduled(_event, env): Promise<void> {
+		try {
+			await refreshBeachFlags(env);
+		} catch (error) {
+			console.error("Scheduled beach flags refresh failed:", error);
+		}
+
+		try {
+			await refreshBeachConditions(env);
+		} catch (error) {
+			console.error("Scheduled beach conditions refresh failed:", error);
+		}
+
 		try {
 			await refreshWaterQuality(env);
 		} catch (error) {

@@ -18,11 +18,13 @@ export async function writeCache<T>(
 	kv: KVNamespace,
 	key: string,
 	value: T,
-	expirationTtl = 3600,
+	expirationTtl?: number,
 ): Promise<void> {
-	await kv.put(key, JSON.stringify(value), {
-		expirationTtl,
-	});
+	const options = expirationTtl
+		? { expirationTtl }
+		: undefined;
+
+	await kv.put(key, JSON.stringify(value), options);
 }
 
 export async function deleteCache(
