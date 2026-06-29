@@ -15,6 +15,52 @@ function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	});
 }
 
+async function handleWeatherCompatibilityRequest(env: Env): Promise<Response> {
+	const response = await handleBeachConditionsRequest(env);
+
+	if (!response.ok) {
+		return response;
+	}
+
+	const payload = (await response.json()) as {
+		status?: string;
+		apiVersion?: string;
+		source?: string;
+		generatedAt?: string;
+		count?: number;
+		beachConditions?: Array<{
+			beachId: string;
+			displayName: string;
+			temperature: number;
+			temperatureUnit: string;
+			condition: string;
+			windSpeed: string;
+			windDirection: string;
+		}>;
+		errors?: unknown[];
+	};
+
+	const weather = (payload.beachConditions ?? []).map((beach) => ({
+		beachId: beach.beachId,
+		displayName: beach.displayName,
+		temperature: beach.temperature,
+		temperatureUnit: beach.temperatureUnit,
+		condition: beach.condition,
+		windSpeed: beach.windSpeed,
+		windDirection: beach.windDirection,
+	}));
+
+	return jsonResponse({
+		status: weather.length > 0 ? "ok" : "unavailable",
+		apiVersion: payload.apiVersion ?? "1.0.0",
+		source: payload.source ?? "NOAA",
+		generatedAt: payload.generatedAt ?? new Date().toISOString(),
+		count: weather.length,
+		weather,
+		errors: payload.errors ?? [],
+	});
+}
+
 export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
@@ -88,7 +134,7 @@ export default {
 
 		if (url.pathname === "/v1/weather") {
 			// Temporary compatibility route for existing app versions.
-			return await handleBeachConditionsRequest(env);
+			return await handleWeatherCompatibilityRequest(env);
 		}
 
 		return jsonResponse(
