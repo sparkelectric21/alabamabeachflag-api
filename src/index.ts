@@ -4,10 +4,10 @@ import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
 import { handleBeachConditionsRequest } from "./routes/beach-conditions";
 import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
 import { handleBeachFlagsRequest } from "./routes/beachflags";
-import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlags";
+import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlag";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
-import { refreshBeachFlags } from "./services/refresh/beachFlagsRefresh";
+import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
