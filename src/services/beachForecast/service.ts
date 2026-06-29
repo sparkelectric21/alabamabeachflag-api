@@ -7,6 +7,7 @@ export async function getBeachForecasts(): Promise<Map<string, BeachForecast>> {
 
     for (const feature of response.features) {
     console.log(JSON.stringify({
+        id: feature.attributes.id,
         siteId: feature.attributes.siteid,
         beachName: feature.attributes.beachname,
     }, null, 2));
