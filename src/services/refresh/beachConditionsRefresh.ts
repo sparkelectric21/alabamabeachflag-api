@@ -5,11 +5,13 @@ import {
 import { BEACH_REGISTRY } from "../beaches/registry";
 import { fetchForecast, fetchPoint } from "../nws/client";
 import { refreshWaterTemperatures } from "../waterTemperature/refresh";
+import { getBeachForecasts } from "../beachForecast/service";
 
 export async function refreshBeachConditions(env: Env) {
-	const weather = [];
+	const beachConditions = [];
 	const errors = [];
 	const waterTemperatures = await refreshWaterTemperatures();
+	const beachForecasts = await getBeachForecasts();
 
 	for (const beach of BEACH_REGISTRY) {
 		try {
@@ -21,7 +23,7 @@ export async function refreshBeachConditions(env: Env) {
 				throw new Error("NWS hourly forecast did not include any periods.");
 			}
 
-			weather.push({
+			beachConditions.push({
 				beachId: beach.id,
 				displayName: beach.displayName,
 				temperature: current.temperature,
@@ -30,6 +32,9 @@ export async function refreshBeachConditions(env: Env) {
 				windSpeed: current.windSpeed,
 				windDirection: current.windDirection,
 				waterTemperature: waterTemperatures[beach.id] ?? null,
+				forecast: beach.beachForecast
+					? beachForecasts.get(beach.beachForecast.siteId) ?? null
+					: null,
 			});
 		} catch (error) {
 			console.error(
@@ -46,12 +51,12 @@ export async function refreshBeachConditions(env: Env) {
 	}
 
 	const payload = {
-		status: weather.length > 0 ? "ok" : "unavailable",
+		status: beachConditions.length > 0 ? "ok" : "unavailable",
 		apiVersion: "1.0.0",
-		source: "NOAA/NWS",
+		source: "NOAA",
 		generatedAt: new Date().toISOString(),
-		count: weather.length,
-		weather,
+		count: beachConditions.length,
+		beachConditions,
 		errors,
 	};
 

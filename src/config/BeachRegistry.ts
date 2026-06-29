@@ -21,6 +21,9 @@ export interface BeachDefinition {
 			stationId: string;
 		}>;
 	};
+	beachForecast?: {
+		siteId: string;
+	};
 	ripCurrent?: {
 		forecastZone: string;
 	};
@@ -62,6 +65,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		beachForecast: {
+			siteId: "alz266",
+		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
 		},
@@ -97,6 +103,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		beachForecast: {
+			siteId: "alz266",
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -135,6 +144,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		beachForecast: {
+			siteId: "alz266",
+		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
 		},
@@ -171,6 +183,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		beachForecast: {
+			siteId: "alz266",
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -209,6 +224,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		beachForecast: {
+			siteId: "alz266",
+		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
 		},
@@ -244,6 +262,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		beachForecast: {
+			siteId: "alz266",
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -282,6 +303,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 			],
 		},
+		beachForecast: {
+			siteId: "alz266",
+		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
 		},
@@ -318,6 +342,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "DPHA1" },
 			],
 		},
+		beachForecast: {
+			siteId: "alz265",
+		},
 		ripCurrent: {
 			forecastZone: "ALZ265",
 		},
@@ -353,6 +380,9 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "DPHA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		beachForecast: {
+			siteId: "alz265",
 		},
 		ripCurrent: {
 			forecastZone: "ALZ265",
