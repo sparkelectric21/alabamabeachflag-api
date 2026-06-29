@@ -1,8 +1,6 @@
+import { refreshBeachConditions } from "../services/refresh/beachConditionsRefresh";
 
-
-import { refreshWeather } from "../services/refresh/weatherRefresh";
-
-export async function handleRefreshWeatherRequest(
+export async function handleRefreshBeachConditionsRequest(
 	request: Request,
 	env: Env,
 ): Promise<Response> {
@@ -15,7 +13,7 @@ export async function handleRefreshWeatherRequest(
 		);
 	}
 
-	const payload = await refreshWeather(env);
+	const payload = await refreshBeachConditions(env);
 
 	return Response.json(payload);
 }

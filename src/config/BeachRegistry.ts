@@ -1,15 +1,37 @@
-
-
 export interface BeachDefinition {
 	id: string;
 	ademCode: string;
 	displayName: string;
 	waterbody: string;
+	location: {
+		latitude: number;
+		longitude: number;
+	};
+	weather: {
+		latitude: number;
+		longitude: number;
+	};
+	uv?: {
+		latitude: number;
+		longitude: number;
+	};
+	waterTemperature?: {
+		stationId: string;
+	};
+	ripCurrent?: {
+		forecastZone: string;
+	};
+	alerts?: {
+		nwsZone: string;
+	};
 	supports: {
 		beachFlags: "official" | "unavailable" | "future";
 		waterQuality: boolean;
 		weather: boolean;
 		alerts: boolean;
+		uv: boolean;
+		waterTemperature: boolean;
+		ripCurrent: boolean;
 	};
 }
 
@@ -19,11 +41,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "AL_PT",
 		displayName: "Alabama Point",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2804,
+			longitude: -87.5585,
+		},
+		weather: {
+			latitude: 30.2804,
+			longitude: -87.5585,
+		},
+		uv: {
+			latitude: 30.2804,
+			longitude: -87.5585,
+		},
+		waterTemperature: {
+			stationId: "PPTA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -31,11 +74,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "COT_BYOU",
 		displayName: "Cotton Bayou",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2796,
+			longitude: -87.5608,
+		},
+		weather: {
+			latitude: 30.2796,
+			longitude: -87.5608,
+		},
+		uv: {
+			latitude: 30.2796,
+			longitude: -87.5608,
+		},
+		waterTemperature: {
+			stationId: "PPTA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -43,11 +107,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "CITY_GS",
 		displayName: "Gulf Shores Public Beach",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		weather: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		uv: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		waterTemperature: {
+			stationId: "BSCA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -55,11 +140,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "GSP_PAV",
 		displayName: "Gulf State Park Pavilion",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		weather: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		uv: {
+			latitude: 30.2499,
+			longitude: -87.6847,
+		},
+		waterTemperature: {
+			stationId: "BSCA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -67,11 +173,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "LL_PASS",
 		displayName: "Little Lagoon Pass",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2328,
+			longitude: -87.7428,
+		},
+		weather: {
+			latitude: 30.2328,
+			longitude: -87.7428,
+		},
+		uv: {
+			latitude: 30.2328,
+			longitude: -87.7428,
+		},
+		waterTemperature: {
+			stationId: "BSCA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -79,11 +206,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "FL_PT",
 		displayName: "Florida Point",
 		waterbody: "Perdido Pass",
+		location: {
+			latitude: 30.2809,
+			longitude: -87.5482,
+		},
+		weather: {
+			latitude: 30.2809,
+			longitude: -87.5482,
+		},
+		uv: {
+			latitude: 30.2809,
+			longitude: -87.5482,
+		},
+		waterTemperature: {
+			stationId: "PPTA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "official",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -91,11 +239,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "FRT_MGN",
 		displayName: "Fort Morgan Public Beach",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2285,
+			longitude: -88.0243,
+		},
+		weather: {
+			latitude: 30.2285,
+			longitude: -88.0243,
+		},
+		uv: {
+			latitude: 30.2285,
+			longitude: -88.0243,
+		},
+		waterTemperature: {
+			stationId: "FRMA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ266",
+		},
 		supports: {
 			beachFlags: "future",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -103,11 +272,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "DI_PIER",
 		displayName: "Dauphin Island Public Beach",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2506,
+			longitude: -88.1096,
+		},
+		weather: {
+			latitude: 30.2506,
+			longitude: -88.1096,
+		},
+		uv: {
+			latitude: 30.2506,
+			longitude: -88.1096,
+		},
+		waterTemperature: {
+			stationId: "8735180",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ265",
+		},
 		supports: {
 			beachFlags: "unavailable",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 	{
@@ -115,11 +305,32 @@ export const beaches: BeachDefinition[] = [
 		ademCode: "DI_EAST",
 		displayName: "Dauphin Island East End",
 		waterbody: "Gulf of Mexico",
+		location: {
+			latitude: 30.2509,
+			longitude: -88.0755,
+		},
+		weather: {
+			latitude: 30.2509,
+			longitude: -88.0755,
+		},
+		uv: {
+			latitude: 30.2509,
+			longitude: -88.0755,
+		},
+		waterTemperature: {
+			stationId: "DPHA1",
+		},
+		ripCurrent: {
+			forecastZone: "ALZ265",
+		},
 		supports: {
 			beachFlags: "unavailable",
 			waterQuality: true,
 			weather: true,
 			alerts: true,
+			uv: true,
+			waterTemperature: true,
+			ripCurrent: true,
 		},
 	},
 ];

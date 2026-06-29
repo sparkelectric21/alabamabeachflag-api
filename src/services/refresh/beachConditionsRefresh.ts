@@ -1,11 +1,11 @@
 import {
-	WEATHER_CACHE_KEY,
+	BEACH_CONDITIONS_CACHE_KEY,
 	writeCache,
 } from "../cache/kv";
 import { BEACH_REGISTRY } from "../beaches/registry";
 import { fetchForecast, fetchPoint } from "../nws/client";
 
-export async function refreshWeather(env: Env) {
+export async function refreshBeachConditions(env: Env) {
 	const weather = [];
 	const errors = [];
 
@@ -56,7 +56,7 @@ export async function refreshWeather(env: Env) {
 		throw new Error("Missing KV binding: BEACH_DATA");
 	}
 
-	await writeCache(env.BEACH_DATA, WEATHER_CACHE_KEY, payload);
+	await writeCache(env.BEACH_DATA, BEACH_CONDITIONS_CACHE_KEY, payload);
 
 	return payload;
 }

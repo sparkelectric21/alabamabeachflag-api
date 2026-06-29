@@ -1,8 +1,8 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
-import { handleWeatherRequest } from "./routes/weather";
-import { handleRefreshWeatherRequest } from "./routes/refreshWeather";
+import { handleBeachConditionsRequest } from "./routes/beach-conditions";
+import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
@@ -30,10 +30,18 @@ export default {
 		}
 
 		if (
+			url.pathname === "/internal/refresh/beach-conditions" &&
+			request.method === "POST"
+		) {
+			return await handleRefreshBeachConditionsRequest(request, env);
+		}
+
+		if (
 			url.pathname === "/internal/refresh/weather" &&
 			request.method === "POST"
 		) {
-			return await handleRefreshWeatherRequest(request, env);
+			// Temporary compatibility route for existing automation.
+			return await handleRefreshBeachConditionsRequest(request, env);
 		}
 
 		if (request.method !== "GET") {
@@ -74,8 +82,13 @@ export default {
 			return await handleWaterQualityRequest(env);
 		}
 
+		if (url.pathname === "/v1/beach-conditions") {
+			return await handleBeachConditionsRequest(env);
+		}
+
 		if (url.pathname === "/v1/weather") {
-			return await handleWeatherRequest(env);
+			// Temporary compatibility route for existing app versions.
+			return await handleBeachConditionsRequest(env);
 		}
 
 		return jsonResponse(

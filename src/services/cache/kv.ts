@@ -1,7 +1,10 @@
 
 
 export const WATER_QUALITY_CACHE_KEY = "water-quality";
-export const WEATHER_CACHE_KEY = "weather";
+export const BEACH_CONDITIONS_CACHE_KEY = "beach-conditions";
+
+// Temporary compatibility alias while the iOS app migrates.
+export const WEATHER_CACHE_KEY = BEACH_CONDITIONS_CACHE_KEY;
 
 export async function readCache<T>(
 	kv: KVNamespace,
