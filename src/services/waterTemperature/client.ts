@@ -53,9 +53,13 @@ export async function fetchWaterTemperature(
 		throw new Error(`No water temperature available for station ${stationId}`);
 	}
 
+	const observedAt = new Date(
+		latest.t.replace(" ", "T") + ":00Z",
+	).toISOString();
+
 	return {
 		temperature: Number(latest.v),
 		temperatureUnit: "F",
-		observedAt: latest.t,
+		observedAt,
 	};
 }

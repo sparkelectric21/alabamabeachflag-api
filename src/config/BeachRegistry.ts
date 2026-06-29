@@ -16,7 +16,10 @@ export interface BeachDefinition {
 		longitude: number;
 	};
 	waterTemperature?: {
-		stationId: string;
+		sources: Array<{
+			provider: "coops" | "ndbc";
+			stationId: string;
+		}>;
 	};
 	ripCurrent?: {
 		forecastZone: string;
@@ -54,7 +57,10 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5585,
 		},
 		waterTemperature: {
-			stationId: "PPTA1",
+			sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -87,7 +93,10 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5608,
 		},
 		waterTemperature: {
-			stationId: "PPTA1",
+			sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -120,7 +129,11 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.6847,
 		},
 		waterTemperature: {
-			stationId: "BSCA1",
+			sources: [
+				{ provider: "ndbc", stationId: "BSCA1" },
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -153,7 +166,11 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.6847,
 		},
 		waterTemperature: {
-			stationId: "BSCA1",
+			sources: [
+				{ provider: "ndbc", stationId: "BSCA1" },
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -186,7 +203,11 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.7428,
 		},
 		waterTemperature: {
-			stationId: "BSCA1",
+			sources: [
+				{ provider: "ndbc", stationId: "BSCA1" },
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -219,7 +240,10 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5482,
 		},
 		waterTemperature: {
-			stationId: "PPTA1",
+			sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -252,7 +276,11 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.0243,
 		},
 		waterTemperature: {
-			stationId: "FRMA1",
+			sources: [
+				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "coops", stationId: "8735180" },
+				{ provider: "ndbc", stationId: "PPTA1" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ266",
@@ -285,7 +313,10 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.1096,
 		},
 		waterTemperature: {
-			stationId: "8735180",
+			sources: [
+				{ provider: "coops", stationId: "8735180" },
+				{ provider: "ndbc", stationId: "DPHA1" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ265",
@@ -318,7 +349,10 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.0755,
 		},
 		waterTemperature: {
-			stationId: "DPHA1",
+			sources: [
+				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "coops", stationId: "8735180" },
+			],
 		},
 		ripCurrent: {
 			forecastZone: "ALZ265",

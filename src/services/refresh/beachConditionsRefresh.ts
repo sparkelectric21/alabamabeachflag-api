@@ -4,10 +4,12 @@ import {
 } from "../cache/kv";
 import { BEACH_REGISTRY } from "../beaches/registry";
 import { fetchForecast, fetchPoint } from "../nws/client";
+import { refreshWaterTemperatures } from "../waterTemperature/refresh";
 
 export async function refreshBeachConditions(env: Env) {
 	const weather = [];
 	const errors = [];
+	const waterTemperatures = await refreshWaterTemperatures();
 
 	for (const beach of BEACH_REGISTRY) {
 		try {
@@ -27,6 +29,7 @@ export async function refreshBeachConditions(env: Env) {
 				condition: current.shortForecast,
 				windSpeed: current.windSpeed,
 				windDirection: current.windDirection,
+				waterTemperature: waterTemperatures[beach.id] ?? null,
 			});
 		} catch (error) {
 			console.error(
