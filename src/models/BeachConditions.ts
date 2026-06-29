@@ -1,5 +1,3 @@
-
-
 export interface BeachConditions {
     beachId: string;
     displayName: string;
@@ -35,10 +33,12 @@ export interface WaterTemperature {
 
 export interface BeachForecast {
     ripCurrentRisk?: string;
-    uvIndex?: string;
+    uvValue?: number;
+    uvCategory?: string;
     surf?: string;
     weather?: string;
     winds?: string;
+    waterTemperature?: string;
     maxTemperature?: string;
     thunderstormRisk?: string;
     waterspoutRisk?: string;

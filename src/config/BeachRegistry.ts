@@ -1,3 +1,5 @@
+export type BeachUVRegion = "orangeBeach" | "fortMorgan" | "dauphinIsland";
+
 export interface BeachDefinition {
 	id: string;
 	ademCode: string;
@@ -12,6 +14,7 @@ export interface BeachDefinition {
 		longitude: number;
 	};
 	uv?: {
+		region: BeachUVRegion;
 		latitude: number;
 		longitude: number;
 	};
@@ -56,8 +59,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5585,
 		},
 		uv: {
-			latitude: 30.2804,
-			longitude: -87.5585,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -95,8 +99,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5608,
 		},
 		uv: {
-			latitude: 30.2796,
-			longitude: -87.5608,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -134,8 +139,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.6847,
 		},
 		uv: {
-			latitude: 30.2499,
-			longitude: -87.6847,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -174,8 +180,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.6847,
 		},
 		uv: {
-			latitude: 30.2499,
-			longitude: -87.6847,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -214,8 +221,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.7428,
 		},
 		uv: {
-			latitude: 30.2328,
-			longitude: -87.7428,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -254,8 +262,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -87.5482,
 		},
 		uv: {
-			latitude: 30.2809,
-			longitude: -87.5482,
+			region: "orangeBeach",
+			latitude: 30.248108,
+			longitude: -87.71726,
 		},
 		waterTemperature: {
 			sources: [
@@ -293,6 +302,7 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.0243,
 		},
 		uv: {
+			region: "fortMorgan",
 			latitude: 30.2285,
 			longitude: -88.0243,
 		},
@@ -333,6 +343,7 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.1096,
 		},
 		uv: {
+			region: "dauphinIsland",
 			latitude: 30.2506,
 			longitude: -88.1096,
 		},
@@ -372,8 +383,9 @@ export const beaches: BeachDefinition[] = [
 			longitude: -88.0755,
 		},
 		uv: {
-			latitude: 30.2509,
-			longitude: -88.0755,
+			region: "dauphinIsland",
+			latitude: 30.2506,
+			longitude: -88.1096,
 		},
 		waterTemperature: {
 			sources: [

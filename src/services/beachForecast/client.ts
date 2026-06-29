@@ -27,7 +27,7 @@ export interface NOAAFeatureResponse {
 export interface BeachForecastObservation {
     ripCurrentRisk?: string;
     surfHeight?: string;
-    uvIndex?: string;
+    uvValue?: number;
     weather?: string;
     winds?: string;
     waterTemperature?: string;
