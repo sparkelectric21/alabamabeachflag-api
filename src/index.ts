@@ -5,9 +5,12 @@ import { handleBeachConditionsRequest } from "./routes/beach-conditions";
 import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
 import { handleBeachFlagsRequest } from "./routes/beachflags";
 import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlag";
+import type { Env as AppEnv } from "./types";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
+
+import { fetchCurrentWeather } from "./services/weather/weatherKitClient";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -19,7 +22,7 @@ function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	});
 }
 
-async function handleWeatherCompatibilityRequest(env: Env): Promise<Response> {
+async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response> {
 	const response = await handleBeachConditionsRequest(env);
 
 	if (!response.ok) {
@@ -66,7 +69,7 @@ async function handleWeatherCompatibilityRequest(env: Env): Promise<Response> {
 }
 
 export default {
-	async fetch(request, env): Promise<Response> {
+	async fetch(request: Request, env: AppEnv): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (
@@ -131,6 +134,15 @@ export default {
 			});
 		}
 
+		if (url.pathname === "/debug/weatherkit") {
+			const data = await fetchCurrentWeather(env, {
+				latitude: 30.2460,
+				longitude: -87.7008,
+			});
+
+			return jsonResponse(data);
+		}
+
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();
 		}
@@ -163,7 +175,7 @@ export default {
 		);
 	},
 
-	async scheduled(_event, env): Promise<void> {
+	async scheduled(_controller: ScheduledController, env: AppEnv): Promise<void> {
 		try {
 			await refreshBeachFlags(env);
 		} catch (error) {
@@ -182,4 +194,4 @@ export default {
 			console.error("Scheduled water quality refresh failed:", error);
 		}
 	},
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<AppEnv>;
