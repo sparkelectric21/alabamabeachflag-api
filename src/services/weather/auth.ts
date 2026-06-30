@@ -21,8 +21,10 @@ export async function createWeatherKitToken(env: Env): Promise<string> {
 
     const algorithm = "ES256";
 
+    const privateKeyText = env.WEATHERKIT_PRIVATE_KEY.replace(/\\n/g, "\n");
+
     const privateKey = await importPKCS8(
-        env.WEATHERKIT_PRIVATE_KEY,
+        privateKeyText,
         algorithm
     );
 
