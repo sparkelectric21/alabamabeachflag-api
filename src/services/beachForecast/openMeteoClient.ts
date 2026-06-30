@@ -10,7 +10,7 @@ export async function fetchCurrentUV(
     url.searchParams.set("latitude", latitude.toString());
     url.searchParams.set("longitude", longitude.toString());
     url.searchParams.set("current", "uv_index");
-    url.searchParams.set("timezone", "GMT");
+    url.searchParams.set("timezone", "America/Chicago");
 
     const response = await fetch(url);
 
