@@ -134,8 +134,6 @@ export default {
 			});
 		}
 
-
-
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();
 		}
