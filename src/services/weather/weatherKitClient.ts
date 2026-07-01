@@ -20,6 +20,8 @@ export async function fetchCurrentWeather(
 
     url.searchParams.set("dataSets", "currentWeather");
 
+    console.log("WeatherKit URL:", url.toString());
+    console.log("WeatherKit Authorization header starts with:", `Bearer ${token}`.substring(0, 40) + "...");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 

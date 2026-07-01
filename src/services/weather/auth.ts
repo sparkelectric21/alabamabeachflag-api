@@ -30,17 +30,30 @@ export async function createWeatherKitToken(env: Env): Promise<string> {
 
     const now = Math.floor(Date.now() / 1000);
 
+    const tokenHeader = {
+        alg: algorithm,
+        kid: env.WEATHERKIT_KEY_ID,
+        id: `${env.WEATHERKIT_TEAM_ID}.${env.WEATHERKIT_SERVICE_ID}`,
+        typ: "JWT"
+    };
+
+    console.log("WeatherKit JWT Header:", tokenHeader);
+    console.log("WeatherKit JWT Claims:", {
+        iss: env.WEATHERKIT_TEAM_ID,
+        sub: env.WEATHERKIT_SERVICE_ID,
+        iat: now,
+        exp: now + 60 * 60
+    });
+
     const token = await new SignJWT({})
-        .setProtectedHeader({
-            alg: algorithm,
-            kid: env.WEATHERKIT_KEY_ID,
-            id: `${env.WEATHERKIT_TEAM_ID}.${env.WEATHERKIT_SERVICE_ID}`
-        })
+        .setProtectedHeader(tokenHeader)
         .setIssuer(env.WEATHERKIT_TEAM_ID)
         .setSubject(env.WEATHERKIT_SERVICE_ID)
         .setIssuedAt(now)
         .setExpirationTime(now + 60 * 60)
         .sign(privateKey);
+
+        console.log("WeatherKit JWT:", token);        
 
     return token;
 }
