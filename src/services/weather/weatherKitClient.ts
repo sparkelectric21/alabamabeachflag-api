@@ -19,6 +19,8 @@ export async function fetchCurrentWeather(
     );
 
     url.searchParams.set("dataSets", "currentWeather");
+    url.searchParams.set("countryCode", "US");
+    url.searchParams.set("timezone", "America/Chicago");
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -34,9 +36,8 @@ export async function fetchCurrentWeather(
 
         const body = await response.text();
 
-
         if (!response.ok) {
-            throw new Error(`WeatherKit request failed (${response.status})`);
+            throw new Error(`WeatherKit request failed (${response.status}): ${body}`);
         }
 
         return JSON.parse(body);

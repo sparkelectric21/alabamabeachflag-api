@@ -6,6 +6,7 @@ import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachCondit
 import { handleBeachFlagsRequest } from "./routes/beachflags";
 import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlag";
 import type { Env as AppEnv } from "./types";
+
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
@@ -133,6 +134,7 @@ export default {
 				timestamp: new Date().toISOString(),
 			});
 		}
+
 
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();
