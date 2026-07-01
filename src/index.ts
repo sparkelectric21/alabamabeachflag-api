@@ -11,6 +11,7 @@ import { refreshBeachConditions } from "./services/refresh/beachConditionsRefres
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
 
 
+
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
 		...init,
@@ -132,6 +133,7 @@ export default {
 				timestamp: new Date().toISOString(),
 			});
 		}
+
 
 
 		if (url.pathname === "/v1/beaches") {
