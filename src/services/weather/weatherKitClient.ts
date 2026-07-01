@@ -20,8 +20,6 @@ export async function fetchCurrentWeather(
 
     url.searchParams.set("dataSets", "currentWeather");
 
-    console.log("WeatherKit URL:", url.toString());
-    console.log("WeatherKit Authorization header starts with:", `Bearer ${token}`.substring(0, 40) + "...");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -36,9 +34,6 @@ export async function fetchCurrentWeather(
 
         const body = await response.text();
 
-        console.log("WeatherKit Status:", response.status);
-        console.log("WeatherKit Headers:", Object.fromEntries(response.headers));
-        console.log("WeatherKit Response:", body);
 
         if (!response.ok) {
             throw new Error(`WeatherKit request failed (${response.status})`);

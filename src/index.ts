@@ -10,7 +10,6 @@ import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
 
-import { fetchCurrentWeather } from "./services/weather/weatherKitClient";
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 	return Response.json(data, {
@@ -134,14 +133,6 @@ export default {
 			});
 		}
 
-		if (url.pathname === "/debug/weatherkit") {
-			const data = await fetchCurrentWeather(env, {
-				latitude: 30.2460,
-				longitude: -87.7008,
-			});
-
-			return jsonResponse(data);
-		}
 
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();

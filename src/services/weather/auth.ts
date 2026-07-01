@@ -2,7 +2,6 @@ import type { Env } from "../../types";
 import { importPKCS8, SignJWT } from "jose";
 
 export async function createWeatherKitToken(env: Env): Promise<string> {
-
     if (!env.WEATHERKIT_TEAM_ID) {
         throw new Error("Missing WEATHERKIT_TEAM_ID");
     }
@@ -20,14 +19,8 @@ export async function createWeatherKitToken(env: Env): Promise<string> {
     }
 
     const algorithm = "ES256";
-
     const privateKeyText = env.WEATHERKIT_PRIVATE_KEY.replace(/\\n/g, "\n");
-
-    const privateKey = await importPKCS8(
-        privateKeyText,
-        algorithm
-    );
-
+    const privateKey = await importPKCS8(privateKeyText, algorithm);
     const now = Math.floor(Date.now() / 1000);
 
     const tokenHeader = {
@@ -37,14 +30,6 @@ export async function createWeatherKitToken(env: Env): Promise<string> {
         typ: "JWT"
     };
 
-    console.log("WeatherKit JWT Header:", tokenHeader);
-    console.log("WeatherKit JWT Claims:", {
-        iss: env.WEATHERKIT_TEAM_ID,
-        sub: env.WEATHERKIT_SERVICE_ID,
-        iat: now,
-        exp: now + 60 * 60
-    });
-
     const token = await new SignJWT({})
         .setProtectedHeader(tokenHeader)
         .setIssuer(env.WEATHERKIT_TEAM_ID)
@@ -52,8 +37,6 @@ export async function createWeatherKitToken(env: Env): Promise<string> {
         .setIssuedAt(now)
         .setExpirationTime(now + 60 * 60)
         .sign(privateKey);
-
-        console.log("WeatherKit JWT:", token);        
 
     return token;
 }
