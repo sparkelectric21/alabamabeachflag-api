@@ -24,6 +24,10 @@ function normalizeSampleDate(value: string): string {
 	return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
+function sampleDateTimestamp(value: string): number {
+	return new Date(`${normalizeSampleDate(value)}T00:00:00Z`).getTime();
+}
+
 function parseEnterococcus(row: SpreadsheetRow): {
 	value: number | null;
 	raw: string | null;
@@ -65,6 +69,9 @@ function statusForEnterococcus(value: number | null): WaterQualityStatus {
 }
 
 export function extractLatestSample(rows: SpreadsheetRow[]): LatestSample {
+	let latest: LatestSample | null = null;
+	let latestTimestamp = Number.NEGATIVE_INFINITY;
+
 	for (const row of rows) {
 		const firstCell = normalizeCell(row[0]);
 
@@ -72,19 +79,26 @@ export function extractLatestSample(rows: SpreadsheetRow[]): LatestSample {
 			continue;
 		}
 
+		const timestamp = sampleDateTimestamp(firstCell);
+
+		if (Number.isNaN(timestamp) || timestamp <= latestTimestamp) {
+			continue;
+		}
+
 		const parsed = parseEnterococcus(row);
 		const status = statusForEnterococcus(parsed.value);
 
-		return {
+		latest = {
 			sampleDate: normalizeSampleDate(firstCell),
 			enterococcus: parsed.value,
 			advisory: status === "advisory",
 			status,
 			rawEnterococcus: parsed.raw,
 		};
+		latestTimestamp = timestamp;
 	}
 
-	return {
+	return latest ?? {
 		sampleDate: null,
 		enterococcus: null,
 		advisory: false,
