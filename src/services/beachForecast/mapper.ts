@@ -17,6 +17,13 @@ export function mapNOAAForecast(feature: NOAAFeature): BeachForecast {
         maxTemperature: attributes.maxtemp ?? "",
         thunderstormRisk: attributes.tstorm ?? "",
         waterspoutRisk: attributes.wspout ?? "",
+        uvValue:
+            attributes.uvindex != null
+                ? Number(attributes.uvindex)
+                : attributes.uv != null
+                    ? Number(attributes.uv)
+                    : undefined,
+        uvCategory: attributes.uvcat ?? attributes.uvcategory ?? undefined,
         period: attributes.period ?? "",
         issuedAt: `${attributes.productdat ?? ""} ${attributes.producttim ?? ""}`.trim(),
     };

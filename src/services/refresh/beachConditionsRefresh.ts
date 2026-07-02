@@ -13,7 +13,8 @@ async function safeFetchCurrentUV(
 	longitude: number,
 ): Promise<number | undefined> {
 	try {
-		return await fetchCurrentUV(latitude, longitude);
+		const value = await fetchCurrentUV(latitude, longitude);
+		return value == null ? undefined : Math.round(value);
 	} catch (error) {
 		console.error("[Weather] Failed to fetch Open-Meteo UV", error);
 		return undefined;
@@ -45,6 +46,7 @@ function getUVCategory(uv: number | undefined): string | undefined {
 }
 
 export async function refreshBeachConditions(env: Env) {
+
 	const regionalUV = {
 		orangeBeach: await safeFetchCurrentUV(30.248108, -87.71726),
 		fortMorgan: await safeFetchCurrentUV(30.2285, -88.0243),
@@ -66,10 +68,13 @@ export async function refreshBeachConditions(env: Env) {
 			);
 			const forecast = await fetchForecast(point.properties.forecastHourly);
 			const current = forecast.properties.periods[0];
+			const beachForecast = beach.beachForecast
+				? beachForecasts.get(beach.beachForecast.siteId)
+				: undefined;
+
 			const uvValue = beach.uv
 				? regionalUV[beach.uv.region]
 				: undefined;
-				
 
 			if (!current) {
 				throw new Error("NWS hourly forecast did not include any periods.");
@@ -86,7 +91,7 @@ export async function refreshBeachConditions(env: Env) {
 				waterTemperature: waterTemperatures[beach.id] ?? null,
 				forecast: beach.beachForecast
 					? {
-						...(beachForecasts.get(beach.beachForecast.siteId) ?? {}),
+						...(beachForecast ?? {}),
 						uvValue,
 						uvCategory: getUVCategory(uvValue),
 					}

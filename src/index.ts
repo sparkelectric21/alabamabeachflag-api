@@ -105,6 +105,7 @@ export default {
 			return await handleRefreshBeachFlagsRequest(request, env);
 		}
 
+
 		if (request.method !== "GET") {
 			return jsonResponse(
 				{
@@ -168,23 +169,35 @@ export default {
 		);
 	},
 
-	async scheduled(_controller: ScheduledController, env: AppEnv): Promise<void> {
-		try {
-			await refreshBeachFlags(env);
-		} catch (error) {
-			console.error("Scheduled beach flags refresh failed:", error);
+	async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+		const cron = controller.cron;
+
+		if (cron === "*/5 * * * *") {
+			console.log("[Cron] Running 5-minute refresh...");
+
+			try {
+				await refreshBeachFlags(env);
+			} catch (error) {
+				console.error("Scheduled beach flags refresh failed:", error);
+			}
+
+			try {
+				await refreshBeachConditions(env);
+			} catch (error) {
+				console.error("Scheduled beach conditions refresh failed:", error);
+			}
+
+			return;
 		}
 
-		try {
-			await refreshBeachConditions(env);
-		} catch (error) {
-			console.error("Scheduled beach conditions refresh failed:", error);
-		}
+		if (cron === "0 */6 * * *") {
+			console.log("[Cron] Running 6-hour water quality refresh...");
 
-		try {
-			await refreshWaterQuality(env);
-		} catch (error) {
-			console.error("Scheduled water quality refresh failed:", error);
+			try {
+				await refreshWaterQuality(env);
+			} catch (error) {
+				console.error("Scheduled water quality refresh failed:", error);
+			}
 		}
 	},
 } satisfies ExportedHandler<AppEnv>;
