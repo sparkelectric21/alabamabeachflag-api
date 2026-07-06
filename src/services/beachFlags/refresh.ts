@@ -7,6 +7,7 @@ import { getFortMorganFlags } from "./providers/fortMorgan";
 import { getGulfShoresFlags } from "./providers/gulfshores";
 import { getOrangeBeachFlags } from "./providers/orangeBeach";
 import { elapsedMs, logError, logInfo } from "../../utils/logger";
+import { API_VERSION } from "../../config/version";
 
 export async function refreshBeachFlags(env: Env) {
 	const startedAt = Date.now();
@@ -39,7 +40,7 @@ export async function refreshBeachFlags(env: Env) {
 
 		const payload = {
 			status: beachFlags.length > 0 ? "ok" : "unavailable",
-			apiVersion: "1.0.0",
+			apiVersion: API_VERSION,
 			source: "Official municipal beach flag sources",
 			generatedAt,
 			lastSuccessfulRefresh: generatedAt,

@@ -19,11 +19,11 @@ describe("Alabama Beach Flag API worker", () => {
 		const response = await worker.fetch(request, env, ctx);
 		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"{\"service\":\"Alabama Beach Flag API\",\"version\":\"1.0.0\",\"status\":\"online\"}"`);
+		expect(await response.text()).toMatchInlineSnapshot(`"{\"service\":\"Alabama Beach Flag API\",\"version\":\"1.2.0\",\"status\":\"online\"}"`);
 	});
 
 	it("responds with API status (integration style)", async () => {
 		const response = await SELF.fetch("https://example.com");
-		expect(await response.text()).toMatchInlineSnapshot(`"{\"service\":\"Alabama Beach Flag API\",\"version\":\"1.0.0\",\"status\":\"online\"}"`);
+		expect(await response.text()).toMatchInlineSnapshot(`"{\"service\":\"Alabama Beach Flag API\",\"version\":\"1.2.0\",\"status\":\"online\"}"`);
 	});
 });

@@ -11,6 +11,7 @@ import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
 import { fetchCurrentWeather } from "./services/weather/weatherKitClient";
+import { API_PATH_VERSION, API_VERSION, APP_VERSION } from "./config/version";
 
 
 
@@ -22,6 +23,48 @@ function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
 			...init.headers,
 		},
 	});
+}
+
+function handleHealthRequest(method: string, version: string, apiVersion: string): Response {
+	const headers = {
+		"Content-Type": "application/json; charset=utf-8",
+		"Cache-Control": "no-store",
+	};
+
+	if (method === "HEAD") {
+		return new Response(null, {
+			status: 200,
+			headers,
+		});
+	}
+
+	return jsonResponse(
+		{
+			status: "ok",
+			service: "Alabama Beach Flag API",
+			version,
+			apiVersion,
+			environment: "production",
+			timestamp: new Date().toISOString(),
+		},
+		{
+			headers,
+		},
+	);
+}
+
+function methodNotAllowed(allow: string): Response {
+	return jsonResponse(
+		{
+			error: "Method Not Allowed",
+		},
+		{
+			status: 405,
+			headers: {
+				Allow: allow,
+			},
+		},
+	);
 }
 
 async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response> {
@@ -61,7 +104,7 @@ async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response>
 
 	return jsonResponse({
 		status: weather.length > 0 ? "ok" : "unavailable",
-		apiVersion: payload.apiVersion ?? "1.0.0",
+		apiVersion: payload.apiVersion ?? API_VERSION,
 		source: payload.source ?? "NOAA",
 		generatedAt: payload.generatedAt ?? new Date().toISOString(),
 		count: weather.length,
@@ -73,6 +116,13 @@ async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response>
 export default {
 	async fetch(request: Request, env: AppEnv): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.pathname === "/health" || url.pathname === "/v1/health") {
+			if (request.method === "GET" || request.method === "HEAD") {
+				return handleHealthRequest(request.method, APP_VERSION, API_PATH_VERSION);
+			}
+
+			return methodNotAllowed("GET, HEAD");
+		}
 
 		if (url.pathname === "/internal/debug/weatherkit") {
 			const secret = request.headers.get("x-refresh-secret");
@@ -135,34 +185,17 @@ export default {
 
 
 		if (request.method !== "GET") {
-			return jsonResponse(
-				{
-					error: "Method Not Allowed",
-				},
-				{
-					status: 405,
-					headers: {
-						Allow: "GET, POST",
-					},
-				},
-			);
+			return methodNotAllowed("GET, POST");
 		}
 
 		if (url.pathname === "/") {
 			return jsonResponse({
 				service: "Alabama Beach Flag API",
-				version: "1.0.0",
+				version: APP_VERSION,
 				status: "online",
 			});
 		}
-		if (url.pathname === "/v1/health") {
-			return jsonResponse({
-				status: "ok",
-				service: "Alabama Beach Flag API",
-				version: "1.0.0",
-				timestamp: new Date().toISOString(),
-			});
-		}
+
 
 
 		if (url.pathname === "/v1/beaches") {

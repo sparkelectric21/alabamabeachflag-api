@@ -40,7 +40,7 @@ function parseEnterococcus(row: SpreadsheetRow): {
 	}
 
 	const raw = `${qualifier}${result}`.trim();
-	const match = result.match(/\d+/);
+	const match = result.match(/\d+(?:\.\d+)?/);
 
 	if (!match) {
 		return { value: null, raw };

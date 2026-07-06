@@ -5,7 +5,19 @@ export function normalizeWeatherCondition(
         return undefined;
     }
 
-    const key = description.trim().toLowerCase();
+	const key = description.trim().toLowerCase();
+
+	if (key.includes("freezing rain")) {
+		return "Freezing Rain";
+	}
+
+	if (key.includes("freezing drizzle")) {
+		return "Freezing Drizzle";
+	}
+
+	if (key.includes("wintry mix") || key.includes("mixed precipitation")) {
+		return "Wintry Mix";
+	}
 
     if (key.includes("tornado")) {
         return "Tornado";
@@ -85,18 +97,6 @@ export function normalizeWeatherCondition(
 
     if (key.includes("flurries")) {
         return "Flurries";
-    }
-
-    if (key.includes("freezing rain")) {
-        return "Freezing Rain";
-    }
-
-    if (key.includes("freezing drizzle")) {
-        return "Freezing Drizzle";
-    }
-
-    if (key.includes("wintry mix") || key.includes("mixed precipitation")) {
-        return "Wintry Mix";
     }
 
     if (key.includes("smoke")) {

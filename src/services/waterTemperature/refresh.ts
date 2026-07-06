@@ -3,6 +3,7 @@
 import { beaches } from "../../config/BeachRegistry";
 import { fetchLatestWaterTemperature } from "./service";
 import { elapsedMs, logError, logInfo } from "../../utils/logger";
+import type { WaterTemperatureObservationWithSource } from "./service";
 
 export interface WaterTemperatureResults {
 	[beachId: string]: {
@@ -18,6 +19,7 @@ export async function refreshWaterTemperatures(): Promise<WaterTemperatureResult
 	const startedAt = Date.now();
 	logInfo("Water Temperature", "Starting refresh");
 	const results: WaterTemperatureResults = {};
+	const requestCache = new Map<string, Promise<WaterTemperatureObservationWithSource>>();
 
 	for (const beach of beaches) {
 		if (!beach.supports.waterTemperature || !beach.waterTemperature) {
@@ -27,6 +29,7 @@ export async function refreshWaterTemperatures(): Promise<WaterTemperatureResult
 		try {
 			const observation = await fetchLatestWaterTemperature(
 				beach.waterTemperature,
+				requestCache,
 			);
 
 			results[beach.id] = observation;

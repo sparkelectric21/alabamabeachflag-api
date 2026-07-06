@@ -89,6 +89,17 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 	const normalizedConditions = currentConditionsText.toLowerCase();
 	const primaryFlag = flagFromHazard(currentConditionsText);
 
+	if (!primaryFlag) {
+		return {
+			reports: [],
+			errors: GULF_SHORES_IDS.map((beachId) => ({
+				beachId,
+				displayName: beachId,
+				message: "Gulf Shores response did not contain a recognized flag status.",
+			})),
+		};
+	}
+
 	const reportData = {
 		primaryFlag,
 		hasPurpleFlag:

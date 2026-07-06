@@ -114,6 +114,17 @@ export async function getOrangeBeachFlags(generatedAt: string): Promise<BeachFla
 	const normalizedText = text.toLowerCase();
 	const primaryFlag = parseFlag(flagValueFromHtml(reportHtml) ?? flagValue(text));
 
+	if (!primaryFlag) {
+		return {
+			reports: [],
+			errors: ORANGE_BEACH_IDS.map((beachId) => ({
+				beachId,
+				displayName: beachId,
+				message: "Orange Beach response did not contain a recognized flag status.",
+			})),
+		};
+	}
+
 	return {
 		reports: ORANGE_BEACH_IDS.map((beachId) => ({
 			beachId,

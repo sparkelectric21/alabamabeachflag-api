@@ -2,13 +2,13 @@ import { elapsedMs, logError, logInfo } from "../../utils/logger";
 import { getLatestWaterQuality } from "../adem/service";
 import {
 	WATER_QUALITY_CACHE_KEY,
-	readCache,
 	writeCache,
 } from "../cache/kv";
+import { API_VERSION } from "../../config/version";
 
 export interface WaterQualityCachePayload {
 	status: "ok";
-	apiVersion: "1.0.0";
+	apiVersion: typeof API_VERSION;
 	source: "ADEM";
 	generatedAt: string;
 	lastSuccessfulRefresh: string;
@@ -28,7 +28,7 @@ export async function refreshWaterQuality(
 
 		const payload: WaterQualityCachePayload = {
 			status: "ok",
-			apiVersion: "1.0.0",
+			apiVersion: API_VERSION,
 			source: "ADEM",
 			generatedAt: refreshedAt,
 			lastSuccessfulRefresh: refreshedAt,
@@ -41,15 +41,6 @@ export async function refreshWaterQuality(
 		}
 
 		await writeCache(env.BEACH_DATA, WATER_QUALITY_CACHE_KEY, payload);
-
-		const cachedPayload = await readCache<unknown>(
-			env.BEACH_DATA,
-			WATER_QUALITY_CACHE_KEY,
-		);
-
-		if (!cachedPayload) {
-			throw new Error("Water quality cache write verification failed.");
-		}
 
 		logInfo("Water Quality", "Finished refresh", {
 			durationMs: elapsedMs(startedAt),

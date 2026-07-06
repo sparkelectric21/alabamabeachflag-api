@@ -5,6 +5,38 @@ import { fetchWithRetry } from "../../utils/http";
 
 const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/realtime2";
 
+function parseNDBCTimestamp(headers: string[], values: string[]): string {
+	const valueFor = (...names: string[]): string | undefined => {
+		const index = names.map((name) => headers.indexOf(name)).find((index) => index >= 0);
+		return index === undefined ? undefined : values[index];
+	};
+	const yearText = valueFor("#YY", "YY", "YYYY");
+	const month = Number(valueFor("MM"));
+	const day = Number(valueFor("DD"));
+	const hour = Number(valueFor("hh"));
+	const minute = Number(valueFor("mm") ?? "0");
+	const year = Number(yearText);
+
+	if (
+		!yearText ||
+		[year, month, day, hour, minute].some(Number.isNaN) ||
+		year < 2000 ||
+		year > 2100 ||
+		month < 1 ||
+		month > 12 ||
+		day < 1 ||
+		day > 31 ||
+		hour < 0 ||
+		hour > 23 ||
+		minute < 0 ||
+		minute > 59
+	) {
+		throw new Error("NDBC observation timestamp is invalid");
+	}
+
+	return new Date(Date.UTC(year, month - 1, day, hour, minute)).toISOString();
+}
+
 export async function fetchNDBCWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
@@ -41,7 +73,7 @@ export async function fetchNDBCWaterTemperature(
 
 	const waterTempC = Number(values[wtIndex]);
 
-	if (Number.isNaN(waterTempC)) {
+	if (!Number.isFinite(waterTempC) || waterTempC < -5 || waterTempC > 45) {
 		throw new Error(`Invalid water temperature for station ${stationId}`);
 	}
 
@@ -50,6 +82,6 @@ export async function fetchNDBCWaterTemperature(
 	return {
 		temperature: waterTempF,
 		temperatureUnit: "F",
-		observedAt: new Date().toISOString(),
+		observedAt: parseNDBCTimestamp(headers, values),
 	};
 }
