@@ -13,6 +13,8 @@ This Cloudflare Worker powers the Alabama Beach Flag iOS app by collecting, norm
 - ADEM water quality integration
 - NOAA and marine data integration
 - Cloudflare KV caching
+- Shared HTTP client with retry and timeout handling
+- Structured logging for scheduled refresh jobs
 - Scheduled background refresh jobs
 - App-ready JSON API
 
@@ -60,6 +62,12 @@ Run tests:
 npm test
 ```
 
+Run a TypeScript type check:
+
+```sh
+npm run typecheck
+```
+
 Deploy:
 
 ```sh
@@ -68,8 +76,8 @@ npx wrangler deploy
 
 ## Documentation
 
-See `ARCHITECTURE.md` for a detailed overview of the backend design, scheduled jobs, data providers, future roadmap, and development philosophy.
+See `ARCHITECTURE.md` for a detailed overview of the backend architecture, scheduled jobs, provider design, shared networking layer, logging strategy, deployment workflow, and future roadmap.
 
 ## Project Status
 
-This backend is under active development and serves as the central data platform for the Alabama Beach Flag application and future clients.
+The backend is production deployed and actively maintained. It serves as the central data platform for the Alabama Beach Flag iOS app and is designed to support future clients including widgets, the website, Android, and push notification services.

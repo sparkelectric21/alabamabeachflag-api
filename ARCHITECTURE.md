@@ -361,29 +361,28 @@ Ideal log format:
 [Flags] Finished refresh in 1.42s
 ```
 
-Future improvement:
+Current implementation:
 
-- Add a shared logger utility
-- Standardize success, warning, and error messages
-- Log refresh duration
-- Log provider name and source type
-- Avoid noisy duplicate logs
+- Shared logger utility lives in `src/utils/logger.ts`
+- Major refresh jobs log start, finish, duration, counts, and errors
+- Log messages use consistent scopes such as `[Flags]`, `[Beach Conditions]`, `[Water Temperature]`, and `[Water Quality]`
+- Provider and refresh errors should include useful context without creating noisy duplicate logs
 
-## Shared HTTP Client Roadmap
+## Shared HTTP Client
 
-A shared HTTP client should eventually replace direct `fetch()` calls inside providers.
+A shared HTTP client now centralizes outbound HTTP requests across providers and services.
 
-The shared client should support:
+The shared client supports:
 
 - request timeout
 - retry attempts
-- retry delay
+- exponential retry delay
 - retry only on transient failures
 - consistent User-Agent
-- consistent error messages
+- consistent labeled error messages
 - optional response validation
 
-This will improve reliability across all providers.
+This improves reliability across all providers and gives the backend one place to improve request behavior in the future.
 
 ## Source Type Rules
 
@@ -456,18 +455,18 @@ This should be used by the root route, health route, logs, and future debugging 
 
 Planned or likely future backend improvements:
 
-1. Shared HTTP client with retries and timeout
-2. Centralized logger
-3. Centralized config file
-4. `/health` endpoint
-5. WeatherKit backend integration
-6. Improved Fort Morgan estimation model
-7. Dauphin Island official source integration if available
-8. Vibrio risk research and possible v2.0 feature
-9. Sargassum data research and possible future feature
-10. Push notification support for flag changes
-11. Android-ready API support
-12. Better automated tests
+1. Centralized config file
+2. `/health` endpoint
+3. Backend version constant
+4. WeatherKit backend integration
+5. Improved Fort Morgan estimation model
+6. Dauphin Island official source integration if available
+7. Vibrio risk research and possible v2.0 feature
+8. Sargassum data research and possible future feature
+9. Push notification support for flag changes
+10. Android-ready API support
+11. Better automated tests
+12. Monitoring and alerting improvements
 
 ## Development Philosophy
 
