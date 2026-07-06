@@ -7,6 +7,7 @@ import { fetchForecast, fetchPoint } from "../nws/client";
 import { refreshWaterTemperatures } from "../waterTemperature/refresh";
 import { getBeachForecasts } from "../beachForecast/service";
 import { fetchCurrentUV } from "../beachForecast/openMeteoClient";
+import { elapsedMs, logError, logInfo } from "../../utils/logger";
 
 async function safeFetchCurrentUV(
 	latitude: number,
@@ -16,7 +17,9 @@ async function safeFetchCurrentUV(
 		const value = await fetchCurrentUV(latitude, longitude);
 		return value == null ? undefined : Math.round(value);
 	} catch (error) {
-		console.error("[Weather] Failed to fetch Open-Meteo UV", error);
+		logError("Beach Conditions", "Open-Meteo UV failed", {
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return undefined;
 	}
 }
@@ -46,6 +49,8 @@ function getUVCategory(uv: number | undefined): string | undefined {
 }
 
 export async function refreshBeachConditions(env: Env) {
+	const startedAt = Date.now();
+	logInfo("Beach Conditions", "Starting refresh");
 
 	const regionalUV = {
 		orangeBeach: await safeFetchCurrentUV(30.248108, -87.71726),
@@ -53,7 +58,11 @@ export async function refreshBeachConditions(env: Env) {
 		dauphinIsland: await safeFetchCurrentUV(30.2506, -88.1096),
 	};
 
-	console.log("Regional UV:", regionalUV);
+	logInfo("Beach Conditions", "Regional UV refreshed", {
+		orangeBeach: regionalUV.orangeBeach,
+		fortMorgan: regionalUV.fortMorgan,
+		dauphinIsland: regionalUV.dauphinIsland,
+	});
 
 	const beachConditions = [];
 	const errors = [];
@@ -98,10 +107,9 @@ export async function refreshBeachConditions(env: Env) {
 					: null,
 			});
 		} catch (error) {
-			console.error(
-				`[Weather] Failed to refresh ${beach.displayName}`,
-				error,
-			);
+			logError("Beach Conditions", `${beach.displayName} failed`, {
+				error: error instanceof Error ? error.message : String(error),
+			});
 
 			errors.push({
 				beachId: beach.id,
@@ -126,6 +134,12 @@ export async function refreshBeachConditions(env: Env) {
 	}
 
 	await writeCache(env.BEACH_DATA, BEACH_CONDITIONS_CACHE_KEY, payload);
+
+	logInfo("Beach Conditions", "Finished refresh", {
+		durationMs: elapsedMs(startedAt),
+		count: beachConditions.length,
+		errors: errors.length,
+	});
 
 	return payload;
 }

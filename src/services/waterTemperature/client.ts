@@ -1,4 +1,4 @@
-
+import { fetchWithRetry } from "../../utils/http";
 
 const NOAA_COOPS_BASE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter";
 
@@ -31,7 +31,7 @@ export async function fetchWaterTemperature(
 	url.searchParams.set("format", "json");
 	url.searchParams.set("date", "latest");
 
-	const response = await fetch(url.toString(), {
+	const response = await fetchWithRetry(url.toString(), {
 		headers: {
 			"User-Agent": "Alabama Beach Flag",
 		},

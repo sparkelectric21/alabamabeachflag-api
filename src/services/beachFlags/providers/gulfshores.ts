@@ -1,4 +1,5 @@
 import { BeachFlagColor, BeachFlagProviderResult } from "../types";
+import { fetchWithRetry } from "../../../utils/http";
 
 const GULF_SHORES_URL = "https://www.gulfshoresal.gov/1136/Beach-Safety";
 
@@ -46,8 +47,12 @@ function extractCurrentConditionsText(html: string): string {
 function flagFromHazard(text: string): BeachFlagColor | null {
 	const normalized = text.toLowerCase();
 
-	if (normalized.includes("water closed")) {
+	if (normalized.includes("double red") || normalized.includes("water closed")) {
 		return "doubleRed";
+	}
+
+	if (normalized.includes("high hazard") || normalized.includes("red flag")) {
+		return "red";
 	}
 
 	if (normalized.includes("medium hazard") || normalized.includes("yellow flag")) {
@@ -58,19 +63,13 @@ function flagFromHazard(text: string): BeachFlagColor | null {
 		return "green";
 	}
 
-	if (normalized.includes("high hazard") || normalized.includes("red flag")) {
-		return "red";
-	}
-
-	if (normalized.includes("double red")) {
-		return "doubleRed";
-	}
-
 	return null;
 }
 
 export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlagProviderResult> {
-	const response = await fetch(GULF_SHORES_URL);
+	const response = await fetchWithRetry(GULF_SHORES_URL, {
+		label: "Gulf Shores Flags",
+	});
 
 	if (!response.ok) {
 		return {
@@ -87,11 +86,14 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 
 	const html = await response.text();
 	const currentConditionsText = extractCurrentConditionsText(html);
+	const normalizedConditions = currentConditionsText.toLowerCase();
 	const primaryFlag = flagFromHazard(currentConditionsText);
 
 	const reportData = {
 		primaryFlag,
-		hasPurpleFlag: currentConditionsText.toLowerCase().includes("purple flag") || currentConditionsText.toLowerCase().includes("dangerous marine life"),
+		hasPurpleFlag:
+			normalizedConditions.includes("purple flag") ||
+			normalizedConditions.includes("dangerous marine life"),
 		lastUpdated: generatedAt,
 		sourceType: "official" as const,
 		sourceName: "City of Gulf Shores",

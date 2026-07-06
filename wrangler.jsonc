@@ -19,7 +19,22 @@
 			"binding": "BEACH_DATA",
 			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
 		}
-	]
+	],
+	// Scheduled refreshes are based on how frequently each data source changes.
+	// The app serves cached data from Workers KV, allowing fast responses without
+	// making live requests to external providers for every user request.
+	"triggers": {
+		"crons": [
+			// Refresh official beach flag status
+			"*/5 * * * *",
+
+			// Refresh weather and UV conditions
+			"*/15 * * * *",
+
+			// Refresh ADEM water quality data
+			"0 */6 * * *"
+		]
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

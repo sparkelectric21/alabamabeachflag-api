@@ -1,3 +1,4 @@
+import { fetchWithRetry } from "../../utils/http";
 const OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast";
 
 export async function fetchCurrentUV(
@@ -12,7 +13,7 @@ export async function fetchCurrentUV(
     url.searchParams.set("current", "uv_index");
     url.searchParams.set("timezone", "America/Chicago");
 
-    const response = await fetch(url);
+    const response = await fetchWithRetry(url);
 
     if (!response.ok) {
         throw new Error(`Open-Meteo request failed (${response.status})`);

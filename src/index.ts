@@ -181,6 +181,12 @@ export default {
 				console.error("Scheduled beach flags refresh failed:", error);
 			}
 
+			return;
+		}
+
+		if (cron === "*/15 * * * *") {
+			console.log("[Cron] Running 15-minute weather refresh...");
+
 			try {
 				await refreshBeachConditions(env);
 			} catch (error) {

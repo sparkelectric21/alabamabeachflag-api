@@ -1,5 +1,7 @@
 
 
+import { fetchWithRetry } from "../../utils/http";
+
 const BEACH_MONITORING_URL =
 	"https://gis.adem.alabama.gov/arcgis/rest/services/BeachMonitoring/MapServer/15/query?where=1%3D1&outFields=*&f=json";
 
@@ -30,7 +32,7 @@ interface ArcGISResponse {
 }
 
 export async function fetchBeachMonitoringLocations(): Promise<ArcGISBeachLocation[]> {
-	const response = await fetch(BEACH_MONITORING_URL);
+	const response = await fetchWithRetry(BEACH_MONITORING_URL);
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch ArcGIS beach locations (${response.status})`);

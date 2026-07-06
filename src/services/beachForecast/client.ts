@@ -1,9 +1,13 @@
+import { fetchWithRetry } from "../../utils/http";
 export interface NOAAFeatureAttributes {
     id: string;
     siteid: string;
     beachname: string;
     rip?: string;
     uv?: string;
+    uvindex?: string | number;
+    uvcat?: string;
+    uvcategory?: string;
     surf?: string;
     weather?: string;
     winds?: string;
@@ -39,7 +43,7 @@ export interface BeachForecastObservation {
 }
 
 export async function fetchBeachForecast(): Promise<NOAAFeatureResponse> {
-    const response = await fetch(
+    const response = await fetchWithRetry(
         "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/marine_beachforecast_summary/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=false&f=json"
     );
 

@@ -1,13 +1,14 @@
 
 
 import type { WaterTemperatureObservation } from "./client";
+import { fetchWithRetry } from "../../utils/http";
 
 const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/realtime2";
 
 export async function fetchNDBCWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
-	const response = await fetch(
+	const response = await fetchWithRetry(
 		`${NDBC_BASE_URL}/${stationId}.txt`,
 		{
 			headers: {

@@ -1,5 +1,6 @@
+import { fetchWithRetry } from "../../utils/http";
 export async function fetchWaterQualityReport(reportUrl: string): Promise<ArrayBuffer> {
-	const response = await fetch(reportUrl, {
+	const response = await fetchWithRetry(reportUrl, {
 		headers: {
 			Accept: "application/vnd.ms-excel, application/octet-stream, */*",
 		},

@@ -1,5 +1,6 @@
 import type { Env } from "../../types";
 import { createWeatherKitToken } from "./auth";
+import { fetchWithRetry } from "../../utils/http";
 
 export interface WeatherKitRequest {
     latitude: number;
@@ -22,26 +23,18 @@ export async function fetchCurrentWeather(
     url.searchParams.set("countryCode", "US");
     url.searchParams.set("timezone", "America/Chicago");
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    try {
-        const response = await fetch(url, {
-            headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "application/json"
-            },
-            signal: controller.signal
-        });
-
-        const body = await response.text();
-
-        if (!response.ok) {
-            throw new Error(`WeatherKit request failed (${response.status}): ${body}`);
+    const response = await fetchWithRetry(url, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
         }
+    });
 
-        return JSON.parse(body);
-    } finally {
-        clearTimeout(timeout);
+    const body = await response.text();
+
+    if (!response.ok) {
+        throw new Error(`WeatherKit request failed (${response.status}): ${body}`);
     }
+
+    return JSON.parse(body);
 }

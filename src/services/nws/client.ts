@@ -1,3 +1,4 @@
+import { fetchWithRetry } from "../../utils/http";
 const BASE_URL = "https://api.weather.gov";
 
 export interface NWSPointResponse {
@@ -15,7 +16,7 @@ export async function fetchPoint(
 	latitude: number,
 	longitude: number,
 ): Promise<NWSPointResponse> {
-	const response = await fetch(
+	const response = await fetchWithRetry(
 		`${BASE_URL}/points/${latitude},${longitude}`,
 		{
 			headers: {
@@ -51,7 +52,7 @@ export interface NWSForecastResponse {
 export async function fetchForecast(
 	forecastUrl: string,
 ): Promise<NWSForecastResponse> {
-	const response = await fetch(forecastUrl, {
+	const response = await fetchWithRetry(forecastUrl, {
 		headers: {
 			"User-Agent": "Alabama Beach Flag (support@albeachflag.com)",
 			Accept: "application/geo+json",
