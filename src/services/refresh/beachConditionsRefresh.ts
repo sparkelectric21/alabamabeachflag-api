@@ -1,3 +1,4 @@
+import { normalizeWeatherCondition } from "../weather/normalizeWeatherCondition";
 import {
 	BEACH_CONDITIONS_CACHE_KEY,
 	writeCache,
@@ -94,7 +95,7 @@ export async function refreshBeachConditions(env: Env) {
 				displayName: beach.displayName,
 				temperature: current.temperature,
 				temperatureUnit: current.temperatureUnit,
-				condition: current.shortForecast,
+				condition: normalizeWeatherCondition(current.shortForecast),
 				windSpeed: current.windSpeed,
 				windDirection: current.windDirection,
 				waterTemperature: waterTemperatures[beach.id] ?? null,

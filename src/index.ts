@@ -10,6 +10,7 @@ import type { Env as AppEnv } from "./types";
 import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
 import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
 import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
+import { fetchCurrentWeather } from "./services/weather/weatherKitClient";
 
 
 
@@ -72,6 +73,33 @@ async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response>
 export default {
 	async fetch(request: Request, env: AppEnv): Promise<Response> {
 		const url = new URL(request.url);
+
+		if (url.pathname === "/internal/debug/weatherkit") {
+			const secret = request.headers.get("x-refresh-secret");
+
+			if (secret !== env.REFRESH_SECRET) {
+				return jsonResponse({ error: "Unauthorized" }, { status: 401 });
+			}
+
+			try {
+				const result = await fetchCurrentWeather(
+					env,
+					{
+						latitude: 30.2460,
+						longitude: -87.7008,
+					},
+				);
+
+				return jsonResponse(result);
+			} catch (error) {
+				return jsonResponse(
+					{
+						error: error instanceof Error ? error.message : String(error),
+					},
+					{ status: 500 },
+				);
+			}
+		}
 
 		if (
 			url.pathname === "/internal/refresh/water-quality" &&
