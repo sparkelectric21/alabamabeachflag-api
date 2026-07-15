@@ -50,12 +50,88 @@ describe("NDBC water temperatures", () => {
 });
 
 describe("beach-flag parsing", () => {
-	it("does not publish an official report when the source format is unrecognized", async () => {
+	const generatedAt = "2026-07-06T14:30:00.000Z";
+
+	async function parseGulfShores(html: string) {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-			new Response("<html><p>Beach information unavailable</p></html>", { status: 200 }),
+			new Response(html, { status: 200 }),
 		));
 
-		const result = await getGulfShoresFlags("2026-07-06T14:30:00.000Z");
+		return getGulfShoresFlags(generatedAt);
+	}
+
+	function currentConditions(primary: string, secondary?: string): string {
+		return `
+			<html>
+				<p>Surf Conditions:</p>
+				<p>${primary}</p>
+				${secondary ? `<p>${secondary}</p>` : ""}
+			</html>
+		`;
+	}
+
+	it.each([
+		["Low Hazard", "green"],
+		["Medium Hazard", "yellow"],
+		["High Hazard", "red"],
+		["Double Red Flags - Water Closed", "doubleRed"],
+	] as const)("parses %s as %s", async (status, expectedFlag) => {
+		const result = await parseGulfShores(currentConditions(status));
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports).toHaveLength(3);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: expectedFlag,
+			hasPurpleFlag: false,
+		});
+	});
+
+	it("parses yellow with a purple dangerous-marine-life flag", async () => {
+		const result = await parseGulfShores(
+			currentConditions("Medium Hazard", "Dangerous Marine Life"),
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "yellow",
+			hasPurpleFlag: true,
+		});
+	});
+
+	it("ignores purple text in the static educational legend", async () => {
+		const result = await parseGulfShores(`
+			${currentConditions("Medium Hazard")}
+			<section id="flag-legend">
+				<h2>Beach Warning Flags</h2>
+				<p>Purple Flag - Dangerous Marine Life</p>
+			</section>
+		`);
+
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "yellow",
+			hasPurpleFlag: false,
+		});
+	});
+
+	it("does not treat the static educational legend as current conditions", async () => {
+		const result = await parseGulfShores(`
+			<section id="flag-legend">
+				<p>Green Flag - Low Hazard</p>
+				<p>Yellow Flag - Medium Hazard</p>
+				<p>Red Flag - High Hazard</p>
+				<p>Double Red Flags - Water Closed</p>
+				<p>Purple Flag - Dangerous Marine Life</p>
+			</section>
+		`);
+
+		expect(result.reports).toEqual([]);
+		expect(result.errors).toHaveLength(3);
+	});
+
+	it("does not publish an official report when the source format is unrecognized", async () => {
+		const result = await parseGulfShores(
+			"<html><p>Beach information unavailable</p></html>",
+		);
 
 		expect(result.reports).toEqual([]);
 		expect(result.errors).toHaveLength(3);

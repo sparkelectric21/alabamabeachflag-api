@@ -21,7 +21,9 @@ function stripHtml(html: string): string {
 }
 
 function extractCurrentConditionsText(html: string): string {
-	const htmlMatch = html.match(/Surf Conditions:\s*<\/p>\s*<p[^>]*>([\s\S]*?)<\/p>/i);
+	const htmlMatch = html.match(
+		/Surf Conditions:\s*<\/p>((?:\s*<p[^>]*>[\s\S]*?<\/p>){1,2})/i,
+	);
 
 	if (htmlMatch?.[1]) {
 		return `Surf Conditions: ${stripHtml(htmlMatch[1])}`;
@@ -31,7 +33,7 @@ function extractCurrentConditionsText(html: string): string {
 	const start = text.search(/Surf Conditions:/i);
 
 	if (start < 0) {
-		return text;
+		return "";
 	}
 
 	const section = text.slice(start, start + 160);
