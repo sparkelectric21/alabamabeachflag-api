@@ -70,6 +70,83 @@ describe("beach-flag parsing", () => {
 		`;
 	}
 
+	function surfImage(documentId: string): string {
+		return `
+			<div id="surfTS">
+				<div class="pageContent">
+					<div class="widgetBody">
+						<img src="/ImageRepository/Document?documentID=${documentId}" alt="">
+					</div>
+				</div>
+			</div>
+		`;
+	}
+
+	it("parses the captured live #surfTS image markup", async () => {
+		const result = await parseGulfShores(surfImage("3016"));
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports).toHaveLength(3);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "yellow",
+			hasPurpleFlag: true,
+		});
+	});
+
+	it.each([
+		["3006", "doubleRed", false],
+		["3007", "doubleRed", false],
+		["3010", "red", false],
+		["3011", "red", true],
+		["3012", "green", true],
+		["3013", "green", true],
+		["3014", "green", false],
+		["3015", "green", false],
+		["3016", "yellow", true],
+		["3017", "yellow", true],
+		["3018", "red", false],
+		["3019", "red", true],
+		["3020", "yellow", true],
+		["3021", "yellow", true],
+		["3022", "yellow", false],
+		["3023", "yellow", false],
+	] as const)(
+		"maps current-condition image %s to %s with purple=%s",
+		async (documentId, expectedFlag, expectedPurple) => {
+			const result = await parseGulfShores(surfImage(documentId));
+
+			expect(result.errors).toEqual([]);
+			expect(result.reports[0]).toMatchObject({
+				primaryFlag: expectedFlag,
+				hasPurpleFlag: expectedPurple,
+			});
+		},
+	);
+
+	it("fails safely for an unknown #surfTS image document ID", async () => {
+		const result = await parseGulfShores(surfImage("99999"));
+
+		expect(result.reports).toEqual([]);
+		expect(result.errors).toHaveLength(3);
+		expect(result.errors[0]?.message).toContain("document ID 99999");
+	});
+
+	it("ignores permanent legend image IDs outside #surfTS", async () => {
+		const result = await parseGulfShores(`
+			${surfImage("3016")}
+			<section id="flag-legend">
+				<img src="/ImageRepository/Document?documentID=10807">
+				<img src="/ImageRepository/Document?documentID=10804">
+			</section>
+		`);
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "yellow",
+			hasPurpleFlag: true,
+		});
+	});
+
 	it.each([
 		["Low Hazard", "green"],
 		["Medium Hazard", "yellow"],
@@ -132,6 +209,13 @@ describe("beach-flag parsing", () => {
 		const result = await parseGulfShores(
 			"<html><p>Beach information unavailable</p></html>",
 		);
+
+		expect(result.reports).toEqual([]);
+		expect(result.errors).toHaveLength(3);
+	});
+
+	it("returns errors when there is no current conditions container or text", async () => {
+		const result = await parseGulfShores("<html><main>Beach Safety</main></html>");
 
 		expect(result.reports).toEqual([]);
 		expect(result.errors).toHaveLength(3);

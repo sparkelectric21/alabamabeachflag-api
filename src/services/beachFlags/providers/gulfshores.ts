@@ -9,6 +9,33 @@ const GULF_SHORES_IDS = [
 	"little-lagoon-pass",
 ];
 
+type GulfShoresFlagState = {
+	primaryFlag: BeachFlagColor;
+	hasPurpleFlag: boolean;
+};
+
+// These IDs are the City of Gulf Shores' paired normal/hover condition graphics
+// in ImageRepository (3006-3023). They are read only from #surfTS so the static
+// educational flag images elsewhere on the page can never become live status.
+const FLAG_STATE_BY_IMAGE_DOCUMENT_ID: Record<string, GulfShoresFlagState> = {
+	"3006": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	"3007": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	"3010": { primaryFlag: "red", hasPurpleFlag: false },
+	"3011": { primaryFlag: "red", hasPurpleFlag: true },
+	"3012": { primaryFlag: "green", hasPurpleFlag: true },
+	"3013": { primaryFlag: "green", hasPurpleFlag: true },
+	"3014": { primaryFlag: "green", hasPurpleFlag: false },
+	"3015": { primaryFlag: "green", hasPurpleFlag: false },
+	"3016": { primaryFlag: "yellow", hasPurpleFlag: true },
+	"3017": { primaryFlag: "yellow", hasPurpleFlag: true },
+	"3018": { primaryFlag: "red", hasPurpleFlag: false },
+	"3019": { primaryFlag: "red", hasPurpleFlag: true },
+	"3020": { primaryFlag: "yellow", hasPurpleFlag: true },
+	"3021": { primaryFlag: "yellow", hasPurpleFlag: true },
+	"3022": { primaryFlag: "yellow", hasPurpleFlag: false },
+	"3023": { primaryFlag: "yellow", hasPurpleFlag: false },
+};
+
 function stripHtml(html: string): string {
 	return html
 		.replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -18,6 +45,44 @@ function stripHtml(html: string): string {
 		.replace(/&amp;/gi, "&")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+function extractElementById(html: string, id: string): string | null {
+	const openingTag = new RegExp(`<div\\b[^>]*\\bid=["']${id}["'][^>]*>`, "i");
+	const start = html.search(openingTag);
+
+	if (start < 0) {
+		return null;
+	}
+
+	const divTag = /<\/?div\b[^>]*>/gi;
+	divTag.lastIndex = start;
+	let depth = 0;
+	let match: RegExpExecArray | null;
+
+	while ((match = divTag.exec(html))) {
+		depth += /^<\/div/i.test(match[0]) ? -1 : 1;
+
+		if (depth === 0) {
+			return html.slice(start, divTag.lastIndex);
+		}
+	}
+
+	return null;
+}
+
+function imageDocumentIdFromCurrentConditions(html: string): string | null {
+	const surfConditions = extractElementById(html, "surfTS");
+
+	if (!surfConditions) {
+		return null;
+	}
+
+	const imageMatch = surfConditions.match(
+		/<img\b[^>]*\bsrc=["'][^"']*\/ImageRepository\/Document\?[^"']*\bdocumentID=(\d+)[^"']*["']/i,
+	);
+
+	return imageMatch?.[1] ?? null;
 }
 
 function extractCurrentConditionsText(html: string): string {
@@ -87,26 +152,35 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 	}
 
 	const html = await response.text();
-	const currentConditionsText = extractCurrentConditionsText(html);
+	const imageDocumentId = imageDocumentIdFromCurrentConditions(html);
+	const imageFlagState = imageDocumentId
+		? FLAG_STATE_BY_IMAGE_DOCUMENT_ID[imageDocumentId]
+		: null;
+	const currentConditionsText = imageDocumentId ? "" : extractCurrentConditionsText(html);
 	const normalizedConditions = currentConditionsText.toLowerCase();
-	const primaryFlag = flagFromHazard(currentConditionsText);
+	const primaryFlag = imageFlagState?.primaryFlag ?? flagFromHazard(currentConditionsText);
 
 	if (!primaryFlag) {
+		const message = imageDocumentId
+			? `Gulf Shores response contained unknown current-condition image document ID ${imageDocumentId}.`
+			: "Gulf Shores response did not contain a recognized flag status.";
+
 		return {
 			reports: [],
 			errors: GULF_SHORES_IDS.map((beachId) => ({
 				beachId,
 				displayName: beachId,
-				message: "Gulf Shores response did not contain a recognized flag status.",
+				message,
 			})),
 		};
 	}
 
 	const reportData = {
 		primaryFlag,
-		hasPurpleFlag:
+		hasPurpleFlag: imageFlagState?.hasPurpleFlag ?? (
 			normalizedConditions.includes("purple flag") ||
-			normalizedConditions.includes("dangerous marine life"),
+			normalizedConditions.includes("dangerous marine life")
+		),
 		lastUpdated: generatedAt,
 		sourceType: "official" as const,
 		sourceName: "City of Gulf Shores",
