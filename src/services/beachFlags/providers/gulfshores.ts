@@ -21,23 +21,27 @@ function stripHtml(html: string): string {
 }
 
 function extractCurrentConditionsText(html: string): string {
-	const surfConditionsIndex = html.search(/Surf Conditions:/i);
+	const htmlMatch = html.match(/Surf Conditions:\s*<\/p>\s*<p[^>]*>([\s\S]*?)<\/p>/i);
 
-	if (surfConditionsIndex < 0) {
-		return "";
+	if (htmlMatch?.[1]) {
+		return `Surf Conditions: ${stripHtml(htmlMatch[1])}`;
 	}
 
-	const sectionHtml = html.slice(
-		surfConditionsIndex,
-		surfConditionsIndex + 2000,
-	);
+	const text = stripHtml(html);
+	const start = text.search(/Surf Conditions:/i);
 
-	return stripHtml(
-		sectionHtml.replace(
-			/<img\b[^>]*\balt=["']([^"']*)["'][^>]*>/gi,
-			" $1 ",
-		),
-	);
+	if (start < 0) {
+		return text;
+	}
+
+	const section = text.slice(start, start + 160);
+	const end = section.search(/Search Home|Residents|Beaches Beach Safety/i);
+
+	if (end > 0) {
+		return section.slice(0, end).trim();
+	}
+
+	return section.trim();
 }
 
 function flagFromHazard(text: string): BeachFlagColor | null {
