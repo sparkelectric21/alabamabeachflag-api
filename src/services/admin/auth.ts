@@ -37,10 +37,18 @@ async function productionVerifier(token: string, issuer: string, audience: strin
 function authorized(payload: JWTPayload, env: Env): boolean {
 	const identities = csv(env.ACCESS_ALLOWED_IDENTITIES);
 	const groups = csv(env.ACCESS_ALLOWED_GROUPS);
+	const serviceTokens = csv(env.ACCESS_ALLOWED_SERVICE_TOKENS);
+
+	const commonName = typeof payload.common_name === "string" ? payload.common_name.toLowerCase() : "";
+	const subject = typeof payload.sub === "string" ? payload.sub.toLowerCase() : "";
+	const isServiceToken = commonName !== "" || payload.sub === "";
+	if (isServiceToken) {
+		return commonName !== "" && serviceTokens.has(commonName);
+	}
+
 	if (identities.size === 0 && groups.size === 0) return false;
 
 	const email = typeof payload.email === "string" ? payload.email.toLowerCase() : "";
-	const subject = typeof payload.sub === "string" ? payload.sub.toLowerCase() : "";
 	if (identities.has(email) || identities.has(subject)) return true;
 
 	const tokenGroups = Array.isArray(payload.groups)
@@ -64,7 +72,10 @@ export async function authenticateAdminRequest(
 			const issuer = normalizedIssuer(env.ACCESS_TEAM_DOMAIN);
 			const payload = await verifyToken(token, issuer, env.ACCESS_AUD);
 			if (authorized(payload, env)) {
-				return { method: "access", subject: String(payload.email ?? payload.sub ?? "access-identity") };
+				const subject = typeof payload.common_name === "string"
+					? "access-service-token"
+					: String(payload.email ?? payload.sub ?? "access-identity");
+				return { method: "access", subject };
 			}
 		} catch {
 			// Authentication failures intentionally fall through to the isolated migration path.

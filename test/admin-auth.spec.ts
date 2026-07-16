@@ -1,5 +1,5 @@
 import { generateKeyPair, jwtVerify, SignJWT } from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	authenticateAdminRequest,
 	forbiddenAdminResponse,
@@ -28,6 +28,7 @@ function env(overrides: Partial<Env> = {}): Env {
 		ACCESS_AUD: audience,
 		ACCESS_ALLOWED_IDENTITIES: "admin@example.com,service-subject",
 		ACCESS_ALLOWED_GROUPS: "beach-api-admins",
+		ACCESS_ALLOWED_SERVICE_TOKENS: "allowed-client.access",
 		REFRESH_SECRET: "migration-secret",
 		ALLOW_LEGACY_REFRESH_SECRET: "false",
 		...overrides,
@@ -45,6 +46,17 @@ async function token(claims: Record<string, unknown> = {}, tokenIssuer = issuer,
 		.sign(privateKey);
 }
 
+async function serviceToken(claims: Record<string, unknown> = {}): Promise<string> {
+	return new SignJWT({ common_name: "allowed-client.access", ...claims })
+		.setProtectedHeader({ alg: "RS256" })
+		.setIssuer(issuer)
+		.setAudience(audience)
+		.setSubject("")
+		.setIssuedAt()
+		.setExpirationTime("5m")
+		.sign(privateKey);
+}
+
 function request(jwt?: string, secret?: string): Request {
 	const headers = new Headers();
 	if (jwt) headers.set("cf-access-jwt-assertion", jwt);
@@ -53,8 +65,41 @@ function request(jwt?: string, secret?: string): Request {
 }
 
 describe("Cloudflare Access authentication", () => {
+	it("accepts an allowed Service Token common_name", async () => {
+		expect(await authenticateAdminRequest(request(await serviceToken()), env(), verifier)).toEqual({
+			method: "access",
+			subject: "access-service-token",
+		});
+	});
+
+	it("rejects an unknown Service Token common_name", async () => {
+		expect(await authenticateAdminRequest(
+			request(await serviceToken({ common_name: "unknown-client.access" })),
+			env(),
+			verifier,
+		)).toBeNull();
+	});
+
+	it("rejects a Service Token without common_name", async () => {
+		expect(await authenticateAdminRequest(
+			request(await serviceToken({ common_name: undefined })),
+			env(),
+			verifier,
+		)).toBeNull();
+	});
+
+	it("does not authorize a Service Token with empty sub through browser claims", async () => {
+		const jwt = await serviceToken({ common_name: undefined, email: "admin@example.com", groups: ["beach-api-admins"] });
+		expect(await authenticateAdminRequest(request(jwt), env(), verifier)).toBeNull();
+	});
+
 	it("accepts a valid authorized Access JWT", async () => {
 		expect(await authenticateAdminRequest(request(await token()), env(), verifier)).toMatchObject({ method: "access" });
+	});
+
+	it("accepts an authorized browser subject", async () => {
+		const jwt = await token({ email: "other@example.com", sub: "service-subject" });
+		expect(await authenticateAdminRequest(request(jwt), env(), verifier)).toMatchObject({ method: "access" });
 	});
 
 	it("accepts an authorized group claim", async () => {
@@ -77,6 +122,8 @@ describe("Cloudflare Access authentication", () => {
 		const attempts = [
 			request(),
 			request("not-a-jwt"),
+			request(await token({}, "https://wrong.cloudflareaccess.com", audience)),
+			request(await token({}, issuer, "wrong-audience")),
 			request(await new SignJWT({ email: "admin@example.com" }).setProtectedHeader({ alg: "RS256" })
 				.setIssuer(issuer).setAudience(audience).setIssuedAt(Date.now() / 1000 - 120)
 				.setExpirationTime(Date.now() / 1000 - 60).sign(privateKey)),
@@ -88,6 +135,35 @@ describe("Cloudflare Access authentication", () => {
 			expect(response.status).toBe(403);
 			expect(await response.text()).toBe('{"error":"Forbidden"}');
 		}
+	});
+
+	it("does not log or return Access claim values on authorization failure", async () => {
+		const sensitiveClaim = "sensitive-service-token-claim.access";
+		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		const result = await authenticateAdminRequest(
+			request(await serviceToken({ common_name: sensitiveClaim })),
+			env(),
+			verifier,
+		);
+		const response = forbiddenAdminResponse();
+		const responseText = await response.text();
+		const logged = [...log.mock.calls, ...warn.mock.calls, ...error.mock.calls].flat().join(" ");
+
+		expect(result).toBeNull();
+		expect(response.status).toBe(403);
+		expect(responseText).toBe('{"error":"Forbidden"}');
+		expect(responseText).not.toContain(sensitiveClaim);
+		expect(logged).not.toContain(sensitiveClaim);
+		expect(log).not.toHaveBeenCalled();
+		expect(warn).not.toHaveBeenCalled();
+		expect(error).not.toHaveBeenCalled();
+
+		log.mockRestore();
+		warn.mockRestore();
+		error.mockRestore();
 	});
 });
 

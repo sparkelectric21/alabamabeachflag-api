@@ -68,6 +68,18 @@ Run a TypeScript type check:
 npm run typecheck
 ```
 
+## Administrative Access configuration
+
+Production administrative routes require Cloudflare Access. Configure these Worker variables in the deployment environment; do not commit their values:
+
+- `ACCESS_TEAM_DOMAIN`: complete Cloudflare Access issuer URL.
+- `ACCESS_AUD`: Access application audience.
+- `ACCESS_ALLOWED_IDENTITIES`: comma-separated browser-user email addresses or subjects.
+- `ACCESS_ALLOWED_GROUPS`: comma-separated browser-user groups.
+- `ACCESS_ALLOWED_SERVICE_TOKENS`: comma-separated Service Token Client IDs, matched only against the validated JWT `common_name` claim.
+
+Service Tokens are not authorized through browser-user email, subject, or group allowlists. `ALLOW_LEGACY_REFRESH_SECRET` remains a temporary migration switch until Access administration is verified in production.
+
 Deploy:
 
 ```sh

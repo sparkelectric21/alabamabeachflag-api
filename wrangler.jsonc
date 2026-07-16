@@ -37,6 +37,11 @@
 	"vars": {
 		// Temporary migration switch. Set to "false" only after Access configuration
 		// and every administrative client have been verified in production.
+		// Required dashboard variables for Access authorization:
+		// ACCESS_TEAM_DOMAIN, ACCESS_AUD, ACCESS_ALLOWED_IDENTITIES,
+		// ACCESS_ALLOWED_GROUPS, and ACCESS_ALLOWED_SERVICE_TOKENS.
+		// ACCESS_ALLOWED_SERVICE_TOKENS is a comma-separated allowlist of Service
+		// Token Client IDs matched against the validated JWT common_name claim.
 		"ALLOW_LEGACY_REFRESH_SECRET": "true"
 	},
 	// Scheduled refreshes are based on how frequently each data source changes.

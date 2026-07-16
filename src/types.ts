@@ -7,6 +7,7 @@ export interface Env {
 	ACCESS_AUD?: string;
 	ACCESS_ALLOWED_IDENTITIES?: string;
 	ACCESS_ALLOWED_GROUPS?: string;
+	ACCESS_ALLOWED_SERVICE_TOKENS?: string;
 
 	WEATHERKIT_TEAM_ID: string;
 	WEATHERKIT_KEY_ID: string;
