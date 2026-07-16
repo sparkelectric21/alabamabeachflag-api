@@ -9,12 +9,12 @@ export async function getDauphinIslandFlags(): Promise<BeachFlagProviderResult> 
 			{
 				beachId: "dauphin-island-public-beach",
 				displayName: "Dauphin Island Public Beach",
-				message: "Official beach flag status is currently published through the Dauphin Island Facebook page. Backend parser not implemented yet.",
+					message: "provider_unavailable",
 			},
 			{
 				beachId: "dauphin-island-east-end",
 				displayName: "Dauphin Island East End",
-				message: "Official beach flag status is currently published through the Dauphin Island Facebook page. Backend parser not implemented yet.",
+					message: "provider_unavailable",
 			},
 		],
 	};

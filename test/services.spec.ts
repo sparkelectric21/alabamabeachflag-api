@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractLatestSample } from "../src/services/adem/mapper";
 import { getGulfShoresFlags } from "../src/services/beachFlags/providers/gulfshores";
+import { getDauphinIslandFlags } from "../src/services/beachFlags/providers/dauphinIsland";
 import { fetchNDBCWaterTemperature } from "../src/services/waterTemperature/ndbcClient";
 import { normalizeWeatherCondition } from "../src/services/weather/normalizeWeatherCondition";
 
@@ -128,7 +129,7 @@ describe("beach-flag parsing", () => {
 
 		expect(result.reports).toEqual([]);
 		expect(result.errors).toHaveLength(3);
-		expect(result.errors[0]?.message).toContain("document ID 99999");
+		expect(result.errors[0]?.message).toBe("provider_unavailable");
 	});
 
 	it("ignores permanent legend image IDs outside #surfTS", async () => {
@@ -219,5 +220,11 @@ describe("beach-flag parsing", () => {
 
 		expect(result.reports).toEqual([]);
 		expect(result.errors).toHaveLength(3);
+	});
+
+	it("redacts public provider implementation details", async () => {
+		const gulfShores = await parseGulfShores("<html><main>unrecognized</main></html>");
+		const dauphinIsland = await getDauphinIslandFlags();
+		expect([...gulfShores.errors, ...dauphinIsland.errors].every((error) => error.message === "provider_unavailable")).toBe(true);
 	});
 });

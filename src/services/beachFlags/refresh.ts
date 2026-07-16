@@ -1,6 +1,5 @@
 
 
-import { BEACH_FLAGS_CACHE_KEY, writeCache } from "../cache/kv";
 import { BeachFlagReport } from "./types";
 import { getDauphinIslandFlags } from "./providers/dauphinIsland";
 import { getFortMorganFlags } from "./providers/fortMorgan";
@@ -9,7 +8,7 @@ import { getOrangeBeachFlags } from "./providers/orangeBeach";
 import { elapsedMs, logError, logInfo } from "../../utils/logger";
 import { API_VERSION } from "../../config/version";
 
-export async function refreshBeachFlags(env: Env) {
+export async function buildBeachFlagsPayload() {
 	const startedAt = Date.now();
 	logInfo("Flags", "Starting refresh");
 	try {
@@ -48,12 +47,6 @@ export async function refreshBeachFlags(env: Env) {
 			beachFlags,
 			errors,
 		};
-
-		if (!env.BEACH_DATA) {
-			throw new Error("Missing KV binding: BEACH_DATA");
-		}
-
-		await writeCache(env.BEACH_DATA, BEACH_FLAGS_CACHE_KEY, payload);
 
 		logInfo("Flags", "Finished refresh", {
 			durationMs: elapsedMs(startedAt),

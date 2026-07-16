@@ -20,6 +20,25 @@
 			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "REFRESH_COORDINATOR",
+				"class_name": "RefreshCoordinator"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-refresh-coordinator",
+			"new_sqlite_classes": ["RefreshCoordinator"]
+		}
+	],
+	"vars": {
+		// Temporary migration switch. Set to "false" only after Access configuration
+		// and every administrative client have been verified in production.
+		"ALLOW_LEGACY_REFRESH_SECRET": "true"
+	},
 	// Scheduled refreshes are based on how frequently each data source changes.
 	// The app serves cached data from Workers KV, allowing fast responses without
 	// making live requests to external providers for every user request.

@@ -1,8 +1,4 @@
 import { normalizeWeatherCondition } from "../weather/normalizeWeatherCondition";
-import {
-	BEACH_CONDITIONS_CACHE_KEY,
-	writeCache,
-} from "../cache/kv";
 import { beaches as BEACH_REGISTRY } from "../../config/BeachRegistry";
 import { fetchForecast, fetchPoint } from "../nws/client";
 import { refreshWaterTemperatures } from "../waterTemperature/refresh";
@@ -85,7 +81,7 @@ async function mapWithConcurrency<T, R>(
 	return results;
 }
 
-export async function refreshBeachConditions(env: Env) {
+export async function buildBeachConditionsPayload() {
 	const startedAt = Date.now();
 	logInfo("Beach Conditions", "Starting refresh");
 
@@ -180,7 +176,7 @@ export async function refreshBeachConditions(env: Env) {
 			errors.push({
 				beachId: beach.id,
 				displayName: beach.displayName,
-				message: error instanceof Error ? error.message : "Unknown weather refresh error.",
+					message: "provider_unavailable",
 			});
 		}
 	});
@@ -195,12 +191,6 @@ export async function refreshBeachConditions(env: Env) {
 		beachConditions: successfulBeachConditions,
 		errors,
 	};
-
-	if (!env.BEACH_DATA) {
-		throw new Error("Missing KV binding: BEACH_DATA");
-	}
-
-	await writeCache(env.BEACH_DATA, BEACH_CONDITIONS_CACHE_KEY, payload);
 
 	logInfo("Beach Conditions", "Finished refresh", {
 		durationMs: elapsedMs(startedAt),

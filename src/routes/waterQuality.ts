@@ -2,6 +2,7 @@ import {
 	readCache,
 	WATER_QUALITY_CACHE_KEY,
 } from "../services/cache/kv";
+import type { Env } from "../types";
 
 export async function handleWaterQualityRequest(env: Env): Promise<Response> {
 	try {
@@ -29,7 +30,7 @@ export async function handleWaterQualityRequest(env: Env): Promise<Response> {
 		return Response.json(
 			{
 				error: "Failed to load water quality",
-				message: error instanceof Error ? error.message : "Unknown error",
+				message: "cache_unavailable",
 			},
 			{ status: 500 },
 		);

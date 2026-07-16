@@ -147,7 +147,7 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 				{
 					beachId: "gulf-shores",
 					displayName: "Gulf Shores",
-					message: `Failed to fetch Gulf Shores flags (${response.status})`,
+						message: "provider_unavailable",
 				},
 			],
 		};
@@ -166,16 +166,12 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 	const primaryFlag = imageFlagState?.primaryFlag ?? flagFromHazard(currentConditionsText);
 
 	if (!primaryFlag) {
-		const message = imageDocumentId
-			? `Gulf Shores response contained unknown current-condition image document ID ${imageDocumentId}.`
-			: "Gulf Shores response did not contain a recognized flag status.";
-
 		return {
 			reports: [],
 			errors: GULF_SHORES_IDS.map((beachId) => ({
 				beachId,
 				displayName: beachId,
-				message,
+				message: "provider_unavailable",
 			})),
 		};
 	}

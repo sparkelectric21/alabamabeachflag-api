@@ -2,6 +2,7 @@ import {
 	BEACH_CONDITIONS_CACHE_KEY,
 	readCache,
 } from "../services/cache/kv";
+import type { Env } from "../types";
 
 export async function handleBeachConditionsRequest(env: Env): Promise<Response> {
 	if (!env.BEACH_DATA) {

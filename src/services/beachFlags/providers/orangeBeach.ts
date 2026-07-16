@@ -104,7 +104,7 @@ export async function getOrangeBeachFlags(generatedAt: string): Promise<BeachFla
 				{
 					beachId: "orange-beach",
 					displayName: "Orange Beach",
-					message: `Failed to fetch Orange Beach (${response.status})`,
+						message: "provider_unavailable",
 				},
 			],
 		};
@@ -125,7 +125,7 @@ export async function getOrangeBeachFlags(generatedAt: string): Promise<BeachFla
 			errors: ORANGE_BEACH_IDS.map((beachId) => ({
 				beachId,
 				displayName: beachId,
-				message: "Orange Beach response did not contain a recognized flag status.",
+					message: "provider_unavailable",
 			})),
 		};
 	}

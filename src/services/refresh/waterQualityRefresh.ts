@@ -1,9 +1,5 @@
 import { elapsedMs, logError, logInfo } from "../../utils/logger";
 import { getLatestWaterQuality } from "../adem/service";
-import {
-	WATER_QUALITY_CACHE_KEY,
-	writeCache,
-} from "../cache/kv";
 import { API_VERSION } from "../../config/version";
 
 export interface WaterQualityCachePayload {
@@ -16,9 +12,7 @@ export interface WaterQualityCachePayload {
 	waterQuality: Awaited<ReturnType<typeof getLatestWaterQuality>>;
 }
 
-export async function refreshWaterQuality(
-	env: Env,
-): Promise<WaterQualityCachePayload> {
+export async function buildWaterQualityPayload(): Promise<WaterQualityCachePayload> {
 	const startedAt = Date.now();
 	logInfo("Water Quality", "Starting refresh");
 	try {
@@ -35,12 +29,6 @@ export async function refreshWaterQuality(
 			count: waterQuality.length,
 			waterQuality,
 		};
-
-		if (!env.BEACH_DATA) {
-			throw new Error("Missing KV binding: BEACH_DATA");
-		}
-
-		await writeCache(env.BEACH_DATA, WATER_QUALITY_CACHE_KEY, payload);
 
 		logInfo("Water Quality", "Finished refresh", {
 			durationMs: elapsedMs(startedAt),

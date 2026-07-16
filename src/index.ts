@@ -7,11 +7,12 @@ import { handleBeachFlagsRequest } from "./routes/beachflags";
 import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlag";
 import type { Env as AppEnv } from "./types";
 
-import { refreshWaterQuality } from "./services/refresh/waterQualityRefresh";
-import { refreshBeachConditions } from "./services/refresh/beachConditionsRefresh";
-import { refreshBeachFlags } from "./services/refresh/beachFlagRefresh";
-import { fetchCurrentWeather } from "./services/weather/weatherKitClient";
 import { API_PATH_VERSION, API_VERSION, APP_VERSION } from "./config/version";
+import { authenticateAdminRequest, forbiddenAdminResponse } from "./services/admin/auth";
+import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dispatch";
+import type { RefreshJob } from "./services/refresh/types";
+
+export { RefreshCoordinator } from "./services/refresh/coordinator";
 
 
 
@@ -124,64 +125,30 @@ export default {
 			return methodNotAllowed("GET, HEAD");
 		}
 
-		if (url.pathname === "/internal/debug/weatherkit") {
-			const secret = request.headers.get("x-refresh-secret");
+			if (url.pathname.startsWith("/internal/")) {
+				const identity = await authenticateAdminRequest(request, env);
+				if (!identity) return forbiddenAdminResponse();
 
-			if (secret !== env.REFRESH_SECRET) {
-				return jsonResponse({ error: "Unauthorized" }, { status: 401 });
+				if (request.method !== "POST") return methodNotAllowed("POST");
+
+				if (url.pathname === "/internal/refresh/water-quality") {
+					return await handleRefreshWaterQualityRequest(request, env, identity);
+				}
+
+				if (url.pathname === "/internal/refresh/beach-conditions") {
+					return await handleRefreshBeachConditionsRequest(request, env, identity);
+				}
+
+				if (url.pathname === "/internal/refresh/weather") {
+					return await handleRefreshBeachConditionsRequest(request, env, identity);
+				}
+
+				if (url.pathname === "/internal/refresh/beach-flags") {
+					return await handleRefreshBeachFlagsRequest(request, env, identity);
+				}
+
+				return jsonResponse({ error: "Not Found" }, { status: 404 });
 			}
-
-			try {
-				const result = await fetchCurrentWeather(
-					env,
-					{
-						latitude: 30.2460,
-						longitude: -87.7008,
-					},
-				);
-
-				return jsonResponse(result);
-			} catch (error) {
-				return jsonResponse(
-					{
-						error: error instanceof Error ? error.message : String(error),
-					},
-					{ status: 500 },
-				);
-			}
-		}
-
-		if (
-			url.pathname === "/internal/refresh/water-quality" &&
-			request.method === "POST"
-		) {
-			return await handleRefreshWaterQualityRequest(
-				request,
-				env,
-			);
-		}
-
-		if (
-			url.pathname === "/internal/refresh/beach-conditions" &&
-			request.method === "POST"
-		) {
-			return await handleRefreshBeachConditionsRequest(request, env);
-		}
-
-		if (
-			url.pathname === "/internal/refresh/weather" &&
-			request.method === "POST"
-		) {
-			// Temporary compatibility route for existing automation.
-			return await handleRefreshBeachConditionsRequest(request, env);
-		}
-
-		if (
-			url.pathname === "/internal/refresh/beach-flags" &&
-			request.method === "POST"
-		) {
-			return await handleRefreshBeachFlagsRequest(request, env);
-		}
 
 
 		if (request.method !== "GET") {
@@ -230,16 +197,24 @@ export default {
 		);
 	},
 
-	async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
-		const cron = controller.cron;
+		async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+			const cron = controller.cron;
+			const runScheduled = async (job: RefreshJob): Promise<void> => {
+				const result = await dispatchRefresh(env, {
+					job,
+					trigger: "scheduled",
+					idempotencyKey: scheduledIdempotencyKey(job, controller.scheduledTime),
+				});
+				if (result.outcome === "failed") console.error(`[Cron] ${job} refresh failed`);
+			};
 
 		if (cron === "*/5 * * * *") {
 			console.log("[Cron] Running 5-minute refresh...");
 
 			try {
-				await refreshBeachFlags(env);
+					await runScheduled("beach-flags");
 			} catch (error) {
-				console.error("Scheduled beach flags refresh failed:", error);
+				console.error("Scheduled beach flags refresh failed");
 			}
 
 			return;
@@ -249,9 +224,9 @@ export default {
 			console.log("[Cron] Running 15-minute weather refresh...");
 
 			try {
-				await refreshBeachConditions(env);
+					await runScheduled("beach-conditions");
 			} catch (error) {
-				console.error("Scheduled beach conditions refresh failed:", error);
+				console.error("Scheduled beach conditions refresh failed");
 			}
 
 			return;
@@ -261,9 +236,9 @@ export default {
 			console.log("[Cron] Running 6-hour water quality refresh...");
 
 			try {
-				await refreshWaterQuality(env);
+					await runScheduled("water-quality");
 			} catch (error) {
-				console.error("Scheduled water quality refresh failed:", error);
+				console.error("Scheduled water quality refresh failed");
 			}
 		}
 	},

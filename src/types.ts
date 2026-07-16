@@ -1,9 +1,15 @@
 export interface Env {
-    BEACH_DATA: KVNamespace;
-    REFRESH_SECRET: string;
+	BEACH_DATA: KVNamespace;
+	REFRESH_COORDINATOR: DurableObjectNamespace;
+	REFRESH_SECRET: string;
+	ALLOW_LEGACY_REFRESH_SECRET?: string;
+	ACCESS_TEAM_DOMAIN?: string;
+	ACCESS_AUD?: string;
+	ACCESS_ALLOWED_IDENTITIES?: string;
+	ACCESS_ALLOWED_GROUPS?: string;
 
-    WEATHERKIT_TEAM_ID: string;
-    WEATHERKIT_KEY_ID: string;
-    WEATHERKIT_PRIVATE_KEY: string;
-    WEATHERKIT_SERVICE_ID: string;
+	WEATHERKIT_TEAM_ID: string;
+	WEATHERKIT_KEY_ID: string;
+	WEATHERKIT_PRIVATE_KEY: string;
+	WEATHERKIT_SERVICE_ID: string;
 }

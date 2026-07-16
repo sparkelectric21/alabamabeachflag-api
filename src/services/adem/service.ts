@@ -4,6 +4,7 @@ import { fetchBeachMonitoringLocations } from "../arcgis/client";
 import { fetchWaterQualityReport } from "./client";
 import { extractLatestSample } from "./mapper";
 import { parseWaterQualityWorkbook } from "./parser";
+import { logError } from "../../utils/logger";
 
 async function getWaterQualityForBeach(
 	beach: (typeof beaches)[number],
@@ -51,7 +52,10 @@ export async function getLatestWaterQuality(): Promise<WaterQuality[]> {
 		try {
 			results.push(await getWaterQualityForBeach(beach, location.reportUrl));
 		} catch (error) {
-			console.error(`Failed to parse water quality for ${beach.id}:`, error);
+			logError("Water Quality", "Beach report unavailable", {
+				beachId: beach.id,
+				error: error instanceof Error ? error.message : "unknown_error",
+			});
 
 			results.push({
 				beachId: beach.id,

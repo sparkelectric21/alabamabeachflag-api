@@ -1,1 +1,1 @@
-export { refreshBeachFlags } from "../beachFlags/refresh";
+export { buildBeachFlagsPayload } from "../beachFlags/refresh";

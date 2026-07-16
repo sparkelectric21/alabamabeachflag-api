@@ -1,19 +1,7 @@
-import { refreshBeachConditions } from "../services/refresh/beachConditionsRefresh";
+import type { AdminIdentity } from "../services/admin/auth";
+import type { Env } from "../types";
+import { handleAdminRefreshRequest } from "./adminRefresh";
 
-export async function handleRefreshBeachConditionsRequest(
-	request: Request,
-	env: Env,
-): Promise<Response> {
-	const secret = request.headers.get("x-refresh-secret");
-
-	if (secret !== env.REFRESH_SECRET) {
-		return Response.json(
-			{ error: "Unauthorized" },
-			{ status: 401 },
-		);
-	}
-
-	const payload = await refreshBeachConditions(env);
-
-	return Response.json(payload);
+export function handleRefreshBeachConditionsRequest(request: Request, env: Env, identity: AdminIdentity): Promise<Response> {
+	return handleAdminRefreshRequest(request, env, "beach-conditions", identity);
 }
