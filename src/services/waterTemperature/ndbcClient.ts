@@ -1,7 +1,8 @@
 
 
 import type { WaterTemperatureObservation } from "./client";
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNdbcUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseText } from "../../utils/http";
 
 const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/realtime2";
 
@@ -43,6 +44,7 @@ export async function fetchNDBCWaterTemperature(
 	const response = await fetchWithRetry(
 		`${NDBC_BASE_URL}/${stationId}.txt`,
 		{
+			validateUrl: validateNdbcUrl,
 			headers: {
 				"User-Agent": "Alabama Beach Flag",
 			},
@@ -55,7 +57,10 @@ export async function fetchNDBCWaterTemperature(
 		);
 	}
 
-	const text = await response.text();
+	const text = await readResponseText(response, {
+		maxBytes: UPSTREAM_LIMITS.ndbcTextBytes,
+		contentTypes: CONTENT_TYPES.text,
+	});
 	const lines = text.trim().split("\n");
 
 	if (lines.length < 3) {

@@ -1,5 +1,6 @@
 import { BeachFlagColor, BeachFlagProviderResult } from "../types";
-import { fetchWithRetry } from "../../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateGulfShoresUrl } from "../../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseText } from "../../../utils/http";
 
 const GULF_SHORES_URL = "https://www.gulfshoresal.gov/1136/Beach-Safety";
 
@@ -136,6 +137,7 @@ function flagFromHazard(text: string): BeachFlagColor | null {
 export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlagProviderResult> {
 	const response = await fetchWithRetry(GULF_SHORES_URL, {
 		label: "Gulf Shores Flags",
+		validateUrl: validateGulfShoresUrl,
 	});
 
 	if (!response.ok) {
@@ -151,7 +153,10 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 		};
 	}
 
-	const html = await response.text();
+	const html = await readResponseText(response, {
+		maxBytes: UPSTREAM_LIMITS.municipalHtmlBytes,
+		contentTypes: CONTENT_TYPES.html,
+	});
 	const imageDocumentId = imageDocumentIdFromCurrentConditions(html);
 	const imageFlagState = imageDocumentId
 		? FLAG_STATE_BY_IMAGE_DOCUMENT_ID[imageDocumentId]

@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNoaaMapUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseJson } from "../../utils/http";
 export interface NOAAFeatureAttributes {
     id: string;
     siteid: string;
@@ -43,13 +44,17 @@ export interface BeachForecastObservation {
 }
 
 export async function fetchBeachForecast(): Promise<NOAAFeatureResponse> {
-    const response = await fetchWithRetry(
-        "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/marine_beachforecast_summary/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=false&f=json"
-    );
+	    const response = await fetchWithRetry(
+	        "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/marine_beachforecast_summary/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=false&f=json",
+	        { validateUrl: validateNoaaMapUrl },
+	    );
 
     if (!response.ok) {
         throw new Error(`NOAA Beach Forecast request failed (${response.status})`);
     }
 
-    return response.json();
+	    return readResponseJson<NOAAFeatureResponse>(response, {
+	        maxBytes: UPSTREAM_LIMITS.noaaJsonBytes,
+	        contentTypes: CONTENT_TYPES.arcgisJson,
+	    });
 }

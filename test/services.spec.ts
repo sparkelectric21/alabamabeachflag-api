@@ -28,7 +28,7 @@ describe("NDBC water temperatures", () => {
 	it("uses the observation timestamp", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
 			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 14 30 28.5\n",
-			{ status: 200 },
+			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 
 		const result = await fetchNDBCWaterTemperature("TEST");
@@ -40,7 +40,7 @@ describe("NDBC water temperatures", () => {
 	it("rejects NDBC missing-value sentinels", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
 			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 14 30 999.0\n",
-			{ status: 200 },
+			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 
 		await expect(fetchNDBCWaterTemperature("TEST")).rejects.toThrow(
@@ -54,7 +54,7 @@ describe("beach-flag parsing", () => {
 
 	async function parseGulfShores(html: string) {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-			new Response(html, { status: 200 }),
+			new Response(html, { status: 200, headers: { "Content-Type": "text/html" } }),
 		));
 
 		return getGulfShoresFlags(generatedAt);

@@ -1,6 +1,7 @@
 import type { Env } from "../../types";
 import { createWeatherKitToken } from "./auth";
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateWeatherKitUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseText } from "../../utils/http";
 
 export interface WeatherKitRequest {
     latitude: number;
@@ -23,17 +24,21 @@ export async function fetchCurrentWeather(
     url.searchParams.set("countryCode", "US");
     url.searchParams.set("timezone", "America/Chicago");
 
-    const response = await fetchWithRetry(url, {
+	    const response = await fetchWithRetry(url, {
+	        validateUrl: validateWeatherKitUrl,
         headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/json"
         }
     });
 
-    const body = await response.text();
+	    const body = await readResponseText(response, {
+	        maxBytes: UPSTREAM_LIMITS.weatherKitJsonBytes,
+	        contentTypes: CONTENT_TYPES.json,
+	    });
 
     if (!response.ok) {
-        throw new Error(`WeatherKit request failed (${response.status}): ${body}`);
+	        throw new Error(`WeatherKit request failed (${response.status})`);
     }
 
     return JSON.parse(body);

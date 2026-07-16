@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNwsUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseJson } from "../../utils/http";
 const BASE_URL = "https://api.weather.gov";
 
 export interface NWSPointResponse {
@@ -19,6 +20,7 @@ export async function fetchPoint(
 	const response = await fetchWithRetry(
 		`${BASE_URL}/points/${latitude},${longitude}`,
 		{
+			validateUrl: validateNwsUrl,
 			headers: {
 				"User-Agent": "Alabama Beach Flag (support@albeachflag.com)",
 				Accept: "application/geo+json",
@@ -32,7 +34,10 @@ export async function fetchPoint(
 		);
 	}
 
-	return (await response.json()) as NWSPointResponse;
+	return await readResponseJson<NWSPointResponse>(response, {
+		maxBytes: UPSTREAM_LIMITS.nwsJsonBytes,
+		contentTypes: CONTENT_TYPES.nwsJson,
+	});
 }
 
 export interface NWSForecastResponse {
@@ -53,6 +58,7 @@ export async function fetchForecast(
 	forecastUrl: string,
 ): Promise<NWSForecastResponse> {
 	const response = await fetchWithRetry(forecastUrl, {
+		validateUrl: validateNwsUrl,
 		headers: {
 			"User-Agent": "Alabama Beach Flag (support@albeachflag.com)",
 			Accept: "application/geo+json",
@@ -65,5 +71,8 @@ export async function fetchForecast(
 		);
 	}
 
-	return (await response.json()) as NWSForecastResponse;
+	return await readResponseJson<NWSForecastResponse>(response, {
+		maxBytes: UPSTREAM_LIMITS.nwsJsonBytes,
+		contentTypes: CONTENT_TYPES.nwsJson,
+	});
 }

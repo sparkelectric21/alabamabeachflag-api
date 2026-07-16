@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateOpenMeteoUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseJson } from "../../utils/http";
 const OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast";
 
 export async function fetchCurrentUV(
@@ -13,17 +14,20 @@ export async function fetchCurrentUV(
     url.searchParams.set("current", "uv_index");
     url.searchParams.set("timezone", "America/Chicago");
 
-    const response = await fetchWithRetry(url);
+	    const response = await fetchWithRetry(url, { validateUrl: validateOpenMeteoUrl });
 
     if (!response.ok) {
         throw new Error(`Open-Meteo request failed (${response.status})`);
     }
 
-    const json = await response.json() as {
-        current?: {
-            uv_index?: number;
-        };
-    };
+	    const json = await readResponseJson<{
+	        current?: {
+	            uv_index?: number;
+	        };
+	    }>(response, {
+	        maxBytes: UPSTREAM_LIMITS.openMeteoJsonBytes,
+	        contentTypes: CONTENT_TYPES.json,
+	    });
 
     return json.current?.uv_index;
 }

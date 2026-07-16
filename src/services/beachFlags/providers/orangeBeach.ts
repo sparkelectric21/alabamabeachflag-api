@@ -1,5 +1,6 @@
 import { BeachFlagColor, BeachFlagProviderResult } from "../types";
-import { fetchWithRetry } from "../../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateOrangeBeachUrl } from "../../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseText } from "../../../utils/http";
 
 const ORANGE_BEACH_URL = "https://www.orangebeachal.gov/170/Beach-Safety-Mollys-Patrol";
 
@@ -93,6 +94,7 @@ function parseFlag(value: string | null): BeachFlagColor | null {
 export async function getOrangeBeachFlags(generatedAt: string): Promise<BeachFlagProviderResult> {
 	const response = await fetchWithRetry(ORANGE_BEACH_URL, {
 		label: "Orange Beach Flags",
+		validateUrl: validateOrangeBeachUrl,
 	});
 
 	if (!response.ok) {
@@ -108,7 +110,10 @@ export async function getOrangeBeachFlags(generatedAt: string): Promise<BeachFla
 		};
 	}
 
-	const html = await response.text();
+	const html = await readResponseText(response, {
+		maxBytes: UPSTREAM_LIMITS.municipalHtmlBytes,
+		contentTypes: CONTENT_TYPES.html,
+	});
 	const reportHtml = extractDailyReportHtml(html);
 	const text = stripHtml(reportHtml);
 	const normalizedText = text.toLowerCase();

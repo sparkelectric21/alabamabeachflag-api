@@ -1,4 +1,5 @@
-import { fetchWithRetry } from "../../utils/http";
+import { CONTENT_TYPES, UPSTREAM_LIMITS, validateCoopsUrl } from "../../config/upstreamSecurity";
+import { fetchWithRetry, readResponseJson } from "../../utils/http";
 
 const NOAA_COOPS_BASE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter";
 
@@ -32,6 +33,7 @@ export async function fetchWaterTemperature(
 	url.searchParams.set("date", "latest");
 
 	const response = await fetchWithRetry(url.toString(), {
+		validateUrl: validateCoopsUrl,
 		headers: {
 			"User-Agent": "Alabama Beach Flag",
 		},
@@ -41,7 +43,10 @@ export async function fetchWaterTemperature(
 		throw new Error(`Failed to fetch water temperature (${response.status})`);
 	}
 
-	const json = (await response.json()) as NOAAResponse;
+	const json = await readResponseJson<NOAAResponse>(response, {
+		maxBytes: UPSTREAM_LIMITS.coopsJsonBytes,
+		contentTypes: CONTENT_TYPES.json,
+	});
 
 	if (json.error) {
 		throw new Error(json.error.message);
