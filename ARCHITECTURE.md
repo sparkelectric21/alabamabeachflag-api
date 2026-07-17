@@ -293,6 +293,20 @@ These should be added carefully with clear source labeling and confidence levels
 
 The API should expose app-ready JSON.
 
+### Internal factual verification
+
+Phase 1 factual verification is isolated from production publishing and parser execution. It fetches the official Gulf Shores page through an independent parser and compares that state with the public `/v1/beach-flags` payload for:
+
+- Gulf Shores Public Beach
+- Gulf State Park Pavilion
+- Little Lagoon Pass
+
+The report checks public API availability, data age, Gulf Shores provider errors, missing locations, primary flag color, and purple advisory state. Data older than 45 minutes warns; data older than 90 minutes fails. Source-format changes warn without guessing.
+
+`VerificationCoordinator`, a SQLite-backed Durable Object introduced by migration `v2-verification-coordinator`, claims one `America/Chicago` hourly slot before execution. Repeated requests for that slot return HTTP `409`. Successful reports write `verification:latest` and a dated KV record retained for 30 days.
+
+The internal run and latest-report routes are protected by Cloudflare Access. The legacy refresh-secret fallback is disabled.
+
 Current and expected route categories:
 
 ```txt
@@ -467,6 +481,8 @@ Planned or likely future backend improvements:
 10. Android-ready API support
 11. Better automated tests
 12. Monitoring and alerting improvements
+
+Phase 1 factual verification was completed July 17, 2026. Alert delivery, recovery notifications, and verification of additional municipal sources remain future work and are intentionally outside Phase 1.
 
 ## Development Philosophy
 

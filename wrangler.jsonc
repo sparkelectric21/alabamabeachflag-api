@@ -25,6 +25,10 @@
 			{
 				"name": "REFRESH_COORDINATOR",
 				"class_name": "RefreshCoordinator"
+			},
+			{
+				"name": "VERIFICATION_COORDINATOR",
+				"class_name": "VerificationCoordinator"
 			}
 		]
 	},
@@ -32,17 +36,23 @@
 		{
 			"tag": "v1-refresh-coordinator",
 			"new_sqlite_classes": ["RefreshCoordinator"]
+		},
+		{
+			"tag": "v2-verification-coordinator",
+			"new_sqlite_classes": ["VerificationCoordinator"]
 		}
 	],
 	"vars": {
-		// Temporary migration switch. Set to "false" only after Access configuration
-		// and every administrative client have been verified in production.
-		// Required dashboard variables for Access authorization:
+		// Cloudflare Access authorization configuration:
 		// ACCESS_TEAM_DOMAIN, ACCESS_AUD, ACCESS_ALLOWED_IDENTITIES,
 		// ACCESS_ALLOWED_GROUPS, and ACCESS_ALLOWED_SERVICE_TOKENS.
 		// ACCESS_ALLOWED_SERVICE_TOKENS is a comma-separated allowlist of Service
 		// Token Client IDs matched against the validated JWT common_name claim.
-		"ALLOW_LEGACY_REFRESH_SECRET": "true"
+		"ALLOW_LEGACY_REFRESH_SECRET": "false",
+		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
+		"ACCESS_AUD": "82f83bb6bdb939628d43580a444f7c8a231c2c48a9a2b7e0a15fe68258351b6d",
+		"ACCESS_ALLOWED_SERVICE_TOKENS": "56cab61952fcbc7827855543b878bb21.access",
+		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev"
 	},
 	// Scheduled refreshes are based on how frequently each data source changes.
 	// The app serves cached data from Workers KV, allowing fast responses without
@@ -56,7 +66,10 @@
 			"*/15 * * * *",
 
 			// Refresh ADEM water quality data
-			"0 */6 * * *"
+			"0 */6 * * *",
+
+			// Hourly UTC; Worker gates execution to 7 AM/noon America/Chicago.
+			"0 * * * *"
 		]
 	}
 	/**

@@ -1,6 +1,7 @@
 export interface Env {
 	BEACH_DATA: KVNamespace;
 	REFRESH_COORDINATOR: DurableObjectNamespace;
+	VERIFICATION_COORDINATOR: DurableObjectNamespace;
 	REFRESH_SECRET: string;
 	ALLOW_LEGACY_REFRESH_SECRET?: string;
 	ACCESS_TEAM_DOMAIN?: string;
@@ -8,6 +9,7 @@ export interface Env {
 	ACCESS_ALLOWED_IDENTITIES?: string;
 	ACCESS_ALLOWED_GROUPS?: string;
 	ACCESS_ALLOWED_SERVICE_TOKENS?: string;
+	VERIFICATION_API_BASE_URL: string;
 
 	WEATHERKIT_TEAM_ID: string;
 	WEATHERKIT_KEY_ID: string;

@@ -11,8 +11,11 @@ import { API_PATH_VERSION, API_VERSION, APP_VERSION } from "./config/version";
 import { authenticateAdminRequest, forbiddenAdminResponse } from "./services/admin/auth";
 import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dispatch";
 import type { RefreshJob } from "./services/refresh/types";
+import { dispatchVerification, handleLatestVerification } from "./routes/verification";
+import { isVerificationHour } from "./verification/run";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
+export { VerificationCoordinator } from "./verification/coordinator";
 
 
 
@@ -129,6 +132,16 @@ export default {
 				const identity = await authenticateAdminRequest(request, env);
 				if (!identity) return forbiddenAdminResponse();
 
+				if (url.pathname === "/internal/verification/latest") {
+					if (request.method !== "GET") return methodNotAllowed("GET");
+					return await handleLatestVerification(env);
+				}
+
+				if (url.pathname === "/internal/verification/run") {
+					if (request.method !== "POST") return methodNotAllowed("POST");
+					return await dispatchVerification(env);
+				}
+
 				if (request.method !== "POST") return methodNotAllowed("POST");
 
 				if (url.pathname === "/internal/refresh/water-quality") {
@@ -240,6 +253,12 @@ export default {
 			} catch (error) {
 				console.error("Scheduled water quality refresh failed");
 			}
+			return;
+		}
+
+		if (cron === "0 * * * *" && isVerificationHour(new Date(controller.scheduledTime))) {
+			const response = await dispatchVerification(env, new Date(controller.scheduledTime));
+			if (!response.ok && response.status !== 409) console.error("[Cron] factual verification failed");
 		}
 	},
 } satisfies ExportedHandler<AppEnv>;

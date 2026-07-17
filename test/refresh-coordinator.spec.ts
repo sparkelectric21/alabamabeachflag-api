@@ -173,6 +173,6 @@ describe("Durable Object configuration", () => {
 		expect(config).toContain('"name": "REFRESH_COORDINATOR"');
 		expect(config).toContain('"class_name": "RefreshCoordinator"');
 		expect(config).toContain('"new_sqlite_classes": ["RefreshCoordinator"]');
-		expect(config).toContain('"ALLOW_LEGACY_REFRESH_SECRET": "true"');
+		expect(config).toContain('"ALLOW_LEGACY_REFRESH_SECRET": "false"');
 	});
 });
