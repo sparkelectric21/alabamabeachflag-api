@@ -21,7 +21,7 @@ export async function handleBeachConditionsRequest(env: Env): Promise<Response> 
 	);
 
 	if (cachedBeachConditions) {
-		return Response.json(cachedBeachConditions);
+		return Response.json(cachedBeachConditions, { headers: { "Cache-Control": "public, max-age=300" } });
 	}
 
 	return Response.json(

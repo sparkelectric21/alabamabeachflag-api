@@ -1,0 +1,32 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "alabamabeachflag-api-staging",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "REPLACE_WITH_STAGING_KV_NAMESPACE_ID"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "REFRESH_COORDINATOR", "class_name": "RefreshCoordinator" },
+			{ "name": "VERIFICATION_COORDINATOR", "class_name": "VerificationCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1-refresh-coordinator", "new_sqlite_classes": ["RefreshCoordinator"] },
+		{ "tag": "v2-verification-coordinator", "new_sqlite_classes": ["VerificationCoordinator"] }
+	],
+	"vars": {
+		"ALLOW_LEGACY_REFRESH_SECRET": "false",
+		"VERIFICATION_API_BASE_URL": "https://REPLACE_WITH_STAGING_WORKER_HOST",
+		"VIBRIO_CONDITIONS_ENABLED": "true"
+	},
+	"triggers": { "crons": [] }
+}

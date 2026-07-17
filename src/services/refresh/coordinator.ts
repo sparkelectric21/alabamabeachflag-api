@@ -38,17 +38,18 @@ export const REFRESH_JOB_CONFIG: Record<RefreshJob, {
 	cooldownMs: number;
 	leaseMs: number;
 	cacheKey: string;
+	expirationTtl?: number;
 }> = {
 	"beach-flags": { cooldownMs: 60_000, leaseMs: 2 * 60_000, cacheKey: BEACH_FLAGS_CACHE_KEY },
-	"beach-conditions": { cooldownMs: 5 * 60_000, leaseMs: 5 * 60_000, cacheKey: BEACH_CONDITIONS_CACHE_KEY },
+	"beach-conditions": { cooldownMs: 5 * 60_000, leaseMs: 5 * 60_000, cacheKey: BEACH_CONDITIONS_CACHE_KEY, expirationTtl: 2 * 60 * 60 },
 	"water-quality": { cooldownMs: 30 * 60_000, leaseMs: 10 * 60_000, cacheKey: WATER_QUALITY_CACHE_KEY },
 };
 
-const productionRunners: RefreshRunners = {
+function productionRunners(env: Env): RefreshRunners { return {
 	"beach-flags": buildBeachFlagsPayload,
-	"beach-conditions": buildBeachConditionsPayload,
+	"beach-conditions": () => buildBeachConditionsPayload({ vibrioConditionsEnabled: env.VIBRIO_CONDITIONS_ENABLED === "true" }),
 	"water-quality": buildWaterQualityPayload,
-};
+}; }
 
 function initialState(): StoredCoordinatorState {
 	return { generation: 0, recentRequests: {} };
@@ -67,7 +68,7 @@ export class RefreshCoordinatorCore {
 	constructor(
 		private readonly ctx: DurableObjectState,
 		private readonly env: Env,
-		private readonly runners: RefreshRunners = productionRunners,
+		private readonly runners: RefreshRunners = productionRunners(env),
 		private readonly now: () => number = Date.now,
 	) {}
 
@@ -89,7 +90,11 @@ export class RefreshCoordinatorCore {
 				const state = (await this.ctx.storage.get<StoredCoordinatorState>(STATE_KEY)) ?? initialState();
 				if (state.active?.generation !== generation || state.active.runId !== runId) return;
 
-				await this.env.BEACH_DATA.put(config.cacheKey, JSON.stringify(payload));
+				await this.env.BEACH_DATA.put(
+					config.cacheKey,
+					JSON.stringify(payload),
+					config.expirationTtl ? { expirationTtl: config.expirationTtl } : undefined,
+				);
 				state.active = undefined;
 				state.lastSuccessfulAt = this.now();
 				await this.ctx.storage.put(STATE_KEY, state);

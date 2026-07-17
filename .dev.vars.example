@@ -1,0 +1,4 @@
+VIBRIO_CONDITIONS_ENABLED="true"
+VIBRIO_QA_FIXTURE="seasonalAwareness"
+
+# Add development-only provider credentials here. Never commit .dev.vars.

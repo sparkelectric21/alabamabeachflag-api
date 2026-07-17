@@ -5,10 +5,11 @@ import { refreshWaterTemperatures } from "../waterTemperature/refresh";
 import type { WaterTemperatureResults } from "../waterTemperature/refresh";
 import { getBeachForecasts } from "../beachForecast/service";
 import { fetchCurrentUV } from "../beachForecast/openMeteoClient";
-import { elapsedMs, logError, logInfo } from "../../utils/logger";
+import { elapsedMs, logError, logInfo, logWarn } from "../../utils/logger";
 import type { BeachForecast } from "../../models/BeachConditions";
 import type { NWSForecastResponse } from "../nws/client";
 import { API_VERSION } from "../../config/version";
+import { estimateVibrioConditions } from "../vibrio/estimator";
 
 async function safeFetchCurrentUV(
 	latitude: number,
@@ -81,8 +82,9 @@ async function mapWithConcurrency<T, R>(
 	return results;
 }
 
-export async function buildBeachConditionsPayload() {
+export async function buildBeachConditionsPayload(options: { vibrioConditionsEnabled?: boolean; now?: Date } = {}) {
 	const startedAt = Date.now();
+	const generatedAt = options.now ?? new Date();
 	logInfo("Beach Conditions", "Starting refresh");
 
 	const [orangeBeachUV, fortMorganUV, dauphinIslandUV] = await Promise.all([
@@ -112,6 +114,7 @@ export async function buildBeachConditionsPayload() {
 		windDirection: string;
 		waterTemperature: WaterTemperatureResults[string] | null;
 		forecast: BeachForecast | null;
+		vibrioConditions?: ReturnType<typeof estimateVibrioConditions>;
 	}> = [];
 	const errors: Array<{
 		beachId: string;
@@ -151,6 +154,31 @@ export async function buildBeachConditionsPayload() {
 				throw new Error("NWS hourly forecast did not include any periods.");
 			}
 
+			const vibrioConditions = options.vibrioConditionsEnabled
+				? estimateVibrioConditions({
+					enabled: true,
+					now: generatedAt,
+					observation: waterTemperatures[beach.id] ? {
+						waterTemperature: waterTemperatures[beach.id].temperature,
+						waterTemperatureUnit: "F",
+						observedAt: waterTemperatures[beach.id].observedAt,
+						provider: waterTemperatures[beach.id].provider,
+						stationId: waterTemperatures[beach.id].stationId,
+					} : null,
+				})
+				: undefined;
+			if (vibrioConditions?.diagnosticCode) {
+				logWarn("Vibrio Conditions", "Observation unavailable", {
+					beachId: beach.id,
+					condition: vibrioConditions.diagnosticCode,
+					provider: waterTemperatures[beach.id]?.provider,
+					stationId: waterTemperatures[beach.id]?.stationId,
+				});
+			}
+			const publicVibrioConditions = vibrioConditions
+				? (({ diagnosticCode: _diagnosticCode, ...result }) => result)(vibrioConditions)
+				: undefined;
+
 			beachConditions[beachIndex] = {
 				beachId: beach.id,
 				displayName: beach.displayName,
@@ -167,6 +195,7 @@ export async function buildBeachConditionsPayload() {
 						uvCategory: getUVCategory(uvValue),
 					}
 					: null,
+				...(publicVibrioConditions ? { vibrioConditions: publicVibrioConditions } : {}),
 			};
 		} catch (error) {
 			logError("Beach Conditions", `${beach.displayName} failed`, {
@@ -186,7 +215,7 @@ export async function buildBeachConditionsPayload() {
 		status: successfulBeachConditions.length > 0 ? "ok" : "unavailable",
 		apiVersion: API_VERSION,
 		source: "NOAA",
-		generatedAt: new Date().toISOString(),
+		generatedAt: generatedAt.toISOString(),
 		count: successfulBeachConditions.length,
 		beachConditions: successfulBeachConditions,
 		errors,

@@ -4,6 +4,7 @@ export interface BeachConditions {
     weather: WeatherConditions;
     waterTemperature?: WaterTemperature;
     forecast?: BeachForecast;
+	vibrioConditions?: import("../services/vibrio/estimator").VibrioConditionsResult;
 }
 
 export interface BeachConditionsResponse {
