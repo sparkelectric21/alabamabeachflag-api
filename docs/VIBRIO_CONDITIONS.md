@@ -106,23 +106,20 @@ The fixture affects only `vibrioConditions`; ordinary weather and NOAA water-tem
 
 Refresh diagnostics log only non-sensitive operational fields such as `beachId`, `scope`, `condition`, `provider`, and `stationId`. Conditions distinguish coverage-policy exclusion, no approved station/observation, missing temperature, stale, future-dated, physically invalid observations, NDBC parser/reporting failure, CO-OPS HTTP failure, and other parser failures. Internal diagnostic codes are stripped from public responses. Response bodies, credentials, and personal information are not logged.
 
-### Staging (Cloudflare approval required)
+### Isolated staging
 
-`wrangler.staging.example.jsonc` deliberately contains placeholders and cannot be deployed as-is. It uses a distinct Worker name, requires a distinct KV namespace, receives its own Worker-scoped Durable Object storage, has no cron triggers, and enables Vibrio only in staging.
+The checked-in `wrangler.staging.jsonc` deploys only `alabamabeachflag-api-staging` at `https://alabamabeachflag-api-staging.sparkelectricalservicesllc.workers.dev`. It binds the isolated `ALABAMA_BEACH_FLAG_STAGING_CACHE` KV namespace, uses Worker-scoped Durable Object state, and has no cron triggers. Its Vibrio flag is independent of production.
 
-After approval, a Cloudflare administrator should run:
+Cloudflare Access protects exactly the staging `/internal/*` path. The `Staging Refresh Service Token` service-auth policy admits only the `alabamabeachflag-api-staging-refresh` service token; the Worker then verifies the signed Access assertion's issuer, audience, and allowlisted client ID. Keep the client secret in an ignored, mode-600 `.env.staging` file using `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`. Never add the secret to Wrangler configuration, documentation, source control, or shell tracing.
 
-```sh
-npx wrangler kv namespace create BEACH_DATA --config wrangler.staging.example.jsonc
-cp wrangler.staging.example.jsonc wrangler.staging.jsonc
-```
-
-Replace `REPLACE_WITH_STAGING_KV_NAMESPACE_ID` with the returned ID and `REPLACE_WITH_STAGING_WORKER_HOST` with the staging `*.workers.dev` host. Configure staging-only secrets with `npx wrangler secret put NAME --config wrangler.staging.jsonc`; do not reuse production credentials without explicit upstream-owner approval. Validate with `npx wrangler types --config wrangler.staging.jsonc`. Only after separate deployment authorization, deploy with:
+Deploy or update staging only with:
 
 ```sh
 npx wrangler deploy --config wrangler.staging.jsonc
 ```
 
-To turn staging Vibrio off, change only the staging value to `false`, deploy a new staging version, and refresh Beach Conditions. The fastest dashboard kill switch is also staging-only; sync any dashboard change back into `wrangler.staging.jsonc` before the next CLI deployment. Do not change production.
+After deployment, populate staging by sending authenticated `POST` requests to `/internal/refresh/beach-flags` and `/internal/refresh/beach-conditions`, each with a unique `Idempotency-Key`. Supply `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers from `.env.staging`; do not print them. Public results are available at `/v1/beach-flags` and `/v1/beach-conditions`.
+
+To turn staging Vibrio off immediately, change only `VIBRIO_CONDITIONS_ENABLED` in `wrangler.staging.jsonc` to `false`, deploy that staging configuration, and refresh Beach Conditions after the five-minute refresh cooldown. Confirm every `vibrioConditions` field is absent while unrelated conditions remain populated. Restore `true`, deploy staging again, refresh after the cooldown, and confirm genuine NOAA behavior returns. Do not change `wrangler.jsonc` or production.
 
 Cloudflare bindings and variables are non-inheritable across environments, so staging must explicitly use its own KV and variables. A separately named Worker keeps its Durable Object state separate as well. See Cloudflare's current [environment documentation](https://developers.cloudflare.com/workers/wrangler/environments/).

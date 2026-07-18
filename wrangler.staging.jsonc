@@ -1,0 +1,35 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "alabamabeachflag-api-staging",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "60f732dff736438bbb53edb2815059bb"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "REFRESH_COORDINATOR", "class_name": "RefreshCoordinator" },
+			{ "name": "VERIFICATION_COORDINATOR", "class_name": "VerificationCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1-refresh-coordinator", "new_sqlite_classes": ["RefreshCoordinator"] },
+		{ "tag": "v2-verification-coordinator", "new_sqlite_classes": ["VerificationCoordinator"] }
+	],
+	"vars": {
+		"ACCESS_ALLOWED_SERVICE_TOKENS": "1ea9ef0cf1792c8fa0cebda9f2ea39e5.access",
+		"ACCESS_AUD": "8800bcaa72226e887fd0387676deae7680774fd2ad25ddb19137cee6547bd8bb",
+		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
+		"ALLOW_LEGACY_REFRESH_SECRET": "false",
+		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api-staging.sparkelectricalservicesllc.workers.dev",
+		"VIBRIO_CONDITIONS_ENABLED": "true"
+	},
+	"triggers": { "crons": [] }
+}
