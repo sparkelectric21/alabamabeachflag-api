@@ -1,5 +1,28 @@
 export type BeachUVRegion = "orangeBeach" | "fortMorgan" | "dauphinIsland";
 
+export interface WaterTemperatureSourceConfiguration {
+	sources: Array<{
+		provider: "coops" | "ndbc";
+		stationId: string;
+	}>;
+}
+
+export type VibrioCoveragePolicy =
+	| {
+		eligible: true;
+		waterTemperature: WaterTemperatureSourceConfiguration;
+		limitation: string;
+	}
+	| {
+		eligible: false;
+		reason: string;
+		mappingLocation?: {
+			latitude: number;
+			longitude: number;
+			source: string;
+		};
+	};
+
 export interface BeachDefinition {
 	id: string;
 	ademCode: string;
@@ -18,12 +41,8 @@ export interface BeachDefinition {
 		latitude: number;
 		longitude: number;
 	};
-	waterTemperature?: {
-		sources: Array<{
-			provider: "coops" | "ndbc";
-			stationId: string;
-		}>;
-	};
+	waterTemperature?: WaterTemperatureSourceConfiguration;
+	vibrioConditions: VibrioCoveragePolicy;
 	beachForecast?: {
 		siteId: string;
 	};
@@ -69,6 +88,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
+		},
 		beachForecast: {
 			siteId: "alz266",
 		},
@@ -108,6 +135,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
 		},
 		beachForecast: {
 			siteId: "alz266",
@@ -150,6 +185,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "Perdido Pass and Mobile Bay entrance observations are proxies, not Gulf Shores beach measurements.",
+		},
 		beachForecast: {
 			siteId: "alz266",
 		},
@@ -190,6 +233,15 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		vibrioConditions: {
+			eligible: false,
+			reason: "Corrected Pavilion coordinates and NOAA proxy mapping require external validation before public output.",
+			mappingLocation: {
+				latitude: 30.25517036,
+				longitude: -87.64240986,
+				source: "Alabama State Parks address; federal Geographic Response Plan site AL-25 coordinates",
+			},
 		},
 		beachForecast: {
 			siteId: "alz266",
@@ -232,6 +284,10 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		vibrioConditions: {
+			eligible: false,
+			reason: "The lagoon-pass environment lacks a validated approved direct-observation proxy.",
+		},
 		beachForecast: {
 			siteId: "alz266",
 		},
@@ -271,6 +327,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
 		},
 		beachForecast: {
 			siteId: "alz266",
@@ -313,6 +377,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 			],
 		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "Dauphin Island/Mobile Bay entrance observations are proxies, not Fort Morgan beach measurements.",
+		},
 		beachForecast: {
 			siteId: "alz266",
 		},
@@ -353,6 +425,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "DPHA1" },
 			],
 		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "coops", stationId: "8735180" },
+				{ provider: "ndbc", stationId: "DPHA1" },
+			] },
+			limitation: "East-end Dauphin Island observations are proxies for the public beach farther west.",
+		},
 		beachForecast: {
 			siteId: "alz265",
 		},
@@ -392,6 +472,14 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "DPHA1" },
 				{ provider: "coops", stationId: "8735180" },
 			],
+		},
+		vibrioConditions: {
+			eligible: true,
+			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "coops", stationId: "8735180" },
+			] },
+			limitation: "These east-end Dauphin Island stations are a strong spatial match but remain point observations.",
 		},
 		beachForecast: {
 			siteId: "alz265",

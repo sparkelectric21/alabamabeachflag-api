@@ -13,7 +13,7 @@ describe("VibrioConditionsEstimator", () => {
 	it("rejects invalid salinity", () => expect(estimateVibrioConditions({ enabled: true, now, observation: { ...observation, salinity: 46, salinityUnit: "psu" } }).status).toBe("unavailable"));
 	it.each([
 		["missing observation", vibrioEstimatorFixtures.unavailable, "missing_observation"],
-		["missing temperature", vibrioEstimatorFixtures.missingTemperature, "invalid_temperature"],
+		["missing temperature", vibrioEstimatorFixtures.missingTemperature, "missing_temperature"],
 		["stale observation", vibrioEstimatorFixtures.staleObservation, "stale_observation"],
 		["future observation", vibrioEstimatorFixtures.futureObservation, "future_observation"],
 		["invalid temperature", vibrioEstimatorFixtures.invalidTemperature, "invalid_temperature"],

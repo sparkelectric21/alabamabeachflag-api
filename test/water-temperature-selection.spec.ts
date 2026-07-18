@@ -83,6 +83,23 @@ describe("water-temperature source selection", () => {
 		expect(result.stationId).toBe("8735180");
 	});
 
+	it("classifies NDBC reporting and CO-OPS HTTP failures without logging response data", async () => {
+		const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const loadSource = loader({
+			"ndbc:PPTA1": new Error("WTMP column not found"),
+			"coops:8735180": new Error("Failed to fetch water temperature (504)"),
+		});
+
+		await expect(fetchLatestWaterTemperature(
+			sources(["ndbc", "PPTA1"], ["coops", "8735180"]),
+			new Map(),
+			{ now, loadSource, beachId: "test-beach", diagnosticScope: "vibrio_conditions" },
+		)).rejects.toThrow();
+		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=ndbc_parser_or_reporting_failure"));
+		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=coops_http_failure"));
+		log.mockRestore();
+	});
+
 	it("uses configured preference when multiple observations are fresh", async () => {
 		const loadSource = loader({
 			"ndbc:PPTA1": observation("ndbc", "PPTA1", "2026-07-17T17:00:00.000Z"),

@@ -6,6 +6,7 @@ import {
 export type VibrioConditionsStatus = "unavailable" | "seasonalAwareness";
 export type VibrioDiagnosticCode =
 	| "missing_observation"
+	| "missing_temperature"
 	| "stale_observation"
 	| "future_observation"
 	| "invalid_temperature"
@@ -96,6 +97,9 @@ export function estimateVibrioConditions(
 	}
 	if (now.getTime() - observedMs > (options.maxObservationAgeMs ?? DIRECT_OBSERVATION_MAX_AGE_MS)) {
 		return unavailable(now, "Observation is stale; no climatology fallback was used.", "stale_observation");
+	}
+	if (typeof observation.waterTemperature !== "number") {
+		return unavailable(now, "Water temperature is missing.", "missing_temperature");
 	}
 	if (!Number.isFinite(observation.waterTemperature) || observation.waterTemperature < 28 || observation.waterTemperature > 104) {
 		return unavailable(now, "Water temperature is physically invalid.", "invalid_temperature");

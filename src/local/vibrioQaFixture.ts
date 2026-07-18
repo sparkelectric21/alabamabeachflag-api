@@ -49,13 +49,12 @@ export function applyLocalVibrioQaFixture<
 		mode,
 		provider: fixture.source.provider,
 		stationId: fixture.source.stationId,
-		count: payload.beachConditions.length,
+		count: payload.beachConditions.filter((beach) => Object.hasOwn(beach, "vibrioConditions")).length,
 	});
 	return {
 		...payload,
-		beachConditions: payload.beachConditions.map((beach) => ({
-			...beach,
-			vibrioConditions: fixture,
-		})),
+		beachConditions: payload.beachConditions.map((beach) => Object.hasOwn(beach, "vibrioConditions")
+			? { ...beach, vibrioConditions: fixture }
+			: beach),
 	};
 }

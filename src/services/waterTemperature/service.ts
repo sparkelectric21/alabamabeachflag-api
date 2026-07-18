@@ -39,6 +39,14 @@ async function fetchFromSource(
 export interface WaterTemperatureSelectionOptions {
 	now?: Date;
 	loadSource?: (source: WaterTemperatureSource) => Promise<WaterTemperatureObservationWithSource>;
+	beachId?: string;
+	diagnosticScope?: "general_temperature" | "vibrio_conditions";
+}
+
+function providerFailureCondition(source: WaterTemperatureSource, error: unknown): string {
+	if (source.provider === "ndbc") return "ndbc_parser_or_reporting_failure";
+	if (error instanceof Error && /(?:\bHTTP\s*|\bstatus\s*|\()\d{3}\b/i.test(error.message)) return "coops_http_failure";
+	return "coops_provider_failure";
 }
 
 export async function fetchLatestWaterTemperature(
@@ -85,6 +93,13 @@ export async function fetchLatestWaterTemperature(
 				staleCandidates.push(observation);
 			}
 		} catch (error) {
+			logWarn("Water Temperature", "Approved source candidate failed", {
+				beachId: options.beachId,
+				scope: options.diagnosticScope,
+				condition: providerFailureCondition(source, error),
+				provider: source.provider,
+				stationId: source.stationId,
+			});
 			failures.push(
 				`${source.provider}:${source.stationId} - ${error instanceof Error ? error.message : "Unknown error"}`,
 			);

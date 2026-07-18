@@ -84,4 +84,13 @@ describe("local-only Vibrio QA fixture", () => {
 			source: { provider: "fixture", stationId: "LOCAL-QA" },
 		});
 	});
+
+	it("does not add fixture output to beaches excluded by coverage policy", () => {
+		const payload = {
+			beachConditions: [{ beachId: "little-lagoon-pass", waterTemperature: { temperature: 82 } }],
+		};
+		const result = applyLocalVibrioQaFixture(payload, "seasonalAwareness", now);
+		expect(result.beachConditions[0]).not.toHaveProperty("vibrioConditions");
+		expect(result.beachConditions[0].waterTemperature).toEqual({ temperature: 82 });
+	});
 });

@@ -1,7 +1,7 @@
 import { normalizeWeatherCondition } from "../weather/normalizeWeatherCondition";
 import { beaches as BEACH_REGISTRY } from "../../config/BeachRegistry";
 import { fetchForecast, fetchPoint } from "../nws/client";
-import { refreshWaterTemperatures } from "../waterTemperature/refresh";
+import { refreshWaterTemperatureSelections } from "../waterTemperature/refresh";
 import type { WaterTemperatureResults } from "../waterTemperature/refresh";
 import { getBeachForecasts } from "../beachForecast/service";
 import { fetchCurrentUV } from "../beachForecast/openMeteoClient";
@@ -121,10 +121,12 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 		displayName: string;
 		message: string;
 	}> = [];
-	const [waterTemperatures, beachForecasts] = await Promise.all([
-		refreshWaterTemperatures(),
+	const [waterTemperatureSelections, beachForecasts] = await Promise.all([
+		refreshWaterTemperatureSelections(),
 		safeGetBeachForecasts(),
 	]);
+	const waterTemperatures = waterTemperatureSelections.general;
+	const vibrioWaterTemperatures = waterTemperatureSelections.vibrio;
 	const weatherRequests = new Map<string, Promise<NWSForecastResponse>>();
 
 	await mapWithConcurrency(BEACH_REGISTRY, 4, async (beach, beachIndex) => {
@@ -154,16 +156,16 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 				throw new Error("NWS hourly forecast did not include any periods.");
 			}
 
-			const vibrioConditions = options.vibrioConditionsEnabled
+			const vibrioConditions = options.vibrioConditionsEnabled && beach.vibrioConditions.eligible
 				? estimateVibrioConditions({
 					enabled: true,
 					now: generatedAt,
-					observation: waterTemperatures[beach.id] ? {
-						waterTemperature: waterTemperatures[beach.id].temperature,
+					observation: vibrioWaterTemperatures[beach.id] ? {
+						waterTemperature: vibrioWaterTemperatures[beach.id].temperature,
 						waterTemperatureUnit: "F",
-						observedAt: waterTemperatures[beach.id].observedAt,
-						provider: waterTemperatures[beach.id].provider,
-						stationId: waterTemperatures[beach.id].stationId,
+						observedAt: vibrioWaterTemperatures[beach.id].observedAt,
+						provider: vibrioWaterTemperatures[beach.id].provider,
+						stationId: vibrioWaterTemperatures[beach.id].stationId,
 					} : null,
 				})
 				: undefined;
@@ -171,8 +173,8 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 				logWarn("Vibrio Conditions", "Observation unavailable", {
 					beachId: beach.id,
 					condition: vibrioConditions.diagnosticCode,
-					provider: waterTemperatures[beach.id]?.provider,
-					stationId: waterTemperatures[beach.id]?.stationId,
+					provider: vibrioWaterTemperatures[beach.id]?.provider,
+					stationId: vibrioWaterTemperatures[beach.id]?.stationId,
 				});
 			}
 			const publicVibrioConditions = vibrioConditions
