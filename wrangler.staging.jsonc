@@ -13,6 +13,13 @@
 			"id": "60f732dff736438bbb53edb2815059bb"
 		}
 	],
+	"send_email": [
+		{
+			"name": "VERIFICATION_ALERT_EMAIL",
+			"destination_address": "operations@alabamabeachflag.com",
+			"allowed_sender_addresses": ["alerts@alabamabeachflag.com"]
+		}
+	],
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REFRESH_COORDINATOR", "class_name": "RefreshCoordinator" },
@@ -29,6 +36,8 @@
 		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
 		"ALLOW_LEGACY_REFRESH_SECRET": "false",
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api-staging.sparkelectricalservicesllc.workers.dev",
+		"VERIFICATION_ALERTS_ENABLED": "false",
+		"VERIFICATION_ALERT_ENVIRONMENT": "staging",
 		"VIBRIO_CONDITIONS_ENABLED": "true"
 	},
 	"triggers": { "crons": [] }

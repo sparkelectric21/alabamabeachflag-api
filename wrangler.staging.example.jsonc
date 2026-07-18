@@ -13,6 +13,13 @@
 			"id": "REPLACE_WITH_STAGING_KV_NAMESPACE_ID"
 		}
 	],
+	"send_email": [
+		{
+			"name": "VERIFICATION_ALERT_EMAIL",
+			"destination_address": "operations@alabamabeachflag.com",
+			"allowed_sender_addresses": ["alerts@alabamabeachflag.com"]
+		}
+	],
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REFRESH_COORDINATOR", "class_name": "RefreshCoordinator" },
@@ -26,6 +33,8 @@
 	"vars": {
 		"ALLOW_LEGACY_REFRESH_SECRET": "false",
 		"VERIFICATION_API_BASE_URL": "https://REPLACE_WITH_STAGING_WORKER_HOST",
+		"VERIFICATION_ALERTS_ENABLED": "false",
+		"VERIFICATION_ALERT_ENVIRONMENT": "staging",
 		"VIBRIO_CONDITIONS_ENABLED": "true"
 	},
 	"triggers": { "crons": [] }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { alertDeliveryEnabled, deliverAlert } from "../src/alerting/delivery";
+import { alertDeliveryEnabled, deliverAlert, formatAlertEmail } from "../src/alerting/delivery";
 import { processAlertObservation } from "../src/alerting/process";
 import { dueVerificationSlot, reportKeyForSlot } from "../src/alerting/schedule";
 import { evaluateAlert } from "../src/alerting/state";
@@ -116,10 +116,48 @@ describe("delivery isolation and kill switch", () => {
 		await expect(deliverAlert(env, evaluateAlert({}, warning).notification!)).resolves.toBeUndefined();
 	});
 
-	it("fails safely when enabled before a delivery adapter is configured", async () => {
-		const env = { VERIFICATION_ALERTS_ENABLED: "true" } as Env;
-		expect(alertDeliveryEnabled(env)).toBe(true);
-		await expect(deliverAlert(env, evaluateAlert({}, warning).notification!))
-			.rejects.toThrow("alert_delivery_not_configured");
+	it("sends through the native binding only when enabled", async () => {
+		const send = vi.fn(async () => ({ messageId: "test-message" }));
+		const env = {
+			VERIFICATION_ALERTS_ENABLED: "true",
+			VERIFICATION_ALERT_ENVIRONMENT: "staging",
+			VERIFICATION_ALERT_EMAIL: { send },
+		} as unknown as Env;
+		await deliverAlert(env, evaluateAlert({}, warning).notification!);
+		expect(send).toHaveBeenCalledWith(expect.objectContaining({
+			from: "alerts@alabamabeachflag.com",
+			to: "operations@alabamabeachflag.com",
+			subject: "[Alabama Beach Flag] Verification Warning",
+		}));
+	});
+
+	it.each([
+		[warning, "[Alabama Beach Flag] Verification Warning", "Alert type: warning"],
+		[failure, "[Alabama Beach Flag] Verification Failure", "Alert type: failure"],
+		[{
+			...failure,
+			affected: [{ name: "scheduled_report", status: "fail" as const, detail: "missing report for 2026-07-17T07" }],
+		}, "[Alabama Beach Flag] Verification Report Missing", "Alert type: missing report"],
+	])("formats deterministic %s email content", (observation, subject, alertType) => {
+		const notice = evaluateAlert({}, observation).notification!;
+		const message = formatAlertEmail({ VERIFICATION_ALERT_ENVIRONMENT: "staging" } as Env, notice);
+		expect(message.subject).toBe(subject);
+		expect(message.text).toContain("Environment: staging");
+		expect(message.text).toContain(alertType);
+		expect(message.text).toContain("Report slot: 2026-07-17T07");
+		expect(message.text).toContain("Central timestamp: Jul 17, 2026, 7:02:00 AM CDT");
+		expect(message.text).toContain(`Overall status: ${observation.status}`);
+		expect(message.text).toContain(observation.affected[0].detail);
+	});
+
+	it("formats update and recovery messages", () => {
+		const first = evaluateAlert({}, warning);
+		const update = evaluateAlert(first.state, failure).notification!;
+		const recovery = evaluateAlert(evaluateAlert(first.state, failure).state, pass).notification!;
+		const env = { VERIFICATION_ALERT_ENVIRONMENT: "production" } as Env;
+		expect(formatAlertEmail(env, update).subject).toBe("[Alabama Beach Flag] Verification Update");
+		expect(formatAlertEmail(env, update).text).toContain("Alert type: update");
+		expect(formatAlertEmail(env, recovery).subject).toBe("[Alabama Beach Flag] Verification Recovered");
+		expect(formatAlertEmail(env, recovery).text).toContain("Alert type: recovery");
 	});
 });

@@ -16,8 +16,9 @@ Completed July 17, 2026. Initial deployment: `0a6a42a4-8ecd-4dfe-a9ac-9545715602
 ## In progress — Phase 2 alerting
 
 - Completed locally: durable warning/failure state, changed-condition updates, missing-report detection, recovery, deduplication, DST scheduling, kill switch, and tests.
-- Pending approval: Cloudflare Email Service sender and verified destination.
-- Pending after approval: add the restricted `send_email` binding and adapter, validate sending metrics/logs in staging, then activate through a separate production configuration deployment.
+- Completed locally: restricted native Cloudflare Email Service adapter and deterministic message-format tests.
+- Pending: controlled staging delivery validation and sending-log inspection.
+- Pending after successful staging validation: separate approval for production activation.
 
 ## Later reliability work
 
@@ -25,4 +26,4 @@ Completed July 17, 2026. Initial deployment: `0a6a42a4-8ecd-4dfe-a9ac-9545715602
 - Monitoring dashboards and report-history review tools
 - Removal or revision of an official-source adapter when its upstream format changes
 
-Phase 2 delivery remains disabled and unconfigured. No third-party alert service is planned unless Cloudflare Email Service proves operationally insufficient.
+Phase 2 delivery remains disabled in production and staging configuration. No third-party alert service is planned unless Cloudflare Email Service proves operationally insufficient.

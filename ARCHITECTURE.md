@@ -323,7 +323,7 @@ The incident signature contains only affected check/location names and statuses,
 
 The existing `*/15` scheduled handler invokes a missing-report monitor independently after weather refresh. At or after 7:30 AM and 12:30 PM in `America/Chicago`, it checks the latest due dated KV key. This accommodates normal scheduler delay, follows DST through `Intl.DateTimeFormat`, and needs no additional Cron Trigger. Duplicate checks converge on the same incident signature; a later missing scheduled slot is an incident update. A subsequent passing verification produces recovery.
 
-`VERIFICATION_ALERTS_ENABLED` is the delivery-only kill switch and defaults to false. The delivery interface is intentionally unconfigured until an alert destination is approved. The recommended implementation is a Cloudflare Email Service `send_email` binding restricted to a single verified recipient and approved sender. This avoids third-party credentials and infrastructure, but requires Email Service setup and relies on Cloudflare sending logs/metrics for delivery operations.
+`VERIFICATION_ALERTS_ENABLED` is the delivery-only kill switch and is explicitly false in production and staging. The delivery interface uses the native `VERIFICATION_ALERT_EMAIL` binding, restricted in Wrangler to sender `alerts@alabamabeachflag.com` and fixed destination `operations@alabamabeachflag.com`. Plain-text messages contain only environment, alert type, slot, Central timestamp, overall status, affected names, and concise diagnostics. This avoids third-party credentials and infrastructure; Cloudflare sending logs/metrics provide delivery operations.
 
 Current and expected route categories:
 
@@ -498,9 +498,9 @@ Planned or likely future backend improvements:
 9. Push notification support for flag changes
 10. Android-ready API support
 11. Better automated tests
-12. Complete the approved Cloudflare Email Service delivery adapter and operational validation
+12. Complete controlled staging email validation, then separately approve production activation
 
-Phase 1 factual verification was completed July 17, 2026. Phase 2 durable alert state and monitoring were implemented July 18, 2026; delivery activation remains pending sender/recipient approval. Verification of additional municipal sources remains future work.
+Phase 1 factual verification was completed July 17, 2026. Phase 2 durable alert state, monitoring, and the disabled Cloudflare Email Service adapter were implemented July 18, 2026; staging validation and production activation remain pending. Verification of additional municipal sources remains future work.
 
 ## Development Philosophy
 

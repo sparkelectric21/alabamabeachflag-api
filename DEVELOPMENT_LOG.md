@@ -11,6 +11,8 @@
 
 Operational boundary: notification intent is persisted before delivery to prevent duplicate sends. A failed or ambiguous send is logged without content and is not automatically retried. Immediate disable is `VERIFICATION_ALERTS_ENABLED=false` followed by a configuration-only deployment.
 
+Added the approved Cloudflare Email Service adapter in a separate change. The binding is restricted to `alerts@alabamabeachflag.com` as sender and `operations@alabamabeachflag.com` as its fixed destination. Production and staging remain explicitly disabled pending controlled staging validation. No real email, external resource creation, deployment, or third-party credential was involved.
+
 ## July 17, 2026 — Factual Verification Phase 1
 
 Completed the independent Gulf Shores factual verification system.

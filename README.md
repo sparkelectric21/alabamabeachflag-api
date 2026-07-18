@@ -99,7 +99,7 @@ Both routes require the existing Cloudflare Access service token. Reports are st
 
 Cloudflare invokes an hourly UTC trigger. The Worker runs scheduled verification only at 7:00 AM and noon in `America/Chicago`, including daylight-saving transitions.
 
-### Phase 2 alerting (delivery pending approval)
+### Phase 2 alerting
 
 Alert state is stored strongly consistently in `VerificationCoordinator`. A warning or failure opens an incident; the same affected check/location and severity remains silent even if diagnostic wording changes; a changed or escalated signature emits one update; the first passing report emits one recovery and closes the incident. Notification intent is persisted before delivery to favor duplicate prevention over automatic retry.
 
@@ -113,7 +113,9 @@ VERIFICATION_ALERTS_ENABLED=false
 
 Immediate disable: set that variable to `false` and deploy only the configuration change. Verification, report creation, public APIs, and refresh jobs continue. Do not set it to `true` until a delivery adapter and destination are approved and configured.
 
-The recommended adapter is a Cloudflare Email Service `send_email` binding restricted to one verified destination and approved sender. It still requires an owner decision for the recipient and sender identity, so this branch intentionally contains no email binding, address, secret, or external resource.
+The adapter uses Cloudflare Email Service with a `VERIFICATION_ALERT_EMAIL` binding restricted to sender `alerts@alabamabeachflag.com` and fixed destination `operations@alabamabeachflag.com`. No API key, SMTP credential, webhook secret, or third-party dependency is used. The private forwarding destination is account-level Cloudflare configuration and must never appear in source, configuration, logs, reports, or documentation.
+
+Both production and staging configuration explicitly keep `VERIFICATION_ALERTS_ENABLED` set to `false`. For a controlled staging validation, deploy the staging configuration with delivery disabled, confirm verification and missing-report monitoring, temporarily change only the staging flag to `true`, trigger one known test incident, confirm one email and Cloudflare sending-log entry, trigger the identical observation to confirm silence, then restore the flag to `false`. Production activation requires separate approval.
 
 Monitoring and inspection:
 
@@ -122,7 +124,7 @@ Monitoring and inspection:
 - Watch Worker logs for `[Verification alerts] ... failed`; notification bodies and configuration are never logged.
 - After delivery is configured, use Cloudflare Email Service sending metrics/logs to confirm sends.
 
-Run `npm run typecheck`, `npm test`, and `npx vitest --run test/verification.spec.ts test/alerting.spec.ts` before release. Rollback is code-only because Phase 2 adds no binding or migration yet; disable delivery first, then deploy the prior Worker version if needed.
+Run `npm run typecheck`, `npm test`, and `npx vitest --run test/verification.spec.ts test/alerting.spec.ts` before release. Immediate rollback is a configuration-only staging or production deployment with `VERIFICATION_ALERTS_ENABLED=false`; deploy the prior Worker version only if code rollback is also needed.
 
 Deploy:
 

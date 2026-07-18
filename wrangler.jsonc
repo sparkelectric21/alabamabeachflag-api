@@ -20,6 +20,13 @@
 			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
 		}
 	],
+	"send_email": [
+		{
+			"name": "VERIFICATION_ALERT_EMAIL",
+			"destination_address": "operations@alabamabeachflag.com",
+			"allowed_sender_addresses": ["alerts@alabamabeachflag.com"]
+		}
+	],
 	"durable_objects": {
 		"bindings": [
 			{
@@ -52,7 +59,9 @@
 		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
 		"ACCESS_AUD": "82f83bb6bdb939628d43580a444f7c8a231c2c48a9a2b7e0a15fe68258351b6d",
 		"ACCESS_ALLOWED_SERVICE_TOKENS": "56cab61952fcbc7827855543b878bb21.access",
-		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev"
+		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev",
+		"VERIFICATION_ALERTS_ENABLED": "false",
+		"VERIFICATION_ALERT_ENVIRONMENT": "production"
 	},
 	// Scheduled refreshes are based on how frequently each data source changes.
 	// The app serves cached data from Workers KV, allowing fast responses without
