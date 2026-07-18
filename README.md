@@ -130,7 +130,7 @@ See `ARCHITECTURE.md` for the backend design, `DEVELOPMENT_LOG.md` for completed
 }
 ```
 
-Station coverage uses official NOAA prediction locations: Alabama Point `8730667` (subordinate) for the Orange Beach area; Gulf Shores ICWW `8731439` (subordinate) for Gulf Shores Public Beach and Gulf State Park; Mobile Point/Fort Morgan `8734635` (subordinate) for Fort Morgan; and Dauphin Island `8735180` (harmonic) for Dauphin Island. Little Lagoon Pass is intentionally unavailable pending defensible official coverage. Subordinate stations publish high/low predictions but are not used to fabricate an interval curve or direction.
+Station coverage uses official NOAA prediction locations: Alabama Point `8730667` (harmonic) for the Orange Beach area; Gulf Shores ICWW `8731439` (harmonic) for Gulf Shores Public Beach and Gulf State Park; Mobile Point/Fort Morgan `8734635` (subordinate) for Fort Morgan; and Dauphin Island `8735180` (harmonic) for Dauphin Island. Little Lagoon Pass is intentionally unavailable pending defensible official coverage. Harmonic stations publish a direction only when NOAA returns actual interval predictions. Subordinate stations publish high/low predictions but are never used to infer an interval curve or direction.
 
 ## Project Status
 

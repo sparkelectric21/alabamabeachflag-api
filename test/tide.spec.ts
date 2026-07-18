@@ -19,6 +19,9 @@ describe("NOAA tide station mapping", () => {
 			"dauphin-island-east-end": "8735180", "little-lagoon-pass": undefined,
 		});
 		expect(beaches.find((beach) => beach.id === "dauphin-island-public-beach")?.tide?.stationType).toBe("harmonic");
+		expect(beaches.find((beach) => beach.id === "alabama-point")?.tide?.stationType).toBe("harmonic");
+		expect(beaches.find((beach) => beach.id === "gulf-shores-public-beach")?.tide?.stationType).toBe("harmonic");
+		expect(beaches.find((beach) => beach.id === "fort-morgan-public-beach")?.tide?.stationType).toBe("subordinate");
 	});
 });
 
@@ -69,13 +72,37 @@ describe("NOAA tide parsing and dates", () => {
 		await expect(fetchTideEvents("8735180", "20260718")).rejects.toThrow("empty");
 	});
 
+	it("surfaces the exact HTTP 200 prediction error returned in production", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			error: { message: "No Predictions data was found. Please make sure the Datum input is valid." },
+		}), { status: 200, headers: { "Content-Type": "application/json" } }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(fetchTideEvents("8735180", "20260718")).rejects.toThrow(
+			"No Predictions data was found. Please make sure the Datum input is valid.",
+		);
+		const url = new URL(fetchMock.mock.calls[0][0]);
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			application: "alabama-beach-flag",
+			format: "json",
+			product: "predictions",
+			station: "8735180",
+			begin_date: "20260718",
+			end_date: "20260718",
+			time_zone: "lst_ldt",
+			datum: "MLLW",
+			units: "english",
+			interval: "hilo",
+		});
+	});
+
 	it("returns subordinate high/low data without fabricating a curve", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ predictions: [
 			{ t: "2026-07-18 06:00", v: "0.2", type: "L" },
 			{ t: "2026-07-18 16:00", v: "1.1", type: "H" },
 		] }), { status: 200, headers: { "Content-Type": "application/json" } })));
 		const tide = await fetchTidePrediction(
-			{ stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
+			{ stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },
 			new Date("2026-07-18T15:00:00Z"),
 		);
 		expect(tide.points).toEqual([]);
@@ -83,12 +110,35 @@ describe("NOAA tide parsing and dates", () => {
 		expect(tide.nextEvent?.type).toBe("high");
 	});
 
+	it("requests real interval points for corrected harmonic station classifications", async () => {
+		const fetchMock = vi.fn().mockImplementation(async (input: string) => {
+			const interval = new URL(input).searchParams.get("interval");
+			return new Response(JSON.stringify({ predictions: interval === "hilo" ? [
+				{ t: "2026-07-18 06:00", v: "0.2", type: "L" },
+				{ t: "2026-07-18 16:00", v: "1.1", type: "H" },
+			] : [
+				{ t: "2026-07-18 09:00", v: "0.3" },
+				{ t: "2026-07-18 09:15", v: "0.4" },
+			] }), { status: 200, headers: { "Content-Type": "application/json" } });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const tide = await fetchTidePrediction(
+			{ stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
+			new Date("2026-07-18T14:05:00Z"),
+		);
+		expect(tide.points).toHaveLength(2);
+		expect(tide.direction).toBe("rising");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(fetchMock.mock.calls.map(([input]) => new URL(input).searchParams.get("interval")).sort()).toEqual(["15", "hilo"]);
+	});
+
 	it("rejects predictions returned for the wrong local date", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ predictions: [
 			{ t: "2026-07-17 06:00", v: "0.2", type: "L" },
 		] }), { status: 200, headers: { "Content-Type": "application/json" } })));
 		await expect(fetchTidePrediction(
-			{ stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
+			{ stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },
 			new Date("2026-07-18T15:00:00Z"),
 		)).rejects.toThrow("wrong date");
 	});

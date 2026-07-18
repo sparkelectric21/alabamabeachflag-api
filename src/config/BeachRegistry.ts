@@ -96,7 +96,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
-		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -146,7 +146,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
-		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -197,7 +197,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
-		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "subordinate" },
+		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -248,7 +248,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
-		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "subordinate" },
+		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: false,
 			reason: "Corrected Pavilion coordinates and NOAA proxy mapping require external validation before public output.",
@@ -345,7 +345,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
-		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
