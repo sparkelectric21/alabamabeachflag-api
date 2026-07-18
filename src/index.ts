@@ -11,7 +11,7 @@ import { API_PATH_VERSION, API_VERSION, APP_VERSION } from "./config/version";
 import { authenticateAdminRequest, forbiddenAdminResponse } from "./services/admin/auth";
 import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dispatch";
 import type { RefreshJob } from "./services/refresh/types";
-import { dispatchVerification, handleLatestVerification } from "./routes/verification";
+import { dispatchVerification, handleLatestVerification, monitorVerificationReports } from "./routes/verification";
 import { isVerificationHour } from "./verification/run";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
@@ -240,6 +240,12 @@ export default {
 					await runScheduled("beach-conditions");
 			} catch (error) {
 				console.error("Scheduled beach conditions refresh failed");
+			}
+
+			try {
+				await monitorVerificationReports(env, new Date(controller.scheduledTime));
+			} catch {
+				console.error("[Verification alerts] missing-report monitor failed");
 			}
 
 			return;

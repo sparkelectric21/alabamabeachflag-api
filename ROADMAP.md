@@ -13,11 +13,11 @@
 
 Completed July 17, 2026. Initial deployment: `0a6a42a4-8ecd-4dfe-a9ac-954571560200`. Current Phase 1 deployment after the required live-parser correction: `7608f65f-7200-4058-95bb-06ad5369dd5c`.
 
-## Next — Phase 2, not started
+## In progress — Phase 2 alerting
 
-- Email or operational alert delivery for failures and warnings
-- Recovery notifications after a failed or warning state clears
-- Alert deduplication and escalation policy
+- Completed locally: durable warning/failure state, changed-condition updates, missing-report detection, recovery, deduplication, DST scheduling, kill switch, and tests.
+- Pending approval: Cloudflare Email Service sender and verified destination.
+- Pending after approval: add the restricted `send_email` binding and adapter, validate sending metrics/logs in staging, then activate through a separate production configuration deployment.
 
 ## Later reliability work
 
@@ -25,4 +25,4 @@ Completed July 17, 2026. Initial deployment: `0a6a42a4-8ecd-4dfe-a9ac-9545715602
 - Monitoring dashboards and report-history review tools
 - Removal or revision of an official-source adapter when its upstream format changes
 
-Phase 2 alerting and additional data-source verification are intentionally excluded from the Phase 1 closeout.
+Phase 2 delivery remains disabled and unconfigured. No third-party alert service is planned unless Cloudflare Email Service proves operationally insufficient.

@@ -13,6 +13,14 @@ export async function dispatchVerification(env: Env, now = new Date()): Promise<
 	const id = env.VERIFICATION_COORDINATOR.idFromName("gulf-shores");
 	return env.VERIFICATION_COORDINATOR.get(id).fetch("https://verification.internal/run", {
 		method: "POST",
-		body: JSON.stringify({ slot, now: now.toISOString() }),
+		body: JSON.stringify({ action: "run", slot, now: now.toISOString() }),
+	});
+}
+
+export async function monitorVerificationReports(env: Env, now = new Date()): Promise<Response> {
+	const id = env.VERIFICATION_COORDINATOR.idFromName("gulf-shores");
+	return env.VERIFICATION_COORDINATOR.get(id).fetch("https://verification.internal/monitor", {
+		method: "POST",
+		body: JSON.stringify({ action: "monitor", now: now.toISOString() }),
 	});
 }

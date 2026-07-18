@@ -1,5 +1,16 @@
 # Development Log
 
+## July 18, 2026 — Factual Verification Phase 2 alerting core
+
+- Added durable new/continuing/changed/recovered incident transitions to the existing verification coordinator.
+- Added silent passing behavior, duplicate notification keys, escalation/change updates, and one-time recovery.
+- Added 30-minute-grace missing-report checks on the existing 15-minute trigger for the 7:00 AM/noon Central schedule, including DST behavior.
+- Added a delivery-only `VERIFICATION_ALERTS_ENABLED` kill switch; verification and 30-day report retention are unchanged.
+- Isolated alert state and delivery errors from report creation, public routes, refresh, parsing, and publishing.
+- Added deterministic Phase 2 tests. Cloudflare Email Service is recommended, but no binding, address, external resource, production configuration, deployment, or delivery activation was added pending approval.
+
+Operational boundary: notification intent is persisted before delivery to prevent duplicate sends. A failed or ambiguous send is logged without content and is not automatically retried. Immediate disable is `VERIFICATION_ALERTS_ENABLED=false` followed by a configuration-only deployment.
+
 ## July 17, 2026 — Factual Verification Phase 1
 
 Completed the independent Gulf Shores factual verification system.

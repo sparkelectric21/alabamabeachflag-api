@@ -16,6 +16,7 @@ This Cloudflare Worker powers the Alabama Beach Flag iOS app by collecting, norm
 - Cloudflare KV caching
 - Independent factual verification for Gulf Shores conditions
 - Durable Object duplicate-slot protection for verification runs
+- Delivery-neutral incident, recovery, and missing-report alert state
 - Shared HTTP client with retry and timeout handling
 - Structured logging for scheduled refresh jobs
 - Scheduled background refresh jobs
@@ -97,6 +98,31 @@ GET /internal/verification/latest
 Both routes require the existing Cloudflare Access service token. Reports are stored in Workers KV as `verification:latest` and as dated records under `verification:report:YYYY-MM-DD:HH`. Dated reports expire after 30 days. `VerificationCoordinator` rejects a repeated Central-time hourly slot with HTTP `409`.
 
 Cloudflare invokes an hourly UTC trigger. The Worker runs scheduled verification only at 7:00 AM and noon in `America/Chicago`, including daylight-saving transitions.
+
+### Phase 2 alerting (delivery pending approval)
+
+Alert state is stored strongly consistently in `VerificationCoordinator`. A warning or failure opens an incident; the same affected check/location and severity remains silent even if diagnostic wording changes; a changed or escalated signature emits one update; the first passing report emits one recovery and closes the incident. Notification intent is persisted before delivery to favor duplicate prevention over automatic retry.
+
+The existing 15-minute scheduled event checks the most recent due 7:00 AM or noon Central report after a 30-minute grace period. The schedule is calculated in `America/Chicago`, so DST is automatic. Repeated monitor execution is safe. Dated reports retain the existing 30-day KV TTL.
+
+Delivery is disabled by default:
+
+```txt
+VERIFICATION_ALERTS_ENABLED=false
+```
+
+Immediate disable: set that variable to `false` and deploy only the configuration change. Verification, report creation, public APIs, and refresh jobs continue. Do not set it to `true` until a delivery adapter and destination are approved and configured.
+
+The recommended adapter is a Cloudflare Email Service `send_email` binding restricted to one verified destination and approved sender. It still requires an owner decision for the recipient and sender identity, so this branch intentionally contains no email binding, address, secret, or external resource.
+
+Monitoring and inspection:
+
+- Read `GET /internal/verification/latest` with the existing Cloudflare Access service token.
+- Inspect `verification:report:YYYY-MM-DD:HH` in `BEACH_DATA` for the 30-day history.
+- Watch Worker logs for `[Verification alerts] ... failed`; notification bodies and configuration are never logged.
+- After delivery is configured, use Cloudflare Email Service sending metrics/logs to confirm sends.
+
+Run `npm run typecheck`, `npm test`, and `npx vitest --run test/verification.spec.ts test/alerting.spec.ts` before release. Rollback is code-only because Phase 2 adds no binding or migration yet; disable delivery first, then deploy the prior Worker version if needed.
 
 Deploy:
 
