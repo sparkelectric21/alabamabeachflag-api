@@ -1,7 +1,4 @@
-import { CONTENT_TYPES, UPSTREAM_LIMITS, validateCoopsUrl } from "../../config/upstreamSecurity";
-import { fetchWithRetry, readResponseJson } from "../../utils/http";
-
-const NOAA_COOPS_BASE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter";
+import { fetchCoopsJson } from "./coopsClient";
 
 export interface WaterTemperatureObservation {
 	temperature: number;
@@ -22,35 +19,10 @@ interface NOAAResponse {
 export async function fetchWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
-	const url = new URL(NOAA_COOPS_BASE_URL);
-
-	url.searchParams.set("product", "water_temperature");
-	url.searchParams.set("application", "alabama-beach-flag");
-	url.searchParams.set("station", stationId);
-	url.searchParams.set("time_zone", "gmt");
-	url.searchParams.set("units", "english");
-	url.searchParams.set("format", "json");
-	url.searchParams.set("date", "latest");
-
-	const response = await fetchWithRetry(url.toString(), {
-		validateUrl: validateCoopsUrl,
-		headers: {
-			"User-Agent": "Alabama Beach Flag",
-		},
+	const json = await fetchCoopsJson<NOAAResponse>({
+		product: "water_temperature", station: stationId, time_zone: "gmt",
+		units: "english", date: "latest",
 	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch water temperature (${response.status})`);
-	}
-
-	const json = await readResponseJson<NOAAResponse>(response, {
-		maxBytes: UPSTREAM_LIMITS.coopsJsonBytes,
-		contentTypes: CONTENT_TYPES.json,
-	});
-
-	if (json.error) {
-		throw new Error(json.error.message);
-	}
 
 	const latest = json.data?.[0];
 

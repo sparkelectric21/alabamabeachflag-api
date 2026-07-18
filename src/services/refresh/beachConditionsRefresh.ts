@@ -10,6 +10,8 @@ import type { BeachForecast } from "../../models/BeachConditions";
 import type { NWSForecastResponse } from "../nws/client";
 import { API_VERSION } from "../../config/version";
 import { estimateVibrioConditions } from "../vibrio/estimator";
+import { fetchTidePrediction } from "../tide/service";
+import type { TidePrediction } from "../tide/models";
 
 async function safeFetchCurrentUV(
 	latitude: number,
@@ -59,6 +61,29 @@ async function safeGetBeachForecasts(): Promise<Map<string, BeachForecast>> {
 		});
 		return new Map();
 	}
+}
+
+async function getTidePredictions(now: Date): Promise<Map<string, TidePrediction>> {
+	const results = new Map<string, TidePrediction>();
+	const requests = new Map<string, Promise<TidePrediction>>();
+	await Promise.all(BEACH_REGISTRY.map(async (beach) => {
+		if (!beach.tide) return;
+		const key = `${beach.tide.stationId}:${beach.tide.stationType}`;
+		let request = requests.get(key);
+		if (!request) {
+			request = fetchTidePrediction(beach.tide, now);
+			requests.set(key, request);
+		}
+		try {
+			results.set(beach.id, await request);
+		} catch (error) {
+			logWarn("Beach Conditions", "NOAA tide prediction failed", {
+				beachId: beach.id, stationId: beach.tide.stationId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}));
+	return results;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -114,6 +139,7 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 		windDirection: string;
 		waterTemperature: WaterTemperatureResults[string] | null;
 		forecast: BeachForecast | null;
+		tide?: TidePrediction;
 		vibrioConditions?: ReturnType<typeof estimateVibrioConditions>;
 	}> = [];
 	const errors: Array<{
@@ -121,9 +147,10 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 		displayName: string;
 		message: string;
 	}> = [];
-	const [waterTemperatureSelections, beachForecasts] = await Promise.all([
+	const [waterTemperatureSelections, beachForecasts, tidePredictions] = await Promise.all([
 		refreshWaterTemperatureSelections(),
 		safeGetBeachForecasts(),
+		getTidePredictions(generatedAt),
 	]);
 	const waterTemperatures = waterTemperatureSelections.general;
 	const vibrioWaterTemperatures = waterTemperatureSelections.vibrio;
@@ -197,6 +224,7 @@ export async function buildBeachConditionsPayload(options: { vibrioConditionsEna
 						uvCategory: getUVCategory(uvValue),
 					}
 					: null,
+				...(tidePredictions.get(beach.id) ? { tide: tidePredictions.get(beach.id) } : {}),
 				...(publicVibrioConditions ? { vibrioConditions: publicVibrioConditions } : {}),
 			};
 		} catch (error) {

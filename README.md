@@ -12,6 +12,7 @@ This Cloudflare Worker powers the Alabama Beach Flag iOS app by collecting, norm
 - Estimated conditions for supported beaches without official feeds
 - ADEM water quality integration
 - NOAA and marine data integration
+- NOAA CO-OPS predicted tides, with local-date validation and safe per-beach availability
 - Cloudflare KV caching
 - Independent factual verification for Gulf Shores conditions
 - Durable Object duplicate-slot protection for verification runs
@@ -106,6 +107,30 @@ npx wrangler deploy
 ## Documentation
 
 See `ARCHITECTURE.md` for the backend design, `DEVELOPMENT_LOG.md` for completed work, and `ROADMAP.md` for future phases.
+
+## Tide predictions
+
+`GET /v1/beach-conditions` may include an optional `tide` object on each beach. This is a backward-compatible addition and is omitted when NOAA data or defensible station coverage is unavailable.
+
+```json
+{
+  "stationId": "8735180",
+  "stationName": "Dauphin Island, AL",
+  "stationType": "harmonic",
+  "predictionDate": "2026-07-18",
+  "timeZone": "America/Chicago",
+  "datum": "MLLW",
+  "units": "feet",
+  "points": [{ "time": "2026-07-18T05:00:00.000Z", "height": 0.42 }],
+  "events": [{ "type": "high", "time": "2026-07-18T16:15:00.000Z", "height": 1.08 }],
+  "direction": "rising",
+  "nextEvent": { "type": "high", "time": "2026-07-18T16:15:00.000Z", "height": 1.08 },
+  "fetchedAt": "2026-07-18T12:00:00.000Z",
+  "stationUrl": "https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=8735180"
+}
+```
+
+Station coverage uses official NOAA prediction locations: Alabama Point `8730667` (subordinate) for the Orange Beach area; Gulf Shores ICWW `8731439` (subordinate) for Gulf Shores Public Beach and Gulf State Park; Mobile Point/Fort Morgan `8734635` (subordinate) for Fort Morgan; and Dauphin Island `8735180` (harmonic) for Dauphin Island. Little Lagoon Pass is intentionally unavailable pending defensible official coverage. Subordinate stations publish high/low predictions but are not used to fabricate an interval curve or direction.
 
 ## Project Status
 

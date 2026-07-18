@@ -3,6 +3,7 @@ export interface BeachConditions {
     displayName: string;
     weather: WeatherConditions;
     waterTemperature?: WaterTemperature;
+	tide?: import("../services/tide/models").TidePrediction;
     forecast?: BeachForecast;
 	vibrioConditions?: import("../services/vibrio/estimator").VibrioConditionsResult;
 }

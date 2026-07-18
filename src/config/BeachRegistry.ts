@@ -7,6 +7,12 @@ export interface WaterTemperatureSourceConfiguration {
 	}>;
 }
 
+export interface TidePredictionConfiguration {
+	stationId: string;
+	stationName: string;
+	stationType: "harmonic" | "subordinate";
+}
+
 export type VibrioCoveragePolicy =
 	| {
 		eligible: true;
@@ -42,6 +48,7 @@ export interface BeachDefinition {
 		longitude: number;
 	};
 	waterTemperature?: WaterTemperatureSourceConfiguration;
+	tide?: TidePredictionConfiguration;
 	vibrioConditions: VibrioCoveragePolicy;
 	beachForecast?: {
 		siteId: string;
@@ -60,6 +67,7 @@ export interface BeachDefinition {
 		uv: boolean;
 		waterTemperature: boolean;
 		ripCurrent: boolean;
+		tide: boolean;
 	};
 }
 
@@ -88,6 +96,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -110,6 +119,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -136,6 +146,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -158,6 +169,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -185,6 +197,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -207,6 +220,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -234,6 +248,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: false,
 			reason: "Corrected Pavilion coordinates and NOAA proxy mapping require external validation before public output.",
@@ -257,6 +272,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -302,6 +318,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: false,
 		},
 	},
 	{
@@ -328,6 +345,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -350,6 +368,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -377,6 +396,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "PPTA1" },
 			],
 		},
+		tide: { stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -399,6 +419,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -425,6 +446,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "ndbc", stationId: "DPHA1" },
 			],
 		},
+		tide: { stationId: "8735180", stationName: "Dauphin Island, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -447,6 +469,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 	{
@@ -473,6 +496,7 @@ export const beaches: BeachDefinition[] = [
 				{ provider: "coops", stationId: "8735180" },
 			],
 		},
+		tide: { stationId: "8735180", stationName: "Dauphin Island, AL", stationType: "harmonic" },
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
@@ -495,6 +519,7 @@ export const beaches: BeachDefinition[] = [
 			uv: true,
 			waterTemperature: true,
 			ripCurrent: true,
+			tide: true,
 		},
 	},
 ];
