@@ -9,7 +9,7 @@ export const NWS_RIP_CURRENT_SOURCE_PAGE = "https://www.weather.gov/beach/mob";
 export const RIP_CURRENT_MAX_BYTES = 10 * 1024 * 1024;
 export const RIP_CURRENT_MIN_BYTES = 10 * 1024;
 export const RIP_CURRENT_STALE_AFTER_MS = 36 * 60 * 60 * 1_000;
-const EXPECTED_ALT = "5-Day Rip Current Outlook for Coastal Alabama and Northwest Florida";
+const EXPECTED_LABEL = "5-Day Rip Current Outlook for Coastal Alabama and Northwest Florida";
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 
 class ImmutableRevisionUnavailableError extends Error {}
@@ -21,10 +21,18 @@ function attributes(tag: string): Map<string, string> {
 	return result;
 }
 export function discoverRipCurrentImage(html: string): URL {
-	const candidates = [...html.matchAll(/<img\b[^>]*>/gi)].map((match) => attributes(match[0])).filter((attrs) => (attrs.get("alt") ?? "").includes(EXPECTED_ALT));
-	if (candidates.length !== 1) throw new Error("rip_current_image_discovery_failed");
-	const src = candidates[0].get("src");
-	if (!src) throw new Error("rip_current_image_discovery_failed");
+	const sources = new Set<string>();
+	for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
+		const attrs = attributes(match[0]);
+		if ((attrs.get("alt") ?? "").includes(EXPECTED_LABEL) && attrs.get("src")) sources.add(attrs.get("src")!);
+	}
+	for (const match of html.matchAll(/<div\b[^>]*class\s*=\s*(["'])[^"']*\bgraphicast\b[^"']*\1[^>]*>\s*<div\b[^>]*class\s*=\s*(["'])[^"']*\bimage\b[^"']*\2[^>]*>([\s\S]*?<img\b[^>]*>[\s\S]*?)<\/div>\s*<div\b[^>]*class\s*=\s*(["'])[^"']*\bdescription\b[^"']*\4[^>]*>([\s\S]*?)<\/div>/gi)) {
+		if (!match[5].includes(EXPECTED_LABEL)) continue;
+		const images = [...match[3].matchAll(/<img\b[^>]*>/gi)].map((image) => attributes(image[0]));
+		if (images.length === 1 && images[0].get("src")) sources.add(images[0].get("src")!);
+	}
+	if (sources.size !== 1) throw new Error("rip_current_image_discovery_failed");
+	const [src] = sources;
 	const url = new URL(src, NWS_MOBILE_PAGE);
 	nwsOnly(url);
 	if (!url.pathname.startsWith("/images/mob/")) throw new Error("unexpected_rip_current_image_path");
