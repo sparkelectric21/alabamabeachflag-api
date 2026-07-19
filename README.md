@@ -2,6 +2,8 @@
 
 # Alabama Beach Flag API
 
+The API serves the latest verified NWS Mobile/Pensacola 5-Day Rip Current Outlook through `GET /v1/rip-current-outlook` and `GET /v1/rip-current-outlook/image`. See [docs/RIP_CURRENT_OUTLOOK.md](docs/RIP_CURRENT_OUTLOOK.md).
+
 Backend API for the Alabama Beach Flag ecosystem.
 
 This Cloudflare Worker powers the Alabama Beach Flag iOS app by collecting, normalizing, caching, and serving beach safety data from official and trusted sources.

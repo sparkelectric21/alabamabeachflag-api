@@ -2,6 +2,39 @@ import type { Env } from "../types";
 import { processAlertObservation, observationFromReport } from "../alerting/process";
 import { dueVerificationSlot, reportKeyForSlot } from "../alerting/schedule";
 import { runVerification } from "./run";
+import { runRipCurrentOutlookVerification } from "./ripCurrentOutlook";
+
+export interface VerificationCoordinatorDependencies {
+	runGulfShores: typeof runVerification;
+	processGulfShoresAlert: typeof processAlertObservation;
+	runRipCurrent: typeof runRipCurrentOutlookVerification;
+}
+
+const productionDependencies: VerificationCoordinatorDependencies = {
+	runGulfShores: runVerification,
+	processGulfShoresAlert: processAlertObservation,
+	runRipCurrent: runRipCurrentOutlookVerification,
+};
+
+export async function runVerificationSequence(
+	storage: DurableObjectStorage,
+	env: Env,
+	now: Date,
+	dependencies: VerificationCoordinatorDependencies = productionDependencies,
+) {
+	const report = await dependencies.runGulfShores(env, now);
+	try {
+		await dependencies.processGulfShoresAlert(storage, env, observationFromReport(report));
+	} catch {
+		console.error("[Verification alerts] state processing failed");
+	}
+	try {
+		await dependencies.runRipCurrent(env, now);
+	} catch {
+		console.error("[Verification] rip current outlook verification failed");
+	}
+	return report;
+}
 
 export class VerificationCoordinator {
 	constructor(private readonly ctx: DurableObjectState, private readonly env: Env) {}
@@ -16,15 +49,10 @@ export class VerificationCoordinator {
 		await this.ctx.storage.put("slot", slot);
 		let report;
 		try {
-			report = await runVerification(this.env, new Date(now));
+			report = await runVerificationSequence(this.ctx.storage, this.env, new Date(now));
 		} catch {
 			await this.ctx.storage.delete("slot");
 			return Response.json({ outcome: "failed", slot }, { status: 500 });
-		}
-		try {
-			await processAlertObservation(this.ctx.storage, this.env, observationFromReport(report));
-		} catch {
-			console.error("[Verification alerts] state processing failed");
 		}
 		return Response.json({ outcome: "completed", report });
 	}

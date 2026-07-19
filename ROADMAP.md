@@ -1,5 +1,7 @@
 # Alabama Beach Flag Backend Roadmap
 
+- [x] Backend-served, verified NWS Mobile/Pensacola 5-Day Rip Current Outlook
+
 ## Completed — Reliability release / Version 1.2.x
 
 - Phase 1 factual verification for Gulf Shores conditions

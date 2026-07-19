@@ -2,6 +2,10 @@
 
 # Alabama Beach Flag API Architecture
 
+## Rip current outlook
+
+The Worker discovers the specifically labeled outlook on the official NWS Mobile/Pensacola homepage, validates and hashes it, and commits image plus metadata through the existing refresh coordinator. Backend-owned public routes isolate clients from the changing NWS asset path. See `docs/RIP_CURRENT_OUTLOOK.md` for storage, fallback, freshness, and verification details.
+
 Last updated: 2026-07-05
 
 ## Overview

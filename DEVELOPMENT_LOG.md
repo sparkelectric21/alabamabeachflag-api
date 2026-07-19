@@ -1,5 +1,11 @@
 # Development Log
 
+## July 19, 2026 — NWS rip current outlook
+
+- Added narrow official NWS Mobile/Pensacola discovery and image verification.
+- Added public metadata/image routes, scheduled and protected refresh, last-known-good fallback, conditional requests, hashing, and separate non-alerting verification.
+- Added backend coverage for discovery, replacement/unchanged behavior, validation failures, fallback, cache headers, and revision consistency.
+
 ## July 18, 2026 — Factual Verification Phase 2 alerting core
 
 - Added durable new/continuing/changed/recovered incident transitions to the existing verification coordinator.

@@ -1,9 +1,10 @@
 import type { Env } from "../../types";
-import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../cache/kv";
+import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, RIP_CURRENT_OUTLOOK_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../cache/kv";
 import { logError, logInfo } from "../../utils/logger";
 import { buildBeachFlagsPayload } from "../beachFlags/refresh";
 import { buildBeachConditionsPayload } from "./beachConditionsRefresh";
 import { buildWaterQualityPayload } from "./waterQualityRefresh";
+import { buildRipCurrentOutlookPayload } from "../ripCurrentOutlook/refresh";
 import type { RefreshJob, RefreshRunRequest, RefreshRunResult } from "./types";
 
 interface ActiveRun {
@@ -26,6 +27,7 @@ interface StoredCoordinatorState {
 interface RefreshPayload {
 	generatedAt: string;
 	count: number;
+	kvWrites?: Array<{ key: string; value: string | ArrayBuffer; options?: KVNamespacePutOptions; expectedRevision?: string }>;
 }
 
 export type RefreshRunner = () => Promise<RefreshPayload>;
@@ -43,12 +45,14 @@ export const REFRESH_JOB_CONFIG: Record<RefreshJob, {
 	"beach-flags": { cooldownMs: 60_000, leaseMs: 2 * 60_000, cacheKey: BEACH_FLAGS_CACHE_KEY },
 	"beach-conditions": { cooldownMs: 5 * 60_000, leaseMs: 5 * 60_000, cacheKey: BEACH_CONDITIONS_CACHE_KEY, expirationTtl: 2 * 60 * 60 },
 	"water-quality": { cooldownMs: 30 * 60_000, leaseMs: 10 * 60_000, cacheKey: WATER_QUALITY_CACHE_KEY },
+	"rip-current-outlook": { cooldownMs: 30 * 60_000, leaseMs: 5 * 60_000, cacheKey: RIP_CURRENT_OUTLOOK_CACHE_KEY },
 };
 
 function productionRunners(env: Env): RefreshRunners { return {
 	"beach-flags": buildBeachFlagsPayload,
 	"beach-conditions": () => buildBeachConditionsPayload({ vibrioConditionsEnabled: env.VIBRIO_CONDITIONS_ENABLED === "true" }),
 	"water-quality": buildWaterQualityPayload,
+	"rip-current-outlook": () => buildRipCurrentOutlookPayload(env),
 }; }
 
 function initialState(): StoredCoordinatorState {
@@ -90,9 +94,17 @@ export class RefreshCoordinatorCore {
 				const state = (await this.ctx.storage.get<StoredCoordinatorState>(STATE_KEY)) ?? initialState();
 				if (state.active?.generation !== generation || state.active.runId !== runId) return;
 
+				for (const write of payload.kvWrites ?? []) {
+					await this.env.BEACH_DATA.put(write.key, write.value, write.options);
+					if (write.expectedRevision) {
+						const staged = await this.env.BEACH_DATA.getWithMetadata<{ revision?: string }>(write.key, "arrayBuffer");
+						if (!staged.value || staged.metadata?.revision !== write.expectedRevision) throw new Error("staged_revision_validation_failed");
+					}
+				}
+				const { kvWrites: _kvWrites, ...publicPayload } = payload;
 				await this.env.BEACH_DATA.put(
 					config.cacheKey,
-					JSON.stringify(payload),
+					JSON.stringify(publicPayload),
 					config.expirationTtl ? { expirationTtl: config.expirationTtl } : undefined,
 				);
 				state.active = undefined;

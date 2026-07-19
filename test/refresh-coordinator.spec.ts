@@ -39,21 +39,23 @@ function request(job: RefreshJob, key: string, trigger: "admin" | "scheduled" = 
 	return { job, trigger, idempotencyKey: key };
 }
 
-function harness(runners?: Partial<RefreshRunners>) {
+function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamespace>) {
 	const storage = new MemoryStorage();
 	const blockConcurrencyWhile = vi.fn(async <T>(callback: () => Promise<T>) => callback());
 	const ctx = { storage, blockConcurrencyWhile } as unknown as DurableObjectState;
 	const put = vi.fn().mockResolvedValue(undefined);
-	const env = { BEACH_DATA: { put } } as unknown as Env;
+	const getWithMetadata = vi.fn().mockResolvedValue({ value: new ArrayBuffer(1), metadata: { revision: "new" } });
+	const env = { BEACH_DATA: { put, getWithMetadata, ...beachData } } as unknown as Env;
 	const defaults = {
 		"beach-flags": vi.fn().mockResolvedValue(payload()),
 		"beach-conditions": vi.fn().mockResolvedValue(payload()),
 		"water-quality": vi.fn().mockResolvedValue(payload()),
+		"rip-current-outlook": vi.fn().mockResolvedValue(payload()),
 	} satisfies RefreshRunners;
 	const allRunners = { ...defaults, ...runners } as RefreshRunners;
 	let now = Date.parse("2026-07-16T18:00:00.000Z");
 	const core = new RefreshCoordinatorCore(ctx, env, allRunners, () => now);
-	return { core, storage, put, runners: allRunners, setNow: (value: number) => { now = value; } };
+	return { core, storage, put: env.BEACH_DATA.put as typeof put, getWithMetadata: env.BEACH_DATA.getWithMetadata as typeof getWithMetadata, runners: allRunners, setNow: (value: number) => { now = value; } };
 }
 
 describe("refresh coordinator", () => {
@@ -159,6 +161,41 @@ describe("refresh coordinator", () => {
 		expect((await h.core.run(request("water-quality", "admin-request-001"))).outcome).toBe("failed");
 		expect(h.put).not.toHaveBeenCalled();
 	});
+
+	it("does not publish metadata when a revision image write fails", async () => {
+		const put = vi.fn(async (key: string) => { if (key === "rip-current-outlook:image:new") throw new Error("image write failed"); });
+		const runner = vi.fn().mockResolvedValue({ ...payload(), revision: "new", kvWrites: [{ key: "rip-current-outlook:image:new", value: new ArrayBuffer(1), expectedRevision: "new" }] });
+		const h = harness({ "rip-current-outlook": runner }, { put } as Partial<KVNamespace>);
+		expect((await h.core.run(request("rip-current-outlook", "image-fails"))).outcome).toBe("failed");
+		expect(put).toHaveBeenCalledTimes(1);
+		expect(put).not.toHaveBeenCalledWith("rip-current-outlook", expect.anything(), expect.anything());
+	});
+
+	it("keeps prior publication usable when metadata publication fails after staging", async () => {
+		const objects = new Map<string, unknown>([["rip-current-outlook", { revision: "prior" }], ["rip-current-outlook:image:prior", new ArrayBuffer(1)]]);
+		const put = vi.fn(async (key: string, value: unknown) => {
+			if (key === "rip-current-outlook") throw new Error("metadata write failed");
+			objects.set(key, value);
+		});
+		const getWithMetadata = vi.fn(async (key: string) => ({ value: objects.get(key) as ArrayBuffer | undefined, metadata: { revision: "new" } }));
+		const runner = vi.fn().mockResolvedValue({ ...payload(), revision: "new", kvWrites: [{ key: "rip-current-outlook:image:new", value: new ArrayBuffer(2), expectedRevision: "new" }] });
+		const h = harness({ "rip-current-outlook": runner }, { put, getWithMetadata } as Partial<KVNamespace>);
+		expect((await h.core.run(request("rip-current-outlook", "metadata-fails"))).outcome).toBe("failed");
+		expect(objects.get("rip-current-outlook")).toEqual({ revision: "prior" });
+		expect(objects.has("rip-current-outlook:image:prior")).toBe(true);
+		expect(objects.has("rip-current-outlook:image:new")).toBe(true);
+		expect(put.mock.calls.map(([key]) => key)).toEqual(["rip-current-outlook:image:new", "rip-current-outlook"]);
+	});
+
+	it("validates a staged revision before publishing matching metadata", async () => {
+		const events: string[] = [];
+		const put = vi.fn(async (key: string) => { events.push(`put:${key}`); });
+		const getWithMetadata = vi.fn(async (key: string) => { events.push(`validate:${key}`); return { value: new ArrayBuffer(1), metadata: { revision: "new" } }; });
+		const runner = vi.fn().mockResolvedValue({ ...payload(), revision: "new", kvWrites: [{ key: "rip-current-outlook:image:new", value: new ArrayBuffer(1), expectedRevision: "new" }] });
+		const h = harness({ "rip-current-outlook": runner }, { put, getWithMetadata } as Partial<KVNamespace>);
+		expect((await h.core.run(request("rip-current-outlook", "ordered"))).outcome).toBe("completed");
+		expect(events).toEqual(["put:rip-current-outlook:image:new", "validate:rip-current-outlook:image:new", "put:rip-current-outlook"]);
+	});
 });
 
 describe("Durable Object configuration", () => {
@@ -166,6 +203,7 @@ describe("Durable Object configuration", () => {
 		expect(REFRESH_JOB_CONFIG["beach-flags"].cooldownMs).toBe(60_000);
 		expect(REFRESH_JOB_CONFIG["beach-conditions"].cooldownMs).toBe(5 * 60_000);
 		expect(REFRESH_JOB_CONFIG["water-quality"].cooldownMs).toBe(30 * 60_000);
+		expect(REFRESH_JOB_CONFIG["rip-current-outlook"].cooldownMs).toBe(30 * 60_000);
 	});
 
 	it("declares the binding and SQLite migration", () => {

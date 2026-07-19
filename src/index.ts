@@ -5,6 +5,8 @@ import { handleBeachConditionsRequest } from "./routes/beach-conditions";
 import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
 import { handleBeachFlagsRequest } from "./routes/beachflags";
 import { handleRefreshBeachFlagsRequest } from "./routes/refreshBeachFlag";
+import { handleRipCurrentOutlookImageRequest, handleRipCurrentOutlookRequest } from "./routes/ripCurrentOutlook";
+import { handleAdminRefreshRequest } from "./routes/adminRefresh";
 import type { Env as AppEnv } from "./types";
 
 import { API_PATH_VERSION, API_VERSION, APP_VERSION } from "./config/version";
@@ -159,6 +161,7 @@ export default {
 				if (url.pathname === "/internal/refresh/beach-flags") {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
+				if (url.pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
 			}
@@ -193,6 +196,8 @@ export default {
 		if (url.pathname === "/v1/beach-flags") {
 			return await handleBeachFlagsRequest(env);
 		}
+		if (url.pathname === "/v1/rip-current-outlook") return await handleRipCurrentOutlookRequest(env);
+		if (url.pathname === "/v1/rip-current-outlook/image") return await handleRipCurrentOutlookImageRequest(request, env);
 
 		if (url.pathname === "/v1/weather") {
 			// Temporary compatibility route for existing app versions.
@@ -259,6 +264,7 @@ export default {
 			} catch (error) {
 				console.error("Scheduled water quality refresh failed");
 			}
+			try { await runScheduled("rip-current-outlook"); } catch { console.error("Scheduled rip current outlook refresh failed"); }
 			return;
 		}
 

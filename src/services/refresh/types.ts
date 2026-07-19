@@ -1,4 +1,4 @@
-export type RefreshJob = "beach-flags" | "beach-conditions" | "water-quality";
+export type RefreshJob = "beach-flags" | "beach-conditions" | "water-quality" | "rip-current-outlook";
 export type RefreshTrigger = "admin" | "scheduled";
 
 export interface RefreshRunRequest {
