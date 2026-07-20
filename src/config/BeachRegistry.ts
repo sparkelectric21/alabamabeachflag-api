@@ -238,9 +238,7 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "BSCA1" },
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			],
 		},
 		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
@@ -288,13 +286,6 @@ export const beaches: BeachDefinition[] = [
 			latitude: 30.248108,
 			longitude: -87.71726,
 		},
-		waterTemperature: {
-			sources: [
-				{ provider: "ndbc", stationId: "BSCA1" },
-				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
-			],
-		},
 		vibrioConditions: {
 			eligible: false,
 			reason: "The lagoon-pass environment lacks a validated approved direct-observation proxy.",
@@ -311,7 +302,7 @@ export const beaches: BeachDefinition[] = [
 			weather: true,
 			alerts: true,
 			uv: true,
-			waterTemperature: true,
+			waterTemperature: false,
 			ripCurrent: true,
 			tide: false,
 		},
