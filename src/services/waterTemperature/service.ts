@@ -44,8 +44,14 @@ export interface WaterTemperatureSelectionOptions {
 }
 
 function providerFailureCondition(source: WaterTemperatureSource, error: unknown): string {
-	if (source.provider === "ndbc") return "ndbc_parser_or_reporting_failure";
-	if (error instanceof Error && /(?:\bHTTP\s*|\bstatus\s*|\()\d{3}\b/i.test(error.message)) return "coops_http_failure";
+	const message = error instanceof Error ? error.message : "";
+	if (/timed out/i.test(message)) return `${source.provider}_timeout`;
+	if (/(?:\bHTTP\s*|\bstatus\s*|\()\d{3}\b/i.test(message)) return `${source.provider}_http_failure`;
+	if (source.provider === "ndbc" && /WTMP column not found/i.test(message)) return "ndbc_missing_water_temperature";
+	if (source.provider === "ndbc" && /observation timestamp is invalid/i.test(message)) return "ndbc_invalid_timestamp";
+	if (source.provider === "ndbc" && /Invalid water temperature/i.test(message)) return "ndbc_invalid_water_temperature";
+	if (source.provider === "ndbc" && /Unexpected NDBC response/i.test(message)) return "ndbc_malformed_response";
+	if (source.provider === "ndbc") return "ndbc_provider_failure";
 	return "coops_provider_failure";
 }
 
@@ -60,7 +66,6 @@ export async function fetchLatestWaterTemperature(
 
 	const failures: string[] = [];
 	const staleCandidates: WaterTemperatureObservationWithSource[] = [];
-	let firstValidObservation: WaterTemperatureObservationWithSource | undefined;
 	const now = options.now ?? new Date();
 
 	for (const source of sourceConfig.sources) {
@@ -74,7 +79,6 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			const observation = await request;
-			firstValidObservation ??= observation;
 
 			if (isFreshDirectObservation(observation.observedAt, now)) {
 				if (staleCandidates.length > 0) {
@@ -106,20 +110,7 @@ export async function fetchLatestWaterTemperature(
 		}
 	}
 
-	// Preserve the general water-temperature tile's existing behavior. Vibrio
-	// independently rejects this observation when every approved source is stale.
-	if (firstValidObservation) {
-		logWarn("Water Temperature", "No approved fresh candidate; preserving general-temperature fallback", {
-			selectedProvider: firstValidObservation.provider,
-			selectedStationId: firstValidObservation.stationId,
-			selectedAgeMinutes: Math.round((directObservationAgeMs(firstValidObservation.observedAt, now) ?? 0) / 60_000),
-			staleCandidates: staleCandidates.length,
-			failedCandidates: failures.length,
-		});
-		return firstValidObservation;
-	}
-
 	throw new Error(
-		`No water temperature sources returned valid data. ${failures.join("; ")}`,
+		`No approved fresh water temperature source is available. stale=${staleCandidates.length}; failed=${failures.length}`,
 	);
 }

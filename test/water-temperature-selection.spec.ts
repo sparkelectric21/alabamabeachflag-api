@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BeachDefinition } from "../src/config/BeachRegistry";
+import { beaches, type BeachDefinition } from "../src/config/BeachRegistry";
 import { estimateVibrioConditions } from "../src/services/vibrio/estimator";
 import {
 	fetchLatestWaterTemperature,
@@ -45,6 +45,19 @@ describe("water-temperature source selection", () => {
 		expect(loadSource).toHaveBeenCalledTimes(1);
 	});
 
+	it.each([
+		["Gulf Shores", "ndbc", "PPTA1"],
+		["Orange Beach / Cotton Bayou", "ndbc", "PPTA1"],
+		["Fort Morgan", "ndbc", "DPHA1"],
+		["Dauphin Island", "coops", "8735180"],
+	] as const)("uses %s's configured primary station", async (_beachName, provider, stationId) => {
+		const expected = observation(provider, stationId, "2026-07-17T17:00:00.000Z");
+		const loadSource = loader({ [`${provider}:${stationId}`]: expected });
+
+		await expect(fetchLatestWaterTemperature(sources([provider, stationId]), new Map(), { now, loadSource }))
+			.resolves.toEqual(expected);
+	});
+
 	it("skips a stale preferred NDBC observation for an approved fresh CO-OPS fallback", async () => {
 		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 		const loadSource = loader({
@@ -59,17 +72,18 @@ describe("water-temperature source selection", () => {
 		log.mockRestore();
 	});
 
-	it("returns the original preferred observation for the general tile when all configured stations are stale", async () => {
+	it("returns unavailable when all configured stations are stale", async () => {
 		const preferred = observation("ndbc", "PPTA1", "2026-07-17T15:00:00.000Z", 82);
 		const loadSource = loader({
 			"ndbc:PPTA1": preferred,
 			"coops:8735180": observation("coops", "8735180", "2026-07-17T14:00:00.000Z", 84),
 		});
 
-		const result = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"], ["coops", "8735180"]), new Map(), { now, loadSource });
-
-		expect(result).toEqual(preferred);
-		expect(result).toMatchObject({ temperature: 82, temperatureUnit: "F", provider: "ndbc", stationId: "PPTA1" });
+		await expect(fetchLatestWaterTemperature(
+			sources(["ndbc", "PPTA1"], ["coops", "8735180"]),
+			new Map(),
+			{ now, loadSource },
+		)).rejects.toThrow("No approved fresh water temperature source");
 	});
 
 	it("continues when the preferred station fails to parse", async () => {
@@ -83,19 +97,21 @@ describe("water-temperature source selection", () => {
 		expect(result.stationId).toBe("8735180");
 	});
 
-	it("classifies NDBC reporting and CO-OPS HTTP failures without logging response data", async () => {
+	it("classifies parser, timeout, and HTTP failures without logging response data", async () => {
 		const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const loadSource = loader({
-			"ndbc:PPTA1": new Error("WTMP column not found"),
-			"coops:8735180": new Error("Failed to fetch water temperature (504)"),
+			"ndbc:PPTA1": new Error("WTMP column not found for station PPTA1"),
+			"ndbc:DPHA1": new Error("Request timed out after 10000ms"),
+			"coops:8735180": new Error("NOAA CO-OPS request failed (504)"),
 		});
 
 		await expect(fetchLatestWaterTemperature(
-			sources(["ndbc", "PPTA1"], ["coops", "8735180"]),
+			sources(["ndbc", "PPTA1"], ["ndbc", "DPHA1"], ["coops", "8735180"]),
 			new Map(),
 			{ now, loadSource, beachId: "test-beach", diagnosticScope: "vibrio_conditions" },
 		)).rejects.toThrow();
-		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=ndbc_parser_or_reporting_failure"));
+		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=ndbc_missing_water_temperature"));
+		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=ndbc_timeout"));
 		expect(log).toHaveBeenCalledWith(expect.stringContaining("condition=coops_http_failure"));
 		log.mockRestore();
 	});
@@ -113,7 +129,7 @@ describe("water-temperature source selection", () => {
 
 	it("never requests or selects a station outside the beach configuration", async () => {
 		const loadSource = loader({
-			"ndbc:PPTA1": observation("ndbc", "PPTA1", "2026-07-17T15:00:00.000Z"),
+			"ndbc:PPTA1": observation("ndbc", "PPTA1", "2026-07-17T17:00:00.000Z"),
 		});
 
 		const result = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource });
@@ -121,6 +137,16 @@ describe("water-temperature source selection", () => {
 		expect(result.stationId).toBe("PPTA1");
 		expect(loadSource).toHaveBeenCalledOnce();
 		expect(loadSource.mock.calls.flatMap((call) => call.map((value) => value.stationId))).not.toContain("UNAPPROVED");
+	});
+
+	it("returns unavailable when no approved fallback is configured", async () => {
+		const loadSource = loader({
+			"ndbc:PPTA1": new Error("Request timed out after 10000ms"),
+		});
+
+		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource }))
+			.rejects.toThrow("No approved fresh water temperature source");
+		expect(loadSource).toHaveBeenCalledOnce();
 	});
 
 	it("reuses the request cache across beach selections", async () => {
@@ -131,6 +157,47 @@ describe("water-temperature source selection", () => {
 		await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), requestCache, { now, loadSource });
 		await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), requestCache, { now, loadSource });
 		expect(loadSource).toHaveBeenCalledOnce();
+	});
+
+	it("keeps selection independent when one beach primary fails", async () => {
+		const loadSource = loader({
+			"ndbc:PPTA1": new Error("Request timed out after 10000ms"),
+			"ndbc:DPHA1": observation("ndbc", "DPHA1", "2026-07-17T17:00:00.000Z", 86),
+		});
+		const requestCache = new Map<string, Promise<WaterTemperatureObservationWithSource>>();
+
+		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), requestCache, { now, loadSource }))
+			.rejects.toThrow("No approved fresh water temperature source");
+		await expect(fetchLatestWaterTemperature(sources(["ndbc", "DPHA1"]), requestCache, { now, loadSource }))
+			.resolves.toMatchObject({ provider: "ndbc", stationId: "DPHA1", temperature: 86 });
+	});
+
+	it("keeps station-scoped request reuse from contaminating beach selection", async () => {
+		const loadSource = loader({
+			"ndbc:PPTA1": observation("ndbc", "PPTA1", "2026-07-17T17:00:00.000Z", 84),
+			"ndbc:DPHA1": observation("ndbc", "DPHA1", "2026-07-17T17:00:00.000Z", 86),
+		});
+		const requestCache = new Map<string, Promise<WaterTemperatureObservationWithSource>>();
+		const gulf = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), requestCache, { now, loadSource });
+		const fortMorgan = await fetchLatestWaterTemperature(sources(["ndbc", "DPHA1"]), requestCache, { now, loadSource });
+
+		expect(gulf).toMatchObject({ stationId: "PPTA1", temperature: 84 });
+		expect(fortMorgan).toMatchObject({ stationId: "DPHA1", temperature: 86 });
+	});
+
+	it("configures the four app beaches with only their approved station", () => {
+		const expected = new Map([
+			["gulf-shores-public-beach", ["ndbc:PPTA1"]],
+			["cotton-bayou", ["ndbc:PPTA1"]],
+			["fort-morgan-public-beach", ["ndbc:DPHA1"]],
+			["dauphin-island-public-beach", ["coops:8735180"]],
+		]);
+
+		for (const [beachId, sourceKeys] of expected) {
+			const configured = beaches.find((candidate) => candidate.id === beachId)?.waterTemperature?.sources
+				.map(({ provider, stationId }) => `${provider}:${stationId}`);
+			expect(configured).toEqual(sourceKeys);
+		}
 	});
 
 	it("allows seasonal awareness only for the selected fresh direct observation", async () => {
@@ -149,7 +216,7 @@ describe("water-temperature source selection", () => {
 
 		expect(estimateVibrioConditions({ enabled: true, now, observation: estimatorObservation(selected) }).status).toBe("seasonalAwareness");
 
-		const allStale = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource });
-		expect(estimateVibrioConditions({ enabled: true, now, observation: estimatorObservation(allStale) }).diagnosticCode).toBe("stale_observation");
+		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource }))
+			.rejects.toThrow("No approved fresh water temperature source");
 	});
 });

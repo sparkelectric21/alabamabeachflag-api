@@ -143,7 +143,6 @@ export const beaches: BeachDefinition[] = [
 		waterTemperature: {
 			sources: [
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			],
 		},
 		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
@@ -151,7 +150,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			] },
 			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
 		},
@@ -192,9 +190,7 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "BSCA1" },
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			],
 		},
 		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
@@ -202,7 +198,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			] },
 			limitation: "Perdido Pass and Mobile Bay entrance observations are proxies, not Gulf Shores beach measurements.",
 		},
@@ -392,8 +387,6 @@ export const beaches: BeachDefinition[] = [
 		waterTemperature: {
 			sources: [
 				{ provider: "ndbc", stationId: "DPHA1" },
-				{ provider: "coops", stationId: "8735180" },
-				{ provider: "ndbc", stationId: "PPTA1" },
 			],
 		},
 		tide: { stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },
@@ -401,7 +394,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "DPHA1" },
-				{ provider: "coops", stationId: "8735180" },
 			] },
 			limitation: "Dauphin Island/Mobile Bay entrance observations are proxies, not Fort Morgan beach measurements.",
 		},
@@ -443,7 +435,6 @@ export const beaches: BeachDefinition[] = [
 		waterTemperature: {
 			sources: [
 				{ provider: "coops", stationId: "8735180" },
-				{ provider: "ndbc", stationId: "DPHA1" },
 			],
 		},
 		tide: { stationId: "8735180", stationName: "Dauphin Island, AL", stationType: "harmonic" },
@@ -451,7 +442,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "coops", stationId: "8735180" },
-				{ provider: "ndbc", stationId: "DPHA1" },
 			] },
 			limitation: "East-end Dauphin Island observations are proxies for the public beach farther west.",
 		},
