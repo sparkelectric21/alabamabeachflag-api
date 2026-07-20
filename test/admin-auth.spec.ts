@@ -97,6 +97,16 @@ describe("Cloudflare Access authentication", () => {
 		expect(await authenticateAdminRequest(request(await token()), env(), verifier)).toMatchObject({ method: "access" });
 	});
 
+	it("accepts either configured Access application audience", async () => {
+		const websiteAudience = "website-admin-audience";
+		const websiteToken = await token({}, issuer, websiteAudience);
+		expect(await authenticateAdminRequest(
+			request(websiteToken),
+			env({ ACCESS_AUD: `${audience},${websiteAudience}` }),
+			verifier,
+		)).toMatchObject({ method: "access" });
+	});
+
 	it("accepts an authorized browser subject", async () => {
 		const jwt = await token({ email: "other@example.com", sub: "service-subject" });
 		expect(await authenticateAdminRequest(request(jwt), env(), verifier)).toMatchObject({ method: "access" });

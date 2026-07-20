@@ -11,7 +11,7 @@ export interface AdminIdentity {
 export type AccessTokenVerifier = (
 	token: string,
 	issuer: string,
-	audience: string,
+	audience: string | string[],
 ) => Promise<JWTPayload>;
 
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -24,7 +24,7 @@ function normalizedIssuer(value: string): string {
 	return value.replace(/\/+$/, "");
 }
 
-async function productionVerifier(token: string, issuer: string, audience: string): Promise<JWTPayload> {
+async function productionVerifier(token: string, issuer: string, audience: string | string[]): Promise<JWTPayload> {
 	let jwks = jwksByIssuer.get(issuer);
 	if (!jwks) {
 		jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
@@ -70,7 +70,9 @@ export async function authenticateAdminRequest(
 	if (token && env.ACCESS_TEAM_DOMAIN && env.ACCESS_AUD) {
 		try {
 			const issuer = normalizedIssuer(env.ACCESS_TEAM_DOMAIN);
-			const payload = await verifyToken(token, issuer, env.ACCESS_AUD);
+			const audiences = [...csv(env.ACCESS_AUD)];
+			if (audiences.length === 0) return null;
+			const payload = await verifyToken(token, issuer, audiences);
 			if (authorized(payload, env)) {
 				const subject = typeof payload.common_name === "string"
 					? "access-service-token"

@@ -58,6 +58,20 @@ describe("app announcement", () => {
 		expect(h.kv.delete).toHaveBeenCalledOnce();
 	});
 
+	it("serves the announcement manager through the protected same-origin prefix", async () => {
+		const h = harness();
+		const status = await worker.fetch(new Request("https://www.alabamabeachflag.com/admin/service/v1/app-announcement"), h.env);
+		expect(status.status).toBe(200);
+		expect(await status.json()).toEqual({ status: "ok", announcement: null });
+
+		const publish = new Request("https://www.alabamabeachflag.com/admin/service/internal/app-announcement", {
+			method: "PUT",
+			headers: { Origin: adminOrigin, "x-refresh-secret": "secret", "Content-Type": "application/json" },
+			body: JSON.stringify(valid),
+		});
+		expect((await worker.fetch(publish, h.env)).status).toBe(200);
+	});
+
 	it("requires authentication for writes and deletes", async () => {
 		const h = harness();
 		expect((await worker.fetch(admin("PUT", valid, "wrong"), h.env)).status).toBe(403);

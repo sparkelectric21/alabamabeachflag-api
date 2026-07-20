@@ -123,7 +123,11 @@ async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response>
 export default {
 	async fetch(request: Request, env: AppEnv): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname === "/internal/app-announcement" && request.method === "OPTIONS") {
+		const sameOriginAdminPrefix = "/admin/service";
+		const pathname = url.pathname.startsWith(`${sameOriginAdminPrefix}/`)
+			? url.pathname.slice(sameOriginAdminPrefix.length)
+			: url.pathname;
+		if (pathname === "/internal/app-announcement" && request.method === "OPTIONS") {
 			return handleAnnouncementOptions(request);
 		}
 		if (url.pathname === "/health" || url.pathname === "/v1/health") {
@@ -134,47 +138,47 @@ export default {
 			return methodNotAllowed("GET, HEAD");
 		}
 
-			if (url.pathname.startsWith("/internal/")) {
+			if (pathname.startsWith("/internal/")) {
 				const identity = await authenticateAdminRequest(request, env);
-				if (!identity) return url.pathname === "/internal/app-announcement"
+				if (!identity) return pathname === "/internal/app-announcement"
 					? withAnnouncementCors(forbiddenAdminResponse(), request)
 					: forbiddenAdminResponse();
 
-				if (url.pathname === "/internal/app-announcement") {
+				if (pathname === "/internal/app-announcement") {
 					if (!hasTrustedAnnouncementOrigin(request)) return withAnnouncementCors(forbiddenAdminResponse(), request);
 					if (request.method === "PUT") return withAnnouncementCors(await handlePutAppAnnouncementRequest(request, env), request);
 					if (request.method === "DELETE") return withAnnouncementCors(await handleDeleteAppAnnouncementRequest(env), request);
 					return withAnnouncementCors(methodNotAllowed("PUT, DELETE"), request);
 				}
 
-				if (url.pathname === "/internal/verification/latest") {
+				if (pathname === "/internal/verification/latest") {
 					if (request.method !== "GET") return methodNotAllowed("GET");
 					return await handleLatestVerification(env);
 				}
 
-				if (url.pathname === "/internal/verification/run") {
+				if (pathname === "/internal/verification/run") {
 					if (request.method !== "POST") return methodNotAllowed("POST");
 					return await dispatchVerification(env);
 				}
 
 				if (request.method !== "POST") return methodNotAllowed("POST");
 
-				if (url.pathname === "/internal/refresh/water-quality") {
+				if (pathname === "/internal/refresh/water-quality") {
 					return await handleRefreshWaterQualityRequest(request, env, identity);
 				}
 
-				if (url.pathname === "/internal/refresh/beach-conditions") {
+				if (pathname === "/internal/refresh/beach-conditions") {
 					return await handleRefreshBeachConditionsRequest(request, env, identity);
 				}
 
-				if (url.pathname === "/internal/refresh/weather") {
+				if (pathname === "/internal/refresh/weather") {
 					return await handleRefreshBeachConditionsRequest(request, env, identity);
 				}
 
-				if (url.pathname === "/internal/refresh/beach-flags") {
+				if (pathname === "/internal/refresh/beach-flags") {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
-				if (url.pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
+				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
 			}
@@ -198,7 +202,7 @@ export default {
 			return await handleBeachesRequest();
 		}
 
-		if (url.pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
+		if (pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);
