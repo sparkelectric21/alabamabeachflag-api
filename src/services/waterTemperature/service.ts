@@ -5,8 +5,8 @@ import {
 } from "./client";
 import { fetchNDBCWaterTemperature } from "./ndbcClient";
 import {
-	DIRECT_OBSERVATION_MAX_AGE_MS,
 	directObservationAgeMs,
+	directObservationMaxAgeMs,
 	isFreshDirectObservation,
 } from "./freshness";
 import { logInfo, logWarn } from "../../utils/logger";
@@ -79,8 +79,9 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			const observation = await request;
+			const maxAgeMs = directObservationMaxAgeMs(source.provider, source.stationId);
 
-			if (isFreshDirectObservation(observation.observedAt, now)) {
+			if (isFreshDirectObservation(observation.observedAt, now, maxAgeMs)) {
 				if (staleCandidates.length > 0) {
 					logInfo("Water Temperature", "Skipped stale candidate for fresh fallback", {
 						staleCandidates: staleCandidates.map((candidate) => `${candidate.provider}:${candidate.stationId}`).join(","),
@@ -93,8 +94,18 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			const ageMs = directObservationAgeMs(observation.observedAt, now);
-			if (ageMs !== undefined && ageMs > DIRECT_OBSERVATION_MAX_AGE_MS) {
+			if (ageMs !== undefined && ageMs > maxAgeMs) {
 				staleCandidates.push(observation);
+				logWarn("Water Temperature", "Approved source candidate is stale", {
+					beachId: options.beachId,
+					scope: options.diagnosticScope,
+					condition: "stale_observation",
+					provider: source.provider,
+					stationId: source.stationId,
+					observedAt: observation.observedAt,
+					ageMinutes: Math.round(ageMs / 60_000),
+					freshnessThresholdMinutes: maxAgeMs / 60_000,
+				});
 			}
 		} catch (error) {
 			logWarn("Water Temperature", "Approved source candidate failed", {

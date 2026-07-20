@@ -46,6 +46,41 @@ describe("water-temperature source selection", () => {
 	});
 
 	it.each([
+		["exactly two hours", "2026-07-17T16:00:00.000Z"],
+		["inside the PPTA1 grace period", "2026-07-17T15:30:00.000Z"],
+	])("accepts PPTA1 observations %s", async (_case, observedAt) => {
+		const expected = observation("ndbc", "PPTA1", observedAt);
+		const result = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), {
+			now,
+			loadSource: async () => expected,
+		});
+
+		expect(result).toEqual(expected);
+	});
+
+	it("rejects PPTA1 observations older than two hours thirty minutes", async () => {
+		const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const loadSource = async () => observation("ndbc", "PPTA1", "2026-07-17T15:29:59.999Z");
+
+		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource }))
+			.rejects.toThrow("No approved fresh water temperature source");
+		expect(log).toHaveBeenCalledWith(expect.stringMatching(
+			/stale_observation.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T15:29:59.999Z.*ageMinutes=150.*freshnessThresholdMinutes=150/,
+		));
+		log.mockRestore();
+	});
+
+	it.each([
+		["ndbc", "DPHA1"],
+		["coops", "8735180"],
+	] as const)("keeps the two-hour default for %s:%s", async (provider, stationId) => {
+		const loadSource = async () => observation(provider, stationId, "2026-07-17T15:59:59.999Z");
+
+		await expect(fetchLatestWaterTemperature(sources([provider, stationId]), new Map(), { now, loadSource }))
+			.rejects.toThrow("No approved fresh water temperature source");
+	});
+
+	it.each([
 		["Gulf Shores", "ndbc", "PPTA1"],
 		["Orange Beach / Cotton Bayou", "ndbc", "PPTA1"],
 		["Fort Morgan", "ndbc", "DPHA1"],
@@ -185,10 +220,11 @@ describe("water-temperature source selection", () => {
 		expect(fortMorgan).toMatchObject({ stationId: "DPHA1", temperature: 86 });
 	});
 
-	it("configures the four app beaches with only their approved station", () => {
+	it("configures the sole-source beaches with only their approved station", () => {
 		const expected = new Map([
 			["gulf-shores-public-beach", ["ndbc:PPTA1"]],
 			["cotton-bayou", ["ndbc:PPTA1"]],
+			["gulf-state-park-pavilion", ["ndbc:PPTA1"]],
 			["fort-morgan-public-beach", ["ndbc:DPHA1"]],
 			["dauphin-island-public-beach", ["coops:8735180"]],
 		]);

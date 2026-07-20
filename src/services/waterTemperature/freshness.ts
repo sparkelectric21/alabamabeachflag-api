@@ -1,6 +1,14 @@
 export const DIRECT_OBSERVATION_MAX_AGE_MS = 2 * 60 * 60 * 1_000;
 export const DIRECT_OBSERVATION_FUTURE_TOLERANCE_MS = 10 * 60 * 1_000;
 
+const SOURCE_MAX_AGE_MS: Readonly<Record<string, number>> = {
+	"ndbc:PPTA1": 2.5 * 60 * 60 * 1_000,
+};
+
+export function directObservationMaxAgeMs(provider: string, stationId: string): number {
+	return SOURCE_MAX_AGE_MS[`${provider}:${stationId}`] ?? DIRECT_OBSERVATION_MAX_AGE_MS;
+}
+
 export function directObservationAgeMs(observedAt: string, now: Date): number | undefined {
 	const observedMs = new Date(observedAt).getTime();
 	return Number.isFinite(observedMs) ? now.getTime() - observedMs : undefined;

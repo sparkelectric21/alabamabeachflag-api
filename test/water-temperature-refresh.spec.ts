@@ -39,6 +39,26 @@ describe("configured water-temperature refresh", () => {
 		expect(fetchNDBCWaterTemperature).not.toHaveBeenCalledWith("BSCA1");
 	});
 
+	it("applies the PPTA1 grace period to the three sole-source beaches without changing metadata", async () => {
+		vi.setSystemTime(new Date("2026-07-20T20:15:00.000Z"));
+
+		const results = await refreshWaterTemperatures();
+		const expected = {
+			temperature: 85,
+			temperatureUnit: "F",
+			observedAt,
+			provider: "ndbc",
+			stationId: "PPTA1",
+		};
+
+		expect(results["gulf-shores-public-beach"]).toEqual(expected);
+		expect(results["cotton-bayou"]).toEqual(expected);
+		expect(results["gulf-state-park-pavilion"]).toEqual(expected);
+		expect(results["fort-morgan-public-beach"]).toBeUndefined();
+		expect(results["dauphin-island-public-beach"]).toBeUndefined();
+		expect(results["little-lagoon-pass"]).toBeUndefined();
+	});
+
 	it("keeps every beach's approved general-temperature mapping explicit", () => {
 		const configured = Object.fromEntries(beaches.map((beach) => [
 			beach.id,
