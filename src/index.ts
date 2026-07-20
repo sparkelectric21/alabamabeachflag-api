@@ -15,6 +15,7 @@ import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dis
 import type { RefreshJob } from "./services/refresh/types";
 import { dispatchVerification, handleLatestVerification, monitorVerificationReports } from "./routes/verification";
 import { isVerificationHour } from "./verification/run";
+import { handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest } from "./routes/appAnnouncement";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -134,6 +135,12 @@ export default {
 				const identity = await authenticateAdminRequest(request, env);
 				if (!identity) return forbiddenAdminResponse();
 
+				if (url.pathname === "/internal/app-announcement") {
+					if (request.method === "PUT") return await handlePutAppAnnouncementRequest(request, env);
+					if (request.method === "DELETE") return await handleDeleteAppAnnouncementRequest(env);
+					return methodNotAllowed("PUT, DELETE");
+				}
+
 				if (url.pathname === "/internal/verification/latest") {
 					if (request.method !== "GET") return methodNotAllowed("GET");
 					return await handleLatestVerification(env);
@@ -184,6 +191,8 @@ export default {
 		if (url.pathname === "/v1/beaches") {
 			return await handleBeachesRequest();
 		}
+
+		if (url.pathname === "/v1/app-announcement") return await handleAppAnnouncementRequest(request, env);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);

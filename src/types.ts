@@ -14,6 +14,7 @@ export interface Env {
 	VERIFICATION_ALERT_ENVIRONMENT: "staging" | "production";
 	VERIFICATION_ALERT_EMAIL: SendEmail;
 	VIBRIO_CONDITIONS_ENABLED?: string;
+	APP_ANNOUNCEMENT_ACTION_HOSTS?: string;
 
 	WEATHERKIT_TEAM_ID: string;
 	WEATHERKIT_KEY_ID: string;

@@ -6,6 +6,7 @@ export const BEACH_FLAGS_CACHE_KEY = "beach-flags";
 export const RIP_CURRENT_OUTLOOK_CACHE_KEY = "rip-current-outlook";
 export const RIP_CURRENT_OUTLOOK_LEGACY_IMAGE_KEY = "rip-current-outlook:image";
 export const RIP_CURRENT_OUTLOOK_IMAGE_KEY_PREFIX = "rip-current-outlook:image:";
+export const APP_ANNOUNCEMENT_CACHE_KEY = "app-announcement";
 
 export function ripCurrentOutlookImageKey(revision: string): string {
 	return `${RIP_CURRENT_OUTLOOK_IMAGE_KEY_PREFIX}${revision}`;
