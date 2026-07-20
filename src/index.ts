@@ -15,7 +15,7 @@ import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dis
 import type { RefreshJob } from "./services/refresh/types";
 import { dispatchVerification, handleLatestVerification, monitorVerificationReports } from "./routes/verification";
 import { isVerificationHour } from "./verification/run";
-import { handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest } from "./routes/appAnnouncement";
+import { handleAnnouncementOptions, handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest, hasTrustedAnnouncementOrigin, withAnnouncementCors } from "./routes/appAnnouncement";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -123,6 +123,9 @@ async function handleWeatherCompatibilityRequest(env: AppEnv): Promise<Response>
 export default {
 	async fetch(request: Request, env: AppEnv): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.pathname === "/internal/app-announcement" && request.method === "OPTIONS") {
+			return handleAnnouncementOptions(request);
+		}
 		if (url.pathname === "/health" || url.pathname === "/v1/health") {
 			if (request.method === "GET" || request.method === "HEAD") {
 				return handleHealthRequest(request.method, APP_VERSION, API_PATH_VERSION);
@@ -133,12 +136,15 @@ export default {
 
 			if (url.pathname.startsWith("/internal/")) {
 				const identity = await authenticateAdminRequest(request, env);
-				if (!identity) return forbiddenAdminResponse();
+				if (!identity) return url.pathname === "/internal/app-announcement"
+					? withAnnouncementCors(forbiddenAdminResponse(), request)
+					: forbiddenAdminResponse();
 
 				if (url.pathname === "/internal/app-announcement") {
-					if (request.method === "PUT") return await handlePutAppAnnouncementRequest(request, env);
-					if (request.method === "DELETE") return await handleDeleteAppAnnouncementRequest(env);
-					return methodNotAllowed("PUT, DELETE");
+					if (!hasTrustedAnnouncementOrigin(request)) return withAnnouncementCors(forbiddenAdminResponse(), request);
+					if (request.method === "PUT") return withAnnouncementCors(await handlePutAppAnnouncementRequest(request, env), request);
+					if (request.method === "DELETE") return withAnnouncementCors(await handleDeleteAppAnnouncementRequest(env), request);
+					return withAnnouncementCors(methodNotAllowed("PUT, DELETE"), request);
 				}
 
 				if (url.pathname === "/internal/verification/latest") {
@@ -192,7 +198,7 @@ export default {
 			return await handleBeachesRequest();
 		}
 
-		if (url.pathname === "/v1/app-announcement") return await handleAppAnnouncementRequest(request, env);
+		if (url.pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);

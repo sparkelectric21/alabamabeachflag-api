@@ -31,6 +31,8 @@ function admin(method: "PUT" | "DELETE", body?: unknown, secret = "secret") {
 	});
 }
 
+const adminOrigin = "https://www.alabamabeachflag.com";
+
 describe("app announcement", () => {
 	it("returns an explicit inactive state with cache headers", async () => {
 		const h = harness();
@@ -59,6 +61,47 @@ describe("app announcement", () => {
 		const h = harness();
 		expect((await worker.fetch(admin("PUT", valid, "wrong"), h.env)).status).toBe(403);
 		expect((await worker.fetch(admin("DELETE", undefined, "wrong"), h.env)).status).toBe(403);
+	});
+
+	it("allows only the official admin origin in credentialed CORS responses", async () => {
+		const h = harness();
+		const publicResponse = await worker.fetch(new Request("https://example.com/v1/app-announcement", { headers: { Origin: adminOrigin } }), h.env);
+		expect(publicResponse.headers.get("Access-Control-Allow-Origin")).toBe(adminOrigin);
+		expect(publicResponse.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+
+		const untrusted = await worker.fetch(new Request("https://example.com/v1/app-announcement", { headers: { Origin: "https://evil.example" } }), h.env);
+		expect(untrusted.headers.get("Access-Control-Allow-Origin")).toBeNull();
+	});
+
+	it("handles exact-origin preflight without weakening administrative authentication", async () => {
+		const h = harness();
+		const response = await worker.fetch(new Request("https://example.com/internal/app-announcement", {
+			method: "OPTIONS",
+			headers: { Origin: adminOrigin, "Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "content-type" },
+		}), h.env);
+		expect(response.status).toBe(204);
+		expect(response.headers.get("Access-Control-Allow-Origin")).toBe(adminOrigin);
+		expect(response.headers.get("Access-Control-Allow-Methods")).toContain("PUT");
+		expect(h.kv.put).not.toHaveBeenCalled();
+	});
+
+	it("rejects untrusted browser origins while retaining non-browser service clients", async () => {
+		const h = harness();
+		const hostile = admin("PUT", valid);
+		hostile.headers.set("Origin", "https://evil.example");
+		expect((await worker.fetch(hostile, h.env)).status).toBe(403);
+		expect(h.kv.put).not.toHaveBeenCalled();
+		expect((await worker.fetch(admin("PUT", valid), h.env)).status).toBe(200);
+	});
+
+	it("rejects untrusted and unsupported preflights", async () => {
+		const h = harness();
+		for (const [origin, method] of [["https://evil.example", "PUT"], [adminOrigin, "POST"]]) {
+			const response = await worker.fetch(new Request("https://example.com/internal/app-announcement", {
+				method: "OPTIONS", headers: { Origin: origin, "Access-Control-Request-Method": method },
+			}), h.env);
+			expect(response.status).toBe(403);
+		}
 	});
 
 	it.each([
