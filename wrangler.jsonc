@@ -14,6 +14,16 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"routes": [
+		{
+			"pattern": "www.alabamabeachflag.com/admin/service/*",
+			"zone_name": "alabamabeachflag.com"
+		},
+		{
+			"pattern": "alabamabeachflag.com/admin/service/*",
+			"zone_name": "alabamabeachflag.com"
+		}
+	],
 	"kv_namespaces": [
 		{
 			"binding": "BEACH_DATA",
@@ -57,7 +67,7 @@
 		// Token Client IDs matched against the validated JWT common_name claim.
 		"ALLOW_LEGACY_REFRESH_SECRET": "false",
 		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
-		"ACCESS_AUD": "82f83bb6bdb939628d43580a444f7c8a231c2c48a9a2b7e0a15fe68258351b6d",
+		"ACCESS_AUD": "82f83bb6bdb939628d43580a444f7c8a231c2c48a9a2b7e0a15fe68258351b6d,673e31682a88ad7d302dac4bff370cf4a9437f3be5f0fa8d510f028bdb897390",
 		"ACCESS_ALLOWED_IDENTITIES": "sparkelectricalservicesllc@gmail.com",
 		"ACCESS_ALLOWED_SERVICE_TOKENS": "56cab61952fcbc7827855543b878bb21.access",
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev",
