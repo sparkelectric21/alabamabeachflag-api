@@ -10,6 +10,8 @@ The source record is stored as plain JSON in the existing `BEACH_DATA` KV namesp
 
 `PUT /internal/app-announcement` replaces the current record and creates a new revision. `DELETE /internal/app-announcement` clears it. Both require the existing Cloudflare Access identity/service-token policy; the legacy `x-refresh-secret` works only when the existing migration flag is explicitly enabled. Administrative responses are `no-store`.
 
+The browser manager at `https://www.alabamabeachflag.com/admin/` uses an authenticated Cloudflare Access browser session. Announcement responses opt in only that exact origin with credentialed CORS. Preflight accepts only PUT and DELETE from that origin; browser mutations with any other `Origin` are rejected. Service-token clients without an `Origin` header remain supported. Cloudflare Access must allow unauthenticated `OPTIONS` requests to reach the Worker while continuing to protect PUT and DELETE.
+
 Input is strict plain text: ID 1–128 characters, title 1–80, message 1–500, action title 1–40, UTC ISO-8601 start/expiration timestamps, and expiration later than start. Action links are HTTPS and limited by the comma-separated `APP_ANNOUNCEMENT_ACTION_HOSTS` configuration (default: `alabamabeachflag.com,www.alabamabeachflag.com`). Unexpected fields, markup/control characters, credentials in URLs, ports, fragments, unapproved hosts, and wording that presents the app notice as Apple, NWS/NOAA, police, government, or emergency services are rejected. Factual operational wording such as “NWS data is temporarily unavailable” remains allowed.
 
 ## Operations
