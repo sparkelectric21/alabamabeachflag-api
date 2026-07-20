@@ -21,12 +21,16 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CONTROL_OR_MARKUP_PATTERN = /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const AUTHORITY_IMPERSONATION_PATTERN = /\b(apple|national weather service|nws|noaa|police|sheriff|law enforcement|emergency services?|emergency management|fema|government|coast guard|fire department|city of|county of|state of)\b/i;
 const CACHE_CONTROL = "public, max-age=60, s-maxage=180";
-export const APP_ANNOUNCEMENT_ADMIN_ORIGIN = "https://www.alabamabeachflag.com";
+export const APP_ANNOUNCEMENT_ADMIN_ORIGINS = new Set([
+	"https://alabamabeachflag.com",
+	"https://www.alabamabeachflag.com",
+]);
 
 export function announcementCorsHeaders(request: Request): HeadersInit {
-	if (request.headers.get("Origin") !== APP_ANNOUNCEMENT_ADMIN_ORIGIN) return {};
+	const origin = request.headers.get("Origin");
+	if (!origin || !APP_ANNOUNCEMENT_ADMIN_ORIGINS.has(origin)) return {};
 	return {
-		"Access-Control-Allow-Origin": APP_ANNOUNCEMENT_ADMIN_ORIGIN,
+		"Access-Control-Allow-Origin": origin,
 		"Access-Control-Allow-Credentials": "true",
 		"Vary": "Origin",
 	};
@@ -41,7 +45,7 @@ export function withAnnouncementCors(response: Response, request: Request): Resp
 export function handleAnnouncementOptions(request: Request): Response {
 	const origin = request.headers.get("Origin");
 	const method = request.headers.get("Access-Control-Request-Method")?.toUpperCase();
-	if (origin !== APP_ANNOUNCEMENT_ADMIN_ORIGIN || !method || !["PUT", "DELETE"].includes(method)) {
+	if (!origin || !APP_ANNOUNCEMENT_ADMIN_ORIGINS.has(origin) || !method || !["PUT", "DELETE"].includes(method)) {
 		return response({ error: "Forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
 	}
 	return new Response(null, {
@@ -59,7 +63,7 @@ export function handleAnnouncementOptions(request: Request): Response {
 export function hasTrustedAnnouncementOrigin(request: Request): boolean {
 	const origin = request.headers.get("Origin");
 	// Non-browser service-token clients do not send Origin and remain supported.
-	return origin === null || origin === APP_ANNOUNCEMENT_ADMIN_ORIGIN;
+	return origin === null || APP_ANNOUNCEMENT_ADMIN_ORIGINS.has(origin);
 }
 
 function response(body: unknown, init: ResponseInit = {}): Response {
