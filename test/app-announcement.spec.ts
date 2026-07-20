@@ -31,7 +31,8 @@ function admin(method: "PUT" | "DELETE", body?: unknown, secret = "secret") {
 	});
 }
 
-const adminOrigin = "https://www.alabamabeachflag.com";
+const adminOrigins = ["https://alabamabeachflag.com", "https://www.alabamabeachflag.com"];
+const adminOrigin = adminOrigins[1];
 
 describe("app announcement", () => {
 	it("returns an explicit inactive state with cache headers", async () => {
@@ -63,11 +64,13 @@ describe("app announcement", () => {
 		expect((await worker.fetch(admin("DELETE", undefined, "wrong"), h.env)).status).toBe(403);
 	});
 
-	it("allows only the official admin origin in credentialed CORS responses", async () => {
+	it("allows both official admin origins in credentialed CORS responses", async () => {
 		const h = harness();
-		const publicResponse = await worker.fetch(new Request("https://example.com/v1/app-announcement", { headers: { Origin: adminOrigin } }), h.env);
-		expect(publicResponse.headers.get("Access-Control-Allow-Origin")).toBe(adminOrigin);
-		expect(publicResponse.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+		for (const origin of adminOrigins) {
+			const publicResponse = await worker.fetch(new Request("https://example.com/v1/app-announcement", { headers: { Origin: origin } }), h.env);
+			expect(publicResponse.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+			expect(publicResponse.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+		}
 
 		const untrusted = await worker.fetch(new Request("https://example.com/v1/app-announcement", { headers: { Origin: "https://evil.example" } }), h.env);
 		expect(untrusted.headers.get("Access-Control-Allow-Origin")).toBeNull();
