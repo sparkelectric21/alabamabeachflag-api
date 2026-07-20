@@ -31,6 +31,10 @@ export interface WaterTemperature {
     observedAt: string;
     provider: string;
     stationId: string;
+	freshnessStatus?: "current" | "stale";
+	ageMinutes?: number;
+	staleAfterMinutes?: number;
+	unavailableAfterMinutes?: number;
 }
 
 export interface BeachForecast {

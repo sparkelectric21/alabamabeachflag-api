@@ -1,8 +1,26 @@
 import { describe, it, expect, vi } from "vitest";
 import worker from "../src/index";
+import { withCurrentWaterTemperatureFreshness } from "../src/routes/beach-conditions";
 import type { Env } from "../src/types";
 
 const testEnv = {} as Env;
+
+describe("cached water-temperature serialization", () => {
+	const payload = (observedAt: string) => ({ beachConditions: [{ beachId: "test", waterTemperature: { temperature: 84, temperatureUnit: "F", observedAt, provider: "ndbc", stationId: "PPTA1" } }] });
+	const water = (value: unknown) => (value as { beachConditions: Array<{ waterTemperature: Record<string, unknown> | null }> }).beachConditions[0].waterTemperature;
+	const now = new Date("2026-07-20T18:00:00.000Z");
+
+	it("reclassifies cached observations at the current and stale boundaries", () => {
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T16:00:00.000Z"), now))).toMatchObject({ freshnessStatus: "current", ageMinutes: 120 });
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T15:59:59.999Z"), now))).toMatchObject({ freshnessStatus: "stale", staleAfterMinutes: 120, unavailableAfterMinutes: 360 });
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T12:00:00.000Z"), now))).toMatchObject({ freshnessStatus: "stale", ageMinutes: 360 });
+	});
+
+	it("removes cached observations beyond the hard cutoff or with invalid timestamps", () => {
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T11:59:59.999Z"), now))).toBeNull();
+		expect(water(withCurrentWaterTemperatureFreshness(payload("invalid"), now))).toBeNull();
+	});
+});
 
 function adminEnv(outcome = "completed") {
 	const coordinatorFetch = vi.fn().mockImplementation(async () => Response.json({

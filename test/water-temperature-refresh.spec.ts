@@ -34,12 +34,16 @@ describe("configured water-temperature refresh", () => {
 			observedAt,
 			provider: "ndbc",
 			stationId: "PPTA1",
+			freshnessStatus: "current",
+			ageMinutes: 30,
+			staleAfterMinutes: 120,
+			unavailableAfterMinutes: 360,
 		});
 		expect(results["little-lagoon-pass"]).toBeUndefined();
 		expect(fetchNDBCWaterTemperature).not.toHaveBeenCalledWith("BSCA1");
 	});
 
-	it("applies the PPTA1 grace period to the three sole-source beaches without changing metadata", async () => {
+	it("applies the same stale-but-usable policy to all sole-source stations", async () => {
 		vi.setSystemTime(new Date("2026-07-20T20:15:00.000Z"));
 
 		const results = await refreshWaterTemperatures();
@@ -49,13 +53,23 @@ describe("configured water-temperature refresh", () => {
 			observedAt,
 			provider: "ndbc",
 			stationId: "PPTA1",
+			freshnessStatus: "stale",
+			ageMinutes: 135,
+			staleAfterMinutes: 120,
+			unavailableAfterMinutes: 360,
 		};
 
 		expect(results["gulf-shores-public-beach"]).toEqual(expected);
 		expect(results["cotton-bayou"]).toEqual(expected);
 		expect(results["gulf-state-park-pavilion"]).toEqual(expected);
-		expect(results["fort-morgan-public-beach"]).toBeUndefined();
-		expect(results["dauphin-island-public-beach"]).toBeUndefined();
+		expect(results["fort-morgan-public-beach"]).toMatchObject({
+			provider: "ndbc", stationId: "DPHA1", freshnessStatus: "stale",
+			staleAfterMinutes: 120, unavailableAfterMinutes: 360,
+		});
+		expect(results["dauphin-island-public-beach"]).toMatchObject({
+			provider: "coops", stationId: "8735180", freshnessStatus: "stale",
+			staleAfterMinutes: 120, unavailableAfterMinutes: 360,
+		});
 		expect(results["little-lagoon-pass"]).toBeUndefined();
 	});
 

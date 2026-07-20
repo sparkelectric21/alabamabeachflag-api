@@ -12,6 +12,10 @@ export interface WaterTemperatureResults {
 		observedAt: string;
 		provider: "coops" | "ndbc";
 		stationId: string;
+		freshnessStatus: "current" | "stale";
+		ageMinutes: number;
+		staleAfterMinutes: number;
+		unavailableAfterMinutes: number;
 	};
 }
 

@@ -5,9 +5,10 @@ import {
 } from "./client";
 import { fetchNDBCWaterTemperature } from "./ndbcClient";
 import {
+	classifyDirectObservation,
 	directObservationAgeMs,
-	directObservationMaxAgeMs,
-	isFreshDirectObservation,
+	DIRECT_OBSERVATION_MAX_AGE_MS,
+	DIRECT_OBSERVATION_UNAVAILABLE_AFTER_MS,
 } from "./freshness";
 import { logInfo, logWarn } from "../../utils/logger";
 
@@ -19,6 +20,13 @@ export interface WaterTemperatureObservationWithSource
 	extends WaterTemperatureObservation {
 	provider: WaterTemperatureSource["provider"];
 	stationId: string;
+}
+
+export interface ClassifiedWaterTemperatureObservation extends WaterTemperatureObservationWithSource {
+	freshnessStatus: "current" | "stale";
+	ageMinutes: number;
+	staleAfterMinutes: number;
+	unavailableAfterMinutes: number;
 }
 
 async function fetchFromSource(
@@ -33,6 +41,31 @@ async function fetchFromSource(
 		...observation,
 		provider: source.provider,
 		stationId: source.stationId,
+	};
+}
+
+function withFreshness(
+	observation: WaterTemperatureObservationWithSource,
+	now: Date,
+	freshnessStatus: "current" | "stale",
+): ClassifiedWaterTemperatureObservation {
+	return {
+		...observation,
+		freshnessStatus,
+		ageMinutes: Math.max(0, Math.round((directObservationAgeMs(observation.observedAt, now) ?? 0) / 60_000)),
+		staleAfterMinutes: DIRECT_OBSERVATION_MAX_AGE_MS / 60_000,
+		unavailableAfterMinutes: DIRECT_OBSERVATION_UNAVAILABLE_AFTER_MS / 60_000,
+	};
+}
+
+function freshnessLogFields(observation: ClassifiedWaterTemperatureObservation) {
+	return {
+		provider: observation.provider,
+		stationId: observation.stationId,
+		observedAt: observation.observedAt,
+		ageMinutes: observation.ageMinutes,
+		staleAfterMinutes: observation.staleAfterMinutes,
+		unavailableAfterMinutes: observation.unavailableAfterMinutes,
 	};
 }
 
@@ -51,6 +84,10 @@ function providerFailureCondition(source: WaterTemperatureSource, error: unknown
 	if (source.provider === "ndbc" && /observation timestamp is invalid/i.test(message)) return "ndbc_invalid_timestamp";
 	if (source.provider === "ndbc" && /Invalid water temperature/i.test(message)) return "ndbc_invalid_water_temperature";
 	if (source.provider === "ndbc" && /Unexpected NDBC response/i.test(message)) return "ndbc_malformed_response";
+	if (/parse failure|malformed response|unexpected response/i.test(message)) return `${source.provider}_parser_failure`;
+	if (/No water temperature available/i.test(message)) return `${source.provider}_missing_water_temperature`;
+	if (/invalid water temperature/i.test(message)) return `${source.provider}_invalid_water_temperature`;
+	if (/invalid timestamp|Invalid time value/i.test(message)) return `${source.provider}_invalid_timestamp`;
 	if (source.provider === "ndbc") return "ndbc_provider_failure";
 	return "coops_provider_failure";
 }
@@ -59,13 +96,13 @@ export async function fetchLatestWaterTemperature(
 	sourceConfig: BeachDefinition["waterTemperature"],
 	requestCache: Map<string, Promise<WaterTemperatureObservationWithSource>> = new Map(),
 	options: WaterTemperatureSelectionOptions = {},
-): Promise<WaterTemperatureObservationWithSource> {
+): Promise<ClassifiedWaterTemperatureObservation> {
 	if (!sourceConfig || sourceConfig.sources.length === 0) {
 		throw new Error("Water temperature source is not configured.");
 	}
 
 	const failures: string[] = [];
-	const staleCandidates: WaterTemperatureObservationWithSource[] = [];
+	const staleCandidates: ClassifiedWaterTemperatureObservation[] = [];
 	const now = options.now ?? new Date();
 
 	for (const source of sourceConfig.sources) {
@@ -79,32 +116,32 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			const observation = await request;
-			const maxAgeMs = directObservationMaxAgeMs(source.provider, source.stationId);
+			const freshness = classifyDirectObservation(observation.observedAt, now);
 
-			if (isFreshDirectObservation(observation.observedAt, now, maxAgeMs)) {
+			if (freshness === "current") {
+				const selected = withFreshness(observation, now, "current");
 				if (staleCandidates.length > 0) {
 					logInfo("Water Temperature", "Skipped stale candidate for fresh fallback", {
 						staleCandidates: staleCandidates.map((candidate) => `${candidate.provider}:${candidate.stationId}`).join(","),
 						selectedProvider: observation.provider,
 						selectedStationId: observation.stationId,
-						selectedAgeMinutes: Math.round((directObservationAgeMs(observation.observedAt, now) ?? 0) / 60_000),
+						selectedAgeMinutes: selected.ageMinutes,
 					});
 				}
-				return observation;
+				logInfo("Water Temperature", "Current observation accepted", freshnessLogFields(selected));
+				return selected;
 			}
 
-			const ageMs = directObservationAgeMs(observation.observedAt, now);
-			if (ageMs !== undefined && ageMs > maxAgeMs) {
-				staleCandidates.push(observation);
-				logWarn("Water Temperature", "Approved source candidate is stale", {
-					beachId: options.beachId,
-					scope: options.diagnosticScope,
-					condition: "stale_observation",
+			if (freshness === "stale") {
+				staleCandidates.push(withFreshness(observation, now, "stale"));
+			} else if (freshness === "unavailable") {
+				const rejected = withFreshness(observation, now, "stale");
+				logWarn("Water Temperature", "Observation rejected beyond hard cutoff", freshnessLogFields(rejected));
+			} else {
+				logWarn("Water Temperature", "Approved source candidate failed", {
+					condition: "invalid_timestamp",
 					provider: source.provider,
 					stationId: source.stationId,
-					observedAt: observation.observedAt,
-					ageMinutes: Math.round(ageMs / 60_000),
-					freshnessThresholdMinutes: maxAgeMs / 60_000,
 				});
 			}
 		} catch (error) {
@@ -121,7 +158,13 @@ export async function fetchLatestWaterTemperature(
 		}
 	}
 
+	if (options.diagnosticScope !== "vibrio_conditions" && staleCandidates.length > 0) {
+		const selected = staleCandidates[0];
+		logWarn("Water Temperature", "Stale observation accepted", freshnessLogFields(selected));
+		return selected;
+	}
+
 	throw new Error(
-		`No approved fresh water temperature source is available. stale=${staleCandidates.length}; failed=${failures.length}`,
+		`No approved usable water temperature source is available. stale=${staleCandidates.length}; failed=${failures.length}`,
 	);
 }
