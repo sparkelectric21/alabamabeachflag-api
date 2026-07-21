@@ -41,8 +41,9 @@ async function handleLocalBeachConditionsRefresh(request: Request, env: LocalEnv
 	const payload = mode
 		? applyLocalVibrioQaFixture(genuinePayload, mode, now)
 		: genuinePayload;
+	const { refreshDiagnostics: _refreshDiagnostics, ...publicPayload } = payload;
 
-	await env.BEACH_DATA.put(BEACH_CONDITIONS_CACHE_KEY, JSON.stringify(payload), {
+	await env.BEACH_DATA.put(BEACH_CONDITIONS_CACHE_KEY, JSON.stringify(publicPayload), {
 		expirationTtl: 2 * 60 * 60,
 	});
 	return Response.json({

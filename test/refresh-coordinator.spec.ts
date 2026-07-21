@@ -35,6 +35,17 @@ function payload(generatedAt = "2026-07-16T18:00:00.000Z") {
 	return { status: "ok", generatedAt, count: 9 };
 }
 
+function beachConditionsPayload(count: number, nwsFailures: number, generatedAt = "2026-07-16T18:00:00.000Z") {
+	return {
+		status: count > 0 ? "ok" : "unavailable",
+		generatedAt,
+		count,
+		beachConditions: Array.from({ length: count }, (_, index) => ({ beachId: `beach-${index}` })),
+		errors: Array.from({ length: nwsFailures }, () => ({ message: "provider_unavailable" })),
+		refreshDiagnostics: { expectedBeachCount: 9, providerFailures: { nws: nwsFailures } },
+	};
+}
+
 function request(job: RefreshJob, key: string, trigger: "admin" | "scheduled" = "admin"): RefreshRunRequest {
 	return { job, trigger, idempotencyKey: key };
 }
@@ -44,8 +55,9 @@ function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamesp
 	const blockConcurrencyWhile = vi.fn(async <T>(callback: () => Promise<T>) => callback());
 	const ctx = { storage, blockConcurrencyWhile } as unknown as DurableObjectState;
 	const put = vi.fn().mockResolvedValue(undefined);
+	const get = vi.fn().mockResolvedValue(null);
 	const getWithMetadata = vi.fn().mockResolvedValue({ value: new ArrayBuffer(1), metadata: { revision: "new" } });
-	const env = { BEACH_DATA: { put, getWithMetadata, ...beachData } } as unknown as Env;
+	const env = { BEACH_DATA: { put, get, getWithMetadata, ...beachData } } as unknown as Env;
 	const defaults = {
 		"beach-flags": vi.fn().mockResolvedValue(payload()),
 		"beach-conditions": vi.fn().mockResolvedValue(payload()),
@@ -55,7 +67,7 @@ function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamesp
 	const allRunners = { ...defaults, ...runners } as RefreshRunners;
 	let now = Date.parse("2026-07-16T18:00:00.000Z");
 	const core = new RefreshCoordinatorCore(ctx, env, allRunners, () => now);
-	return { core, storage, put: env.BEACH_DATA.put as typeof put, getWithMetadata: env.BEACH_DATA.getWithMetadata as typeof getWithMetadata, runners: allRunners, setNow: (value: number) => { now = value; } };
+	return { core, storage, put: env.BEACH_DATA.put as typeof put, get: env.BEACH_DATA.get as typeof get, getWithMetadata: env.BEACH_DATA.getWithMetadata as typeof getWithMetadata, runners: allRunners, setNow: (value: number) => { now = value; } };
 }
 
 describe("refresh coordinator", () => {
@@ -160,6 +172,83 @@ describe("refresh coordinator", () => {
 		const h = harness({ "water-quality": vi.fn().mockRejectedValue(new Error("provider detail\ninjected")) });
 		expect((await h.core.run(request("water-quality", "admin-request-001"))).outcome).toBe("failed");
 		expect(h.put).not.toHaveBeenCalled();
+	});
+
+	it("preserves a healthy nine-beach snapshot when a shared outage produces zero beaches", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const runner = vi.fn().mockResolvedValue(beachConditionsPayload(0, 9));
+		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
+
+		expect((await h.core.run(request("beach-conditions", "zero-candidate", "scheduled"))).outcome).toBe("failed");
+		expect(h.put).toHaveBeenCalledOnce();
+		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+	});
+
+	it("rejects an empty candidate even when legacy runner diagnostics are absent", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const legacyEmpty = { status: "unavailable", generatedAt: "2026-07-16T18:00:00.000Z", count: 0, beachConditions: [], errors: [] };
+		const h = harness(
+			{ "beach-conditions": vi.fn().mockResolvedValue(legacyEmpty) },
+			{ get } as Partial<KVNamespace>,
+		);
+
+		expect((await h.core.run(request("beach-conditions", "legacy-empty", "scheduled"))).outcome).toBe("failed");
+		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+	});
+
+	it("preserves a healthy nine-beach snapshot when a concentrated outage produces a near-zero candidate", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const runner = vi.fn().mockResolvedValue(beachConditionsPayload(2, 7));
+		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
+
+		expect((await h.core.run(request("beach-conditions", "near-zero-candidate", "scheduled"))).outcome).toBe("failed");
+		expect(h.put).toHaveBeenCalledOnce();
+		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+	});
+
+	it("rejects an invalid candidate payload when a healthy snapshot exists", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const invalidCandidate = { ...beachConditionsPayload(9, 0), beachConditions: [] };
+		const h = harness(
+			{ "beach-conditions": vi.fn().mockResolvedValue(invalidCandidate) },
+			{ get } as Partial<KVNamespace>,
+		);
+
+		expect((await h.core.run(request("beach-conditions", "invalid-candidate", "scheduled"))).outcome).toBe("failed");
+		expect(h.put).toHaveBeenCalledOnce();
+		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+	});
+
+	it("publishes an ordinary isolated provider failure and strips internal diagnostics", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const runner = vi.fn().mockResolvedValue(beachConditionsPayload(8, 1));
+		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
+
+		expect((await h.core.run(request("beach-conditions", "isolated-candidate", "scheduled"))).outcome).toBe("completed");
+		expect(h.put).toHaveBeenCalledOnce();
+		const published = JSON.parse(h.put.mock.calls[0][1] as string);
+		expect(published).toMatchObject({ count: 8 });
+		expect(published).not.toHaveProperty("refreshDiagnostics");
+	});
+
+	it("publishes normal recovery after rejecting a degraded candidate", async () => {
+		const prior = beachConditionsPayload(9, 0, "2026-07-16T17:00:00.000Z");
+		const get = vi.fn().mockResolvedValue(prior);
+		const runner = vi.fn()
+			.mockResolvedValueOnce(beachConditionsPayload(0, 9))
+			.mockResolvedValueOnce(beachConditionsPayload(9, 0, "2026-07-16T18:30:00.000Z"));
+		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
+
+		expect((await h.core.run(request("beach-conditions", "outage", "scheduled"))).outcome).toBe("failed");
+		h.put.mockClear();
+		expect((await h.core.run(request("beach-conditions", "recovery", "scheduled"))).outcome).toBe("completed");
+		expect(h.put).toHaveBeenCalledOnce();
+		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toMatchObject({ count: 9, generatedAt: "2026-07-16T18:30:00.000Z" });
 	});
 
 	it("does not publish metadata when a revision image write fails", async () => {

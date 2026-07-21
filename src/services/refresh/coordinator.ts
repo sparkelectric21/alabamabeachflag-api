@@ -1,6 +1,7 @@
 import type { Env } from "../../types";
 import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, RIP_CURRENT_OUTLOOK_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../cache/kv";
-import { logError, logInfo } from "../../utils/logger";
+import { logError, logInfo, logWarn } from "../../utils/logger";
+import { beaches as BEACH_REGISTRY } from "../../config/BeachRegistry";
 import { buildBeachFlagsPayload } from "../beachFlags/refresh";
 import { buildBeachConditionsPayload } from "./beachConditionsRefresh";
 import { buildWaterQualityPayload } from "./waterQualityRefresh";
@@ -27,6 +28,12 @@ interface StoredCoordinatorState {
 interface RefreshPayload {
 	generatedAt: string;
 	count: number;
+	beachConditions?: unknown[];
+	errors?: Array<{ message?: string }>;
+	refreshDiagnostics?: {
+		expectedBeachCount: number;
+		providerFailures: Record<string, number>;
+	};
 	kvWrites?: Array<{ key: string; value: string | ArrayBuffer; options?: KVNamespacePutOptions; expectedRevision?: string }>;
 }
 
@@ -35,6 +42,65 @@ export type RefreshRunners = Record<RefreshJob, RefreshRunner>;
 
 const STATE_KEY = "coordinator-state";
 const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1_000;
+
+interface BeachConditionsQualityDecision {
+	reject: boolean;
+	reason?: "invalid_candidate" | "catastrophic_shared_provider_degradation";
+	expectedCount: number;
+	priorCount: number;
+	affectedProvider?: string;
+	providerFailureCount: number;
+}
+
+function validPublishedCount(payload: unknown): number | undefined {
+	if (!payload || typeof payload !== "object") return undefined;
+	const candidate = payload as { count?: unknown; beachConditions?: unknown };
+	if (!Number.isInteger(candidate.count) || (candidate.count as number) < 0) return undefined;
+	if (candidate.beachConditions !== undefined && (
+		!Array.isArray(candidate.beachConditions) || candidate.beachConditions.length !== candidate.count
+	)) return undefined;
+	return candidate.count as number;
+}
+
+export function evaluateBeachConditionsPublication(
+	candidate: RefreshPayload,
+	prior: unknown,
+): BeachConditionsQualityDecision {
+	const expectedCount = Math.max(
+		BEACH_REGISTRY.length,
+		candidate.refreshDiagnostics?.expectedBeachCount ?? 0,
+	);
+	const priorCount = validPublishedCount(prior) ?? 0;
+	const candidateCount = validPublishedCount(candidate);
+	const providerFailures = Object.entries(candidate.refreshDiagnostics?.providerFailures ?? {})
+		.sort((left, right) => right[1] - left[1]);
+	const [affectedProvider, providerFailureCount = 0] = providerFailures[0] ?? [];
+	const priorIsHealthy = priorCount >= expectedCount;
+
+	if (priorIsHealthy && candidateCount === undefined) {
+		return { reject: true, reason: "invalid_candidate", expectedCount, priorCount, affectedProvider, providerFailureCount };
+	}
+
+	const catastrophicCount = Math.floor(expectedCount / 3);
+	const concentratedFailureCount = Math.ceil(expectedCount * 2 / 3);
+	const countLoss = priorCount - (candidateCount ?? 0);
+	const catastrophicEmptyCandidate = priorIsHealthy && candidateCount === 0;
+	const catastrophicSharedFailure = priorIsHealthy
+		&& candidateCount !== undefined
+		&& candidateCount <= catastrophicCount
+		&& countLoss >= concentratedFailureCount
+		&& providerFailureCount >= concentratedFailureCount;
+	const reject = catastrophicEmptyCandidate || catastrophicSharedFailure;
+
+	return {
+		reject,
+		...(reject ? { reason: "catastrophic_shared_provider_degradation" as const } : {}),
+		expectedCount,
+		priorCount,
+		affectedProvider,
+		providerFailureCount,
+	};
+}
 
 export const REFRESH_JOB_CONFIG: Record<RefreshJob, {
 	cooldownMs: number;
@@ -94,6 +160,29 @@ export class RefreshCoordinatorCore {
 				const state = (await this.ctx.storage.get<StoredCoordinatorState>(STATE_KEY)) ?? initialState();
 				if (state.active?.generation !== generation || state.active.runId !== runId) return;
 
+				if (request.job === "beach-conditions") {
+					const priorPayload = await this.env.BEACH_DATA.get(config.cacheKey, "json");
+					const decision = evaluateBeachConditionsPublication(payload, priorPayload);
+					if (decision.reject) {
+						const errorSummary = [...new Set((payload.errors ?? []).map((error) => error.message).filter(Boolean))].slice(0, 5);
+						logWarn("Refresh Coordinator", "Rejected degraded beach conditions candidate", {
+							reason: decision.reason,
+							candidateCount: payload.count,
+							priorCount: decision.priorCount,
+							expectedCount: decision.expectedCount,
+							affectedProvider: decision.affectedProvider,
+							providerFailureCount: decision.providerFailureCount,
+							errorSummary: errorSummary.join(","),
+						});
+						await this.env.BEACH_DATA.put(
+							config.cacheKey,
+							JSON.stringify(priorPayload),
+							config.expirationTtl ? { expirationTtl: config.expirationTtl } : undefined,
+						);
+						throw new Error("beach_conditions_quality_gate_rejected");
+					}
+				}
+
 				for (const write of payload.kvWrites ?? []) {
 					await this.env.BEACH_DATA.put(write.key, write.value, write.options);
 					if (write.expectedRevision) {
@@ -101,7 +190,7 @@ export class RefreshCoordinatorCore {
 						if (!staged.value || staged.metadata?.revision !== write.expectedRevision) throw new Error("staged_revision_validation_failed");
 					}
 				}
-				const { kvWrites: _kvWrites, ...publicPayload } = payload;
+				const { kvWrites: _kvWrites, refreshDiagnostics: _refreshDiagnostics, ...publicPayload } = payload;
 				await this.env.BEACH_DATA.put(
 					config.cacheKey,
 					JSON.stringify(publicPayload),
@@ -126,11 +215,14 @@ export class RefreshCoordinatorCore {
 			};
 		} catch (error) {
 			await this.clearFailedRun(generation, runId);
-			logError("Refresh Coordinator", "Refresh failed", {
-				job: request.job,
-				generation,
-				error: error instanceof Error ? error.message : "unknown_error",
-			});
+			const errorMessage = error instanceof Error ? error.message : "unknown_error";
+			if (errorMessage !== "beach_conditions_quality_gate_rejected") {
+				logError("Refresh Coordinator", "Refresh failed", {
+					job: request.job,
+					generation,
+					error: errorMessage,
+				});
+			}
 			return { outcome: "failed", generation };
 		}
 	}
