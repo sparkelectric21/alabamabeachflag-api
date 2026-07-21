@@ -70,6 +70,10 @@ function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamesp
 	return { core, storage, put: env.BEACH_DATA.put as typeof put, get: env.BEACH_DATA.get as typeof get, getWithMetadata: env.BEACH_DATA.getWithMetadata as typeof getWithMetadata, runners: allRunners, setNow: (value: number) => { now = value; } };
 }
 
+function writesFor(h: ReturnType<typeof harness>, key: string) {
+	return h.put.mock.calls.filter(([writtenKey]) => writtenKey === key);
+}
+
 describe("refresh coordinator", () => {
 	it("collapses duplicate administrative idempotency keys", async () => {
 		const h = harness();
@@ -181,8 +185,8 @@ describe("refresh coordinator", () => {
 		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
 
 		expect((await h.core.run(request("beach-conditions", "zero-candidate", "scheduled"))).outcome).toBe("failed");
-		expect(h.put).toHaveBeenCalledOnce();
-		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+		expect(writesFor(h, "beach-conditions")).toHaveLength(1);
+		expect(JSON.parse(writesFor(h, "beach-conditions")[0][1] as string)).toEqual(prior);
 	});
 
 	it("rejects an empty candidate even when legacy runner diagnostics are absent", async () => {
@@ -195,7 +199,7 @@ describe("refresh coordinator", () => {
 		);
 
 		expect((await h.core.run(request("beach-conditions", "legacy-empty", "scheduled"))).outcome).toBe("failed");
-		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+		expect(JSON.parse(writesFor(h, "beach-conditions")[0][1] as string)).toEqual(prior);
 	});
 
 	it("preserves a healthy nine-beach snapshot when a concentrated outage produces a near-zero candidate", async () => {
@@ -205,8 +209,8 @@ describe("refresh coordinator", () => {
 		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
 
 		expect((await h.core.run(request("beach-conditions", "near-zero-candidate", "scheduled"))).outcome).toBe("failed");
-		expect(h.put).toHaveBeenCalledOnce();
-		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+		expect(writesFor(h, "beach-conditions")).toHaveLength(1);
+		expect(JSON.parse(writesFor(h, "beach-conditions")[0][1] as string)).toEqual(prior);
 	});
 
 	it("rejects an invalid candidate payload when a healthy snapshot exists", async () => {
@@ -219,8 +223,8 @@ describe("refresh coordinator", () => {
 		);
 
 		expect((await h.core.run(request("beach-conditions", "invalid-candidate", "scheduled"))).outcome).toBe("failed");
-		expect(h.put).toHaveBeenCalledOnce();
-		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toEqual(prior);
+		expect(writesFor(h, "beach-conditions")).toHaveLength(1);
+		expect(JSON.parse(writesFor(h, "beach-conditions")[0][1] as string)).toEqual(prior);
 	});
 
 	it("publishes an ordinary isolated provider failure and strips internal diagnostics", async () => {
@@ -230,8 +234,8 @@ describe("refresh coordinator", () => {
 		const h = harness({ "beach-conditions": runner }, { get } as Partial<KVNamespace>);
 
 		expect((await h.core.run(request("beach-conditions", "isolated-candidate", "scheduled"))).outcome).toBe("completed");
-		expect(h.put).toHaveBeenCalledOnce();
-		const published = JSON.parse(h.put.mock.calls[0][1] as string);
+		expect(writesFor(h, "beach-conditions")).toHaveLength(1);
+		const published = JSON.parse(writesFor(h, "beach-conditions")[0][1] as string);
 		expect(published).toMatchObject({ count: 8 });
 		expect(published).not.toHaveProperty("refreshDiagnostics");
 	});
@@ -247,8 +251,8 @@ describe("refresh coordinator", () => {
 		expect((await h.core.run(request("beach-conditions", "outage", "scheduled"))).outcome).toBe("failed");
 		h.put.mockClear();
 		expect((await h.core.run(request("beach-conditions", "recovery", "scheduled"))).outcome).toBe("completed");
-		expect(h.put).toHaveBeenCalledOnce();
-		expect(JSON.parse(h.put.mock.calls[0][1] as string)).toMatchObject({ count: 9, generatedAt: "2026-07-16T18:30:00.000Z" });
+		expect(writesFor(h, "beach-conditions")).toHaveLength(1);
+		expect(JSON.parse(writesFor(h, "beach-conditions")[0][1] as string)).toMatchObject({ count: 9, generatedAt: "2026-07-16T18:30:00.000Z" });
 	});
 
 	it("does not publish metadata when a revision image write fails", async () => {

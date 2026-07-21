@@ -7,6 +7,8 @@ import { buildBeachConditionsPayload } from "./beachConditionsRefresh";
 import { buildWaterQualityPayload } from "./waterQualityRefresh";
 import { buildRipCurrentOutlookPayload } from "../ripCurrentOutlook/refresh";
 import type { RefreshJob, RefreshRunRequest, RefreshRunResult } from "./types";
+import { processProviderHealthObservations, processQualityGateRejection } from "../../providerHealth/process";
+import type { ProviderHealthObservation } from "../../providerHealth/types";
 
 interface ActiveRun {
 	generation: number;
@@ -33,6 +35,7 @@ interface RefreshPayload {
 	refreshDiagnostics?: {
 		expectedBeachCount: number;
 		providerFailures: Record<string, number>;
+		providerHealth?: ProviderHealthObservation[];
 	};
 	kvWrites?: Array<{ key: string; value: string | ArrayBuffer; options?: KVNamespacePutOptions; expectedRevision?: string }>;
 }
@@ -163,6 +166,15 @@ export class RefreshCoordinatorCore {
 				if (request.job === "beach-conditions") {
 					const priorPayload = await this.env.BEACH_DATA.get(config.cacheKey, "json");
 					const decision = evaluateBeachConditionsPublication(payload, priorPayload);
+					try {
+						await processProviderHealthObservations(
+							this.env,
+							payload.refreshDiagnostics?.providerHealth ?? [],
+							payload.generatedAt,
+						);
+					} catch {
+						logError("Provider Health", "Failed to persist provider observations");
+					}
 					if (decision.reject) {
 						const errorSummary = [...new Set((payload.errors ?? []).map((error) => error.message).filter(Boolean))].slice(0, 5);
 						logWarn("Refresh Coordinator", "Rejected degraded beach conditions candidate", {
@@ -174,12 +186,33 @@ export class RefreshCoordinatorCore {
 							providerFailureCount: decision.providerFailureCount,
 							errorSummary: errorSummary.join(","),
 						});
+						try {
+							await processQualityGateRejection(
+								this.env,
+								payload.generatedAt,
+								decision.reason ?? "quality_gate_rejected",
+								decision.expectedCount,
+								Math.max(decision.providerFailureCount, decision.expectedCount - payload.count),
+							);
+						} catch {
+							logError("Provider Health", "Failed to persist quality-gate incident");
+						}
 						await this.env.BEACH_DATA.put(
 							config.cacheKey,
 							JSON.stringify(priorPayload),
 							config.expirationTtl ? { expirationTtl: config.expirationTtl } : undefined,
 						);
 						throw new Error("beach_conditions_quality_gate_rejected");
+					}
+					try {
+						await processProviderHealthObservations(this.env, [{
+							provider: "publication_quality_gate",
+							domain: "beach_conditions",
+							affectedBeachCount: 0,
+							expectedBeachCount: decision.expectedCount,
+						}], payload.generatedAt);
+					} catch {
+						logError("Provider Health", "Failed to persist quality-gate recovery");
 					}
 				}
 

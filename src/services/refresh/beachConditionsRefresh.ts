@@ -12,6 +12,7 @@ import { API_VERSION } from "../../config/version";
 import { estimateVibrioConditions } from "../vibrio/estimator";
 import { fetchTidePrediction } from "../tide/service";
 import type { TidePrediction } from "../tide/models";
+import type { ProviderHealthObservation } from "../../providerHealth/types";
 
 interface BeachConditionsRefreshDependencies {
 	refreshWaterTemperatureSelections: typeof refreshWaterTemperatureSelections;
@@ -273,6 +274,38 @@ export async function buildBeachConditionsPayload(options: BeachConditionsRefres
 		};
 	});
 	const successfulBeachConditions = beachConditions.filter(Boolean);
+	const expectedForecasts = BEACH_REGISTRY.filter((beach) => beach.beachForecast).length;
+	const expectedTides = BEACH_REGISTRY.filter((beach) => beach.tide).length;
+	const expectedWaterTemperatures = BEACH_REGISTRY.filter((beach) => beach.supports.waterTemperature).length;
+	const uvFailuresByRegion = new Map<string, number>();
+	for (const beach of BEACH_REGISTRY) {
+		if (beach.uv && regionalUV[beach.uv.region] === undefined) {
+			uvFailuresByRegion.set(beach.uv.region, (uvFailuresByRegion.get(beach.uv.region) ?? 0) + 1);
+		}
+	}
+	const providerHealth: ProviderHealthObservation[] = [
+		{ provider: "nws", domain: "hourly_forecast", affectedBeachCount: nwsFailureCount, expectedBeachCount: BEACH_REGISTRY.length, ...(nwsFailureCount ? { errorReason: "request_failed" } : {}) },
+		{ provider: "noaa", domain: "marine_beach_forecast", affectedBeachCount: Math.max(0, expectedForecasts - beachForecasts.size), expectedBeachCount: expectedForecasts, ...(beachForecasts.size < expectedForecasts ? { errorReason: "forecast_unavailable" } : {}) },
+		{ provider: "noaa", domain: "tide_predictions", affectedBeachCount: Math.max(0, expectedTides - tidePredictions.size), expectedBeachCount: expectedTides, ...(tidePredictions.size < expectedTides ? { errorReason: "events_unavailable" } : {}) },
+		{ provider: "water_temperature_sources", domain: "general_selection", affectedBeachCount: Math.max(0, expectedWaterTemperatures - Object.keys(waterTemperatures).length), expectedBeachCount: expectedWaterTemperatures, ...(Object.keys(waterTemperatures).length < expectedWaterTemperatures ? { errorReason: "approved_observation_unavailable" } : {}) },
+	];
+	for (const [region, affectedBeachCount] of uvFailuresByRegion) {
+		providerHealth.push({
+			provider: "open_meteo",
+			domain: `current_uv:${region}`,
+			affectedBeachCount,
+			expectedBeachCount: BEACH_REGISTRY.filter((beach) => beach.uv?.region === region).length,
+			errorReason: "request_failed",
+		});
+	}
+	for (const region of ["orangeBeach", "fortMorgan", "dauphinIsland"] as const) {
+		if (!uvFailuresByRegion.has(region)) providerHealth.push({
+			provider: "open_meteo",
+			domain: `current_uv:${region}`,
+			affectedBeachCount: 0,
+			expectedBeachCount: BEACH_REGISTRY.filter((beach) => beach.uv?.region === region).length,
+		});
+	}
 
 	const payload = {
 		status: successfulBeachConditions.length > 0 ? "ok" : "unavailable",
@@ -285,6 +318,7 @@ export async function buildBeachConditionsPayload(options: BeachConditionsRefres
 		refreshDiagnostics: {
 			expectedBeachCount: BEACH_REGISTRY.length,
 			providerFailures: { nws: nwsFailureCount },
+			providerHealth,
 		},
 	};
 

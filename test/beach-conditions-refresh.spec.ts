@@ -80,7 +80,14 @@ describe("beach conditions refresh provider isolation", () => {
 
 		expect(payload).toMatchObject({ status: "ok", count: beaches.length });
 		expect(payload.errors).toHaveLength(beaches.length);
-		expect(payload.refreshDiagnostics).toEqual({ expectedBeachCount: beaches.length, providerFailures: { nws: beaches.length } });
+		expect(payload.refreshDiagnostics).toMatchObject({ expectedBeachCount: beaches.length, providerFailures: { nws: beaches.length } });
+		expect(payload.refreshDiagnostics.providerHealth).toContainEqual({
+			provider: "nws",
+			domain: "hourly_forecast",
+			affectedBeachCount: beaches.length,
+			expectedBeachCount: beaches.length,
+			errorReason: "request_failed",
+		});
 		for (const beach of payload.beachConditions) {
 			expect(beach).toMatchObject({
 				beachId: expect.any(String),
