@@ -127,4 +127,41 @@ describe("public API compatibility", () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual(payload);
 	});
+
+	it("serializes only Double Red with the proven iOS 1.2.0 compatibility value", async () => {
+		const beachFlags = [
+			{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false },
+			{ beachId: "cotton-bayou", primaryFlag: "doubleRed", hasPurpleFlag: false },
+			{ beachId: "fort-morgan-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false, sourceType: "estimated" },
+			{ beachId: "green", primaryFlag: "green", hasPurpleFlag: false },
+			{ beachId: "yellow", primaryFlag: "yellow", hasPurpleFlag: false },
+			{ beachId: "red", primaryFlag: "red", hasPurpleFlag: false },
+			{ beachId: "purple", primaryFlag: "yellow", hasPurpleFlag: true },
+		];
+		const payload = { status: "ok", beachFlags };
+		const env = {
+			BEACH_DATA: { get: vi.fn(async () => payload) },
+			IOS_1_2_DOUBLE_RED_COMPATIBILITY: "true",
+		} as unknown as Env;
+
+		const response = await worker.fetch(new Request("https://example.com/v1/beach-flags"), env);
+		const body = await response.json() as typeof payload;
+
+		expect(body.beachFlags.map(({ primaryFlag }) => primaryFlag)).toEqual([
+			"double-red", "double-red", "double-red", "green", "yellow", "red", "yellow",
+		]);
+		expect(body.beachFlags.slice(0, 3).every(({ hasPurpleFlag }) => !hasPurpleFlag)).toBe(true);
+		expect(payload.beachFlags.slice(0, 3).every(({ primaryFlag }) => primaryFlag === "doubleRed")).toBe(true);
+	});
+
+	it("preserves canonical Double Red serialization when compatibility is disabled", async () => {
+		const payload = { beachFlags: [{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false }] };
+		const env = {
+			BEACH_DATA: { get: vi.fn(async () => payload) },
+			IOS_1_2_DOUBLE_RED_COMPATIBILITY: "false",
+		} as unknown as Env;
+
+		const response = await worker.fetch(new Request("https://example.com/v1/beach-flags"), env);
+		expect(await response.json()).toEqual(payload);
+	});
 });

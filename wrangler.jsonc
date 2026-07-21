@@ -73,7 +73,9 @@
 		"ACCESS_ALLOWED_SERVICE_TOKENS": "56cab61952fcbc7827855543b878bb21.access",
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev",
 		"VERIFICATION_ALERTS_ENABLED": "false",
-		"VERIFICATION_ALERT_ENVIRONMENT": "production"
+		"VERIFICATION_ALERT_ENVIRONMENT": "production",
+		// Temporary: App Store 1.2.0 decodes "double-red", but not canonical "doubleRed".
+		"IOS_1_2_DOUBLE_RED_COMPATIBILITY": "true"
 	},
 	// Scheduled refreshes are based on how frequently each data source changes.
 	// The app serves cached data from Workers KV, allowing fast responses without
