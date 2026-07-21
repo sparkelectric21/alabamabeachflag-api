@@ -10,8 +10,16 @@ export function observationFromReport(report: VerificationReport): AlertObservat
 		reportTime: report.completedAt,
 		status: report.status,
 		affected: report.checks
-			.filter((check): check is typeof check & { status: "warning" | "fail" } => check.status !== "pass")
-			.map((check) => ({ name: check.name, status: check.status, detail: check.message })),
+			.filter((check): check is typeof check & { status: "fail" } => check.status === "fail")
+			.map((check) => ({
+				name: check.name,
+				status: check.status,
+				detail: check.message,
+				provider: check.provider,
+				location: check.location,
+				expectedValue: check.expectedValue,
+				actualValue: check.actualValue,
+			})),
 	};
 }
 

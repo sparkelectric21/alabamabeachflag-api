@@ -52,6 +52,24 @@ describe("verification reports", () => {
 		expect(e.BEACH_DATA.put).toHaveBeenCalledWith("verification:latest", expect.any(String));
 	});
 
+	it("recognizes the current CivicPlus closure IDs and public compatibility value", async () => {
+		vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
+			String(input).includes("gulfshoresal.gov")
+				? new Response(officialHtml.replace("3022", "4339"), { headers: { "Content-Type": "text/html" } })
+				: Response.json({
+					...published,
+					beachFlags: published.beachFlags.map((flag) => ({ ...flag, primaryFlag: "double-red" })),
+				})));
+		const report = await runVerification(env(), new Date("2026-07-17T12:00:00.000Z"));
+		expect(report.status).toBe("pass");
+		expect(report.checks.filter((check) => check.location)).toHaveLength(3);
+		expect(report.checks.at(-1)).toMatchObject({
+			provider: "City of Gulf Shores",
+			expectedValue: "doubleRed; purple=false",
+			actualValue: "doubleRed; purple=false",
+		});
+	});
+
 	it("warns after 45 minutes and fails after 90 minutes", async () => {
 		const responses = [60, 100];
 		for (const age of responses) {

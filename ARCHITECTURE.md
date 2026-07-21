@@ -317,13 +317,14 @@ Phase 2 keeps alert evaluation inside the verification subsystem and does not ca
 
 ```txt
 pass + no incident      -> silent
-warning/fail + none     -> open incident, notify once
+warning                 -> report only; preserve current incident state
+fail + none             -> open incident, notify once
 same condition          -> update last-observed time, silent
 changed/escalated       -> retain incident ID, notify once
 pass + active incident  -> notify recovery, clear incident
 ```
 
-The incident signature contains only affected check/location names and statuses, so changing age or diagnostic wording cannot create an alert storm. Notifications still contain concise current report diagnostics. Notification intent is saved before external delivery. This gives deterministic at-most-once behavior for a notification key and prevents storms, with the explicit tradeoff that an ambiguous or failed delivery is logged but not retried automatically. Delivery and alert-state failures are caught after report creation and cannot change a completed verification response.
+The incident signature contains only failed check/location names and statuses, so changing diagnostic wording cannot create an alert storm. Warnings do not generate email. Failure and recovery notifications contain provider, location when applicable, expected and actual values, timestamp, and reason. Notification intent is saved before external delivery. This gives deterministic at-most-once behavior for a notification key and prevents storms, with the explicit tradeoff that an ambiguous or failed delivery is logged but not retried automatically. Delivery and alert-state failures are caught after report creation and cannot change a completed verification response.
 
 The existing `*/15` scheduled handler invokes a missing-report monitor independently after weather refresh. At or after 7:30 AM and 12:30 PM in `America/Chicago`, it checks the latest due dated KV key. This accommodates normal scheduler delay, follows DST through `Intl.DateTimeFormat`, and needs no additional Cron Trigger. Duplicate checks converge on the same incident signature; a later missing scheduled slot is an incident update. A subsequent passing verification produces recovery.
 

@@ -4,6 +4,10 @@ export interface VerificationCheck {
 	name: string;
 	status: VerificationStatus;
 	message: string;
+	provider?: string;
+	location?: string;
+	expectedValue?: string;
+	actualValue?: string;
 }
 
 export interface VerificationReport {

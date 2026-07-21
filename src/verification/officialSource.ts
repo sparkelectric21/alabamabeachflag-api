@@ -5,6 +5,9 @@ const SOURCE_URL = "https://www.gulfshoresal.gov/1136/Beach-Safety";
 const STATES: Record<string, { primaryFlag: string; hasPurpleFlag: boolean }> = {
 	"3006": { primaryFlag: "doubleRed", hasPurpleFlag: false },
 	"3007": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	// CivicPlus replacement pair for "Closed to Public" observed July 21, 2026.
+	"4339": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	"4340": { primaryFlag: "doubleRed", hasPurpleFlag: false },
 	"3010": { primaryFlag: "red", hasPurpleFlag: false },
 	"3011": { primaryFlag: "red", hasPurpleFlag: true },
 	"3012": { primaryFlag: "green", hasPurpleFlag: true },

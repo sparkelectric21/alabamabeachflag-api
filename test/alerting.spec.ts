@@ -16,13 +16,21 @@ const pass: AlertObservation = {
 const warning: AlertObservation = {
 	...pass,
 	status: "warning",
-	affected: [{ name: "freshness", status: "warning", detail: "60 minutes old" }],
+	affected: [],
 };
 
 const failure: AlertObservation = {
 	...pass,
 	status: "fail",
-	affected: [{ name: "public_api", status: "fail", detail: "public_api_unavailable" }],
+	affected: [{
+		name: "public_api",
+		status: "fail",
+		detail: "public_api_unavailable",
+		provider: "Alabama Beach Flag API",
+		location: "gulf-shores-public-beach",
+		expectedValue: "HTTP 2xx JSON beach-flag response",
+		actualValue: "unavailable",
+	}],
 };
 
 describe("alert incident state", () => {
@@ -30,37 +38,42 @@ describe("alert incident state", () => {
 		expect(evaluateAlert({}, pass)).toEqual({ state: {} });
 	});
 
-	it.each([[warning, "warning"], [failure, "fail"]] as const)(
-		"notifies for a new %s incident",
-		(observation, status) => {
-			const result = evaluateAlert({}, observation);
-			expect(result.notification).toMatchObject({ kind: "incident", status });
-			expect(result.notification?.affected).toEqual(observation.affected);
-		},
-	);
+	it("keeps a non-actionable warning silent", () => {
+		expect(evaluateAlert({}, warning)).toEqual({ state: {} });
+	});
+
+	it("notifies for a new failure incident", () => {
+		const result = evaluateAlert({}, failure);
+		expect(result.notification).toMatchObject({ kind: "incident", status: "fail" });
+		expect(result.notification?.affected).toEqual(failure.affected);
+	});
 
 	it("does not duplicate a continuing incident", () => {
-		const first = evaluateAlert({}, warning);
+		const first = evaluateAlert({}, failure);
 		const continuing = evaluateAlert(first.state, {
-			...warning,
+			...failure,
 			reportTime: "2026-07-17T12:10:00.000Z",
-			affected: [{ name: "freshness", status: "warning", detail: "75 minutes old" }],
+			affected: [{ ...failure.affected[0], detail: "still unavailable" }],
 		});
 		expect(continuing.notification).toBeUndefined();
 		expect(continuing.state.active?.lastObservedAt).toBe("2026-07-17T12:10:00.000Z");
 	});
 
 	it("notifies when an incident changes or escalates", () => {
-		const first = evaluateAlert({}, warning);
-		const escalated = evaluateAlert(first.state, failure);
-		expect(escalated.notification).toMatchObject({ kind: "update", status: "fail" });
-		expect(escalated.state.active?.id).toBe(first.state.active?.id);
+		const first = evaluateAlert({}, failure);
+		const changed = evaluateAlert(first.state, {
+			...failure,
+			affected: [{ ...failure.affected[0], name: "freshness" }],
+		});
+		expect(changed.notification).toMatchObject({ kind: "update", status: "fail" });
+		expect(changed.state.active?.id).toBe(first.state.active?.id);
 	});
 
 	it("notifies once on recovery and clears the active incident", () => {
 		const first = evaluateAlert({}, failure);
 		const recovered = evaluateAlert(first.state, pass);
 		expect(recovered.notification).toMatchObject({ kind: "recovery", status: "pass" });
+		expect(recovered.notification?.affected).toEqual(failure.affected);
 		expect(recovered.state.active).toBeUndefined();
 		expect(evaluateAlert(recovered.state, pass).notification).toBeUndefined();
 	});
@@ -116,6 +129,15 @@ describe("delivery isolation and kill switch", () => {
 		await expect(deliverAlert(env, evaluateAlert({}, warning).notification!)).resolves.toBeUndefined();
 	});
 
+	it("fails safely when delivery is enabled without an email binding", async () => {
+		const env = {
+			VERIFICATION_ALERTS_ENABLED: "true",
+			VERIFICATION_ALERT_ENVIRONMENT: "staging",
+		} as Env;
+		await expect(deliverAlert(env, evaluateAlert({}, failure).notification!))
+			.rejects.toThrow("verification_alert_email_not_configured");
+	});
+
 	it("sends through the native binding only when enabled", async () => {
 		const send = vi.fn(async () => ({ messageId: "test-message" }));
 		const env = {
@@ -123,16 +145,15 @@ describe("delivery isolation and kill switch", () => {
 			VERIFICATION_ALERT_ENVIRONMENT: "staging",
 			VERIFICATION_ALERT_EMAIL: { send },
 		} as unknown as Env;
-		await deliverAlert(env, evaluateAlert({}, warning).notification!);
+		await deliverAlert(env, evaluateAlert({}, failure).notification!);
 		expect(send).toHaveBeenCalledWith(expect.objectContaining({
 			from: "alerts@alabamabeachflag.com",
 			to: "operations@alabamabeachflag.com",
-			subject: "[Alabama Beach Flag] Verification Warning",
+			subject: "[Alabama Beach Flag] Verification Failure",
 		}));
 	});
 
 	it.each([
-		[warning, "[Alabama Beach Flag] Verification Warning", "Alert type: warning"],
 		[failure, "[Alabama Beach Flag] Verification Failure", "Alert type: failure"],
 		[{
 			...failure,
@@ -148,12 +169,17 @@ describe("delivery isolation and kill switch", () => {
 		expect(message.text).toContain("Central timestamp: Jul 17, 2026, 7:02:00 AM CDT");
 		expect(message.text).toContain(`Overall status: ${observation.status}`);
 		expect(message.text).toContain(observation.affected[0].detail);
+		expect(message.text).toContain(`Provider: ${observation.affected[0].provider ?? "not applicable"}`);
+		expect(message.text).toContain(`Location: ${observation.affected[0].location ?? "not applicable"}`);
+		expect(message.text).toContain(`Expected: ${observation.affected[0].expectedValue ?? "not specified"}`);
+		expect(message.text).toContain(`Actual: ${observation.affected[0].actualValue ?? "not specified"}`);
 	});
 
 	it("formats update and recovery messages", () => {
-		const first = evaluateAlert({}, warning);
-		const update = evaluateAlert(first.state, failure).notification!;
-		const recovery = evaluateAlert(evaluateAlert(first.state, failure).state, pass).notification!;
+		const first = evaluateAlert({}, failure);
+		const changedFailure = { ...failure, affected: [{ ...failure.affected[0], name: "freshness" }] };
+		const update = evaluateAlert(first.state, changedFailure).notification!;
+		const recovery = evaluateAlert(evaluateAlert(first.state, changedFailure).state, pass).notification!;
 		const env = { VERIFICATION_ALERT_ENVIRONMENT: "production" } as Env;
 		expect(formatAlertEmail(env, update).subject).toBe("[Alabama Beach Flag] Verification Update");
 		expect(formatAlertEmail(env, update).text).toContain("Alert type: update");

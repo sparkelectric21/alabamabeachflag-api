@@ -67,7 +67,14 @@ export class VerificationCoordinator {
 				slot,
 				reportTime: now.toISOString(),
 				status: "fail",
-				affected: [{ name: "scheduled_report", status: "fail", detail: `missing report for ${slot}` }],
+				affected: [{
+					name: "scheduled_report",
+					status: "fail",
+					detail: `missing report for ${slot}`,
+					provider: "Alabama Beach Flag verification scheduler",
+					expectedValue: `stored report for ${slot}`,
+					actualValue: "missing",
+				}],
 			});
 		} catch {
 			console.error("[Verification alerts] missing-report state processing failed");

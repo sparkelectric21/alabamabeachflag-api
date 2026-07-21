@@ -1,5 +1,14 @@
 # Development Log
 
+## July 21, 2026 — Verification production audit and alert hardening
+
+- Confirmed all scheduled 7:00 AM/noon Central reports exist from July 18 through July 21; no scheduled slot was missed.
+- Identified a July 21 noon `official_source_format_changed` warning after CivicPlus replaced the active Gulf Shores closure image IDs with `4339/4340`.
+- Updated the independent verifier for those observed closure IDs and normalized the temporary public `double-red` compatibility value back to canonical `doubleRed` for comparison.
+- Restricted email incidents to actionable failures; warnings remain visible in reports without opening or resolving an incident.
+- Added provider, location, expected value, actual value, timestamp, and failure reason diagnostics, including recovery context.
+- Added explicit missing-binding coverage while preserving delivery-failure isolation. Production and staging delivery remain disabled; no deployment or email was performed.
+
 ## July 19, 2026 — NWS rip current outlook
 
 - Added narrow official NWS Mobile/Pensacola discovery and image verification.

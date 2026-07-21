@@ -39,7 +39,14 @@ export function formatAlertEmail(env: Env, notification: AlertNotification): { s
 		: notification.affected.map((item) => item.name).join(", ");
 	const diagnostics = notification.affected.length === 0
 		? "none"
-		: notification.affected.map((item) => `- ${item.name} (${item.status}): ${item.detail}`).join("\n");
+		: notification.affected.map((item) => [
+			`- Check: ${item.name}`,
+			`  Provider: ${item.provider ?? "not applicable"}`,
+			`  Location: ${item.location ?? "not applicable"}`,
+			`  Expected: ${item.expectedValue ?? "not specified"}`,
+			`  Actual: ${item.actualValue ?? "not specified"}`,
+			`  Failure reason: ${item.detail}`,
+		].join("\n")).join("\n");
 	return {
 		subject: subjectFor(notification),
 		text: [
@@ -59,6 +66,7 @@ export function formatAlertEmail(env: Env, notification: AlertNotification): { s
 
 export async function deliverAlert(env: Env, notification: AlertNotification): Promise<void> {
 	if (!alertDeliveryEnabled(env)) return;
+	if (!env.VERIFICATION_ALERT_EMAIL?.send) throw new Error("verification_alert_email_not_configured");
 	const message = formatAlertEmail(env, notification);
 	await env.VERIFICATION_ALERT_EMAIL.send({
 		from: ALERT_SENDER,

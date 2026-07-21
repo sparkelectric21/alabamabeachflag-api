@@ -6,7 +6,15 @@ export interface AlertObservation {
 	slot: string;
 	reportTime: string;
 	status: VerificationStatus;
-	affected: Array<{ name: string; status: Exclude<VerificationStatus, "pass">; detail: string }>;
+	affected: Array<{
+		name: string;
+		status: "fail";
+		detail: string;
+		provider?: string;
+		location?: string;
+		expectedValue?: string;
+		actualValue?: string;
+	}>;
 }
 
 export interface AlertIncident {
@@ -15,6 +23,7 @@ export interface AlertIncident {
 	lastObservedAt: string;
 	signature: string;
 	status: Exclude<VerificationStatus, "pass">;
+	affected?: AlertObservation["affected"];
 }
 
 export interface AlertState {
