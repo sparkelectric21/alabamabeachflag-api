@@ -1,4 +1,5 @@
 import type { TidePredictionConfiguration } from "../../config/BeachRegistry";
+import { logWarn } from "../../utils/logger";
 import { fetchTideEvents, fetchTidePoints } from "./client";
 import type { TideDirection, TideEvent, TidePrediction, TidePredictionPoint } from "./models";
 import { beachDate, noaaDate } from "./time";
@@ -32,10 +33,31 @@ export async function fetchTidePrediction(
 	}
 
 	const date = noaaDate(now);
-	const [events, points] = await Promise.all([
-		fetchTideEvents(configuration.stationId, date),
-		configuration.stationType === "harmonic" ? fetchTidePoints(configuration.stationId, date) : Promise.resolve([]),
-	]);
+	let events: TideEvent[];
+	try {
+		events = await fetchTideEvents(configuration.stationId, date);
+	} catch (error) {
+		if (cached) {
+			logWarn("Tide", "Using expired same-day tide prediction after event request failure", {
+				stationId: configuration.stationId, stationType: configuration.stationType,
+				reason: "events_request_failed", error: error instanceof Error ? error.message : String(error),
+			});
+			return { ...cached.value, direction: deriveTideDirection(cached.value.points, now), nextEvent: selectNextTideEvent(cached.value.events, now) };
+		}
+		throw error;
+	}
+
+	let points: TidePredictionPoint[] = [];
+	if (configuration.stationType === "harmonic") {
+		try {
+			points = await fetchTidePoints(configuration.stationId, date);
+		} catch (error) {
+			logWarn("Tide", "Interval predictions unavailable; preserving high/low events", {
+				stationId: configuration.stationId, stationType: configuration.stationType,
+				reason: "interval_points_failed", error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
 	if (!events.every((event) => beachDate(new Date(event.time)) === predictionDate) ||
 		!points.every((point) => beachDate(new Date(point.time)) === predictionDate)) {
 		throw new Error("NOAA returned tide predictions for the wrong date");

@@ -78,7 +78,8 @@ async function getTidePredictions(now: Date): Promise<Map<string, TidePrediction
 			results.set(beach.id, await request);
 		} catch (error) {
 			logWarn("Beach Conditions", "NOAA tide prediction failed", {
-				beachId: beach.id, stationId: beach.tide.stationId,
+				beachId: beach.id, stationId: beach.tide.stationId, stationType: beach.tide.stationType,
+				reason: "events_unavailable",
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}

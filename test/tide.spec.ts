@@ -110,6 +110,21 @@ describe("NOAA tide parsing and dates", () => {
 		expect(tide.nextEvent?.type).toBe("high");
 	});
 
+	it("uses expired same-day cached events when a refresh fails", async () => {
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({ predictions: [
+				{ t: "2026-07-18 06:00", v: "0.2", type: "L" },
+				{ t: "2026-07-18 16:00", v: "1.1", type: "H" },
+			] }), { status: 200, headers: { "Content-Type": "application/json" } }))
+			.mockRejectedValueOnce(new Error("temporary NOAA outage"));
+		vi.stubGlobal("fetch", fetchMock);
+		const configuration = { stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" as const };
+		const initial = await fetchTidePrediction(configuration, new Date("2026-07-18T06:00:00Z"));
+		const fallback = await fetchTidePrediction(configuration, new Date("2026-07-18T13:01:00Z"));
+		expect(fallback.events).toEqual(initial.events);
+		expect(fetchMock).toHaveBeenCalledTimes(4); // Initial success plus three retry attempts.
+	});
+
 	it("requests real interval points for corrected harmonic station classifications", async () => {
 		const fetchMock = vi.fn().mockImplementation(async (input: string) => {
 			const interval = new URL(input).searchParams.get("interval");
@@ -131,6 +146,28 @@ describe("NOAA tide parsing and dates", () => {
 		expect(tide.direction).toBe("rising");
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(fetchMock.mock.calls.map(([input]) => new URL(input).searchParams.get("interval")).sort()).toEqual(["15", "hilo"]);
+	});
+
+	it("preserves high and low events when harmonic interval points fail", async () => {
+		const fetchMock = vi.fn().mockImplementation(async (input: string) => {
+			const interval = new URL(input).searchParams.get("interval");
+			if (interval === "15") return new Response(JSON.stringify({ error: { message: "interval unavailable" } }), {
+				status: 200, headers: { "Content-Type": "application/json" },
+			});
+			return new Response(JSON.stringify({ predictions: [
+				{ t: "2026-07-18 06:00", v: "0.2", type: "L" },
+				{ t: "2026-07-18 16:00", v: "1.1", type: "H" },
+			] }), { status: 200, headers: { "Content-Type": "application/json" } });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const tide = await fetchTidePrediction(
+			{ stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
+			new Date("2026-07-18T15:00:00Z"),
+		);
+		expect(tide.events).toHaveLength(2);
+		expect(tide.points).toEqual([]);
+		expect(tide.nextEvent?.type).toBe("high");
 	});
 
 	it("rejects predictions returned for the wrong local date", async () => {
