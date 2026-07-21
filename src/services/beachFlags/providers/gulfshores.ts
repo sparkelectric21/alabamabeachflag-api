@@ -21,6 +21,9 @@ type GulfShoresFlagState = {
 const FLAG_STATE_BY_IMAGE_DOCUMENT_ID: Record<string, GulfShoresFlagState> = {
 	"3006": { primaryFlag: "doubleRed", hasPurpleFlag: false },
 	"3007": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	// Current CivicPlus replacement pair for "Closed to Public" (July 21, 2026).
+	"4339": { primaryFlag: "doubleRed", hasPurpleFlag: false },
+	"4340": { primaryFlag: "doubleRed", hasPurpleFlag: false },
 	"3010": { primaryFlag: "red", hasPurpleFlag: false },
 	"3011": { primaryFlag: "red", hasPurpleFlag: true },
 	"3012": { primaryFlag: "green", hasPurpleFlag: true },
@@ -72,18 +75,24 @@ function extractElementById(html: string, id: string): string | null {
 	return null;
 }
 
-function imageDocumentIdFromCurrentConditions(html: string): string | null {
+function currentConditionsImage(html: string): { documentId: string | null; semanticText: string } | null {
 	const surfConditions = extractElementById(html, "surfTS");
 
 	if (!surfConditions) {
 		return null;
 	}
 
-	const imageMatch = surfConditions.match(
-		/<img\b[^>]*\bsrc=["'][^"']*\/ImageRepository\/Document\?[^"']*\bdocumentID=(\d+)[^"']*["']/i,
-	);
+	const imageMatch = surfConditions.match(/<img\b[^>]*>/i);
+	const imageTag = imageMatch?.[0] ?? "";
+	const documentId = imageTag.match(
+		/\bsrc=["'][^"']*\/ImageRepository\/Document\?[^"']*\bdocumentID=(\d+)[^"']*["']/i,
+	)?.[1] ?? null;
+	const semanticText = Array.from(
+		imageTag.matchAll(/\b(?:alt|title|aria-label|data-title|data-description)=["']([^"']*)["']/gi),
+		(match) => match[1],
+	).join(" ");
 
-	return imageMatch?.[1] ?? null;
+	return { documentId, semanticText };
 }
 
 function extractCurrentConditionsText(html: string): string {
@@ -157,13 +166,16 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 		maxBytes: UPSTREAM_LIMITS.municipalHtmlBytes,
 		contentTypes: CONTENT_TYPES.html,
 	});
-	const imageDocumentId = imageDocumentIdFromCurrentConditions(html);
-	const imageFlagState = imageDocumentId
-		? FLAG_STATE_BY_IMAGE_DOCUMENT_ID[imageDocumentId]
+	const currentImage = currentConditionsImage(html);
+	const imageFlagState = currentImage?.documentId
+		? FLAG_STATE_BY_IMAGE_DOCUMENT_ID[currentImage.documentId]
 		: null;
-	const currentConditionsText = imageDocumentId ? "" : extractCurrentConditionsText(html);
+	const currentConditionsText = currentImage?.semanticText || extractCurrentConditionsText(html);
 	const normalizedConditions = currentConditionsText.toLowerCase();
-	const primaryFlag = imageFlagState?.primaryFlag ?? flagFromHazard(currentConditionsText);
+	const semanticFlag = flagFromHazard(currentConditionsText);
+	// Explicit active-status semantics win over IDs. flagFromHazard checks Double Red
+	// first, preventing a stale/lower-precedence ID from downgrading a closure.
+	const primaryFlag = semanticFlag ?? imageFlagState?.primaryFlag ?? null;
 
 	if (!primaryFlag) {
 		return {
@@ -178,7 +190,7 @@ export async function getGulfShoresFlags(generatedAt: string): Promise<BeachFlag
 
 	const reportData = {
 		primaryFlag,
-		hasPurpleFlag: imageFlagState?.hasPurpleFlag ?? (
+		hasPurpleFlag: primaryFlag === "doubleRed" ? false : imageFlagState?.hasPurpleFlag ?? (
 			normalizedConditions.includes("purple flag") ||
 			normalizedConditions.includes("dangerous marine life")
 		),

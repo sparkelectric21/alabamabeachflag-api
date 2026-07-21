@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractLatestSample } from "../src/services/adem/mapper";
 import { getGulfShoresFlags } from "../src/services/beachFlags/providers/gulfshores";
+import { getOrangeBeachFlags } from "../src/services/beachFlags/providers/orangeBeach";
 import { getDauphinIslandFlags } from "../src/services/beachFlags/providers/dauphinIsland";
 import { fetchNDBCWaterTemperature } from "../src/services/waterTemperature/ndbcClient";
 import { normalizeWeatherCondition } from "../src/services/weather/normalizeWeatherCondition";
@@ -71,12 +72,12 @@ describe("beach-flag parsing", () => {
 		`;
 	}
 
-	function surfImage(documentId: string): string {
+	function surfImage(documentId: string, attributes = "alt=\"\""): string {
 		return `
 			<div id="surfTS">
 				<div class="pageContent">
 					<div class="widgetBody">
-						<img src="/ImageRepository/Document?documentID=${documentId}" alt="">
+						<img src="/ImageRepository/Document?documentID=${documentId}" ${attributes}>
 					</div>
 				</div>
 			</div>
@@ -84,19 +85,32 @@ describe("beach-flag parsing", () => {
 	}
 
 	it("parses the captured live #surfTS image markup", async () => {
-		const result = await parseGulfShores(surfImage("3016"));
+		const result = await parseGulfShores(`
+			<div data-cpRole="contentContainer" id="surfTS">
+				<div class="pageContent cpGrid cpGrid24 isLockedContainer showInMobile">
+					<li class="widgetItem GraphicLinks"><a href="/1136/Beach-Safety">
+						<img src="/ImageRepository/Document?documentID=4339"
+							class="graphicButtonLink" alt=""
+							onmouseover="this.src='/ImageRepository/Document?documentID=4340'"
+							onmouseout="this.src='/ImageRepository/Document?documentID=4339'">
+					</a></li>
+				</div>
+			</div>
+		`);
 
 		expect(result.errors).toEqual([]);
 		expect(result.reports).toHaveLength(3);
 		expect(result.reports[0]).toMatchObject({
-			primaryFlag: "yellow",
-			hasPurpleFlag: true,
+			primaryFlag: "doubleRed",
+			hasPurpleFlag: false,
 		});
 	});
 
 	it.each([
 		["3006", "doubleRed", false],
 		["3007", "doubleRed", false],
+		["4339", "doubleRed", false],
+		["4340", "doubleRed", false],
 		["3010", "red", false],
 		["3011", "red", true],
 		["3012", "green", true],
@@ -123,6 +137,42 @@ describe("beach-flag parsing", () => {
 			});
 		},
 	);
+
+	it("gives explicit Double Red semantics precedence over a lower-severity ID", async () => {
+		const result = await parseGulfShores(
+			surfImage("3011", 'alt="Surf Conditions: Closed to Public - Double Red Flags"'),
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "doubleRed",
+			hasPurpleFlag: false,
+		});
+	});
+
+	it("uses active-image semantics when CivicPlus changes the document ID", async () => {
+		const result = await parseGulfShores(
+			surfImage("99999", 'title="Double Red Flags - Water Closed"'),
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "doubleRed",
+			hasPurpleFlag: false,
+		});
+	});
+
+	it("preserves an active Purple Advisory when supplied with a primary flag", async () => {
+		const result = await parseGulfShores(
+			surfImage("99999", 'aria-label="Red Flag - High Hazard; Purple Flag - Dangerous Marine Life"'),
+		);
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports[0]).toMatchObject({
+			primaryFlag: "red",
+			hasPurpleFlag: true,
+		});
+	});
 
 	it("fails safely for an unknown #surfTS image document ID", async () => {
 		const result = await parseGulfShores(surfImage("99999"));
@@ -226,5 +276,31 @@ describe("beach-flag parsing", () => {
 		const gulfShores = await parseGulfShores("<html><main>unrecognized</main></html>");
 		const dauphinIsland = await getDauphinIslandFlags();
 		expect([...gulfShores.errors, ...dauphinIsland.errors].every((error) => error.message === "provider_unavailable")).toBe(true);
+	});
+});
+
+describe("Orange Beach flag parsing", () => {
+	it("parses the current live Double Red daily report without reading the legend", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(`
+			<div class="fr-view">
+				<blockquote><h2>Orange Beach Daily Beach Report for Tuesday, July 21, 2026 - 10:45 a.m. UPDATE</h2></blockquote>
+				<ul><li><strong>Today&rsquo;s Flag Color:&nbsp;</strong>Double Red Flags. Double Red Flags represent Gulf waters are closed to the public.</li></ul>
+				<p>Sign up to receive daily beach conditions and warning flag status</p>
+			</div>
+			<section><h3>High Hazard, Marine Life</h3><img alt="Beach Flag Red Purple - High Hazard, Marine Life"></section>
+		`, { status: 200, headers: { "Content-Type": "text/html" } })));
+
+		const result = await getOrangeBeachFlags("2026-07-21T16:45:00.000Z");
+
+		expect(result.errors).toEqual([]);
+		expect(result.reports.map(({ beachId, primaryFlag, hasPurpleFlag }) => ({
+			beachId,
+			primaryFlag,
+			hasPurpleFlag,
+		}))).toEqual([
+			{ beachId: "cotton-bayou", primaryFlag: "doubleRed", hasPurpleFlag: false },
+			{ beachId: "alabama-point", primaryFlag: "doubleRed", hasPurpleFlag: false },
+			{ beachId: "florida-point", primaryFlag: "doubleRed", hasPurpleFlag: false },
+		]);
 	});
 });
