@@ -1,6 +1,7 @@
 import { formatProviderAlertEmail } from "../providerHealth/delivery";
 import { PROVIDER_HEALTH_EVENT_PREFIX, PROVIDER_HEALTH_STATES_KEY } from "../providerHealth/process";
 import type { ProviderAlertEvent, ProviderHealthState } from "../providerHealth/types";
+import { loadProviderCatalog, loadProviderCatalogAudit } from "../providerHealth/catalog";
 import type { Env } from "../types";
 
 const text = (value: unknown, max = 240): string | null => typeof value === "string" && value.length > 0 ? value.slice(0, max) : null;
@@ -58,7 +59,7 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 	}));
 	const recentQualityGateRejections = recentAlerts.filter((event) => event.incidentKind === "quality_gate" && event.type === "opened").map((event) => ({
 		timestamp: event.createdAt, candidateBeachCount: Math.max(0, event.expectedBeachCount - event.affectedBeachCount), priorBeachCount: event.expectedBeachCount,
-		expectedBeachCount: event.expectedBeachCount, provider: event.provider, reason: event.reason,
+		expectedBeachCount: event.expectedBeachCount, provider: event.provider, domain: event.domain, reason: event.reason,
 	}));
 	const emailPreviews = recentAlerts.slice(0, 10).map((event) => {
 		const preview = formatProviderAlertEmail({ ...event, id: event.id ?? "", incidentId: event.incidentId ?? "", errorReason: event.reason ?? undefined } as ProviderAlertEvent);
@@ -67,8 +68,18 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 	const degradedProviderCount = providers.filter((provider) => provider.status !== "healthy").length;
 	const expectedBeachCount = providers.reduce((maximum, provider) => Math.max(maximum, provider.expectedBeachCount), 0);
 	const lastRefreshAt = providers.map((provider) => provider.lastSuccessAt).filter(Boolean).sort().at(-1) ?? null;
-	return Response.json({ status: "ok", schemaVersion: 1, generatedAt: now, overall: {
+	const catalog = await loadProviderCatalog(env);
+	const catalogAudit = await loadProviderCatalogAudit(env);
+	const providersByKey = new Map(providers.map((provider) => [`${provider.provider}:${provider.domain}`, provider]));
+	const providerCatalog = catalog.map((record) => ({ ...record, health: providersByKey.get(`${record.provider}:${record.domain}`) ?? null }));
+	return Response.json({ status: "ok", schemaVersion: 2, generatedAt: now, overall: {
 		status: activeIncidents.some((item) => item.severity === "critical") ? "critical" : degradedProviderCount > 0 ? "degraded" : "healthy",
 		activeIncidentCount: activeIncidents.length, degradedProviderCount, lastRefreshAt, expectedBeachCount,
-	}, providers, activeIncidents, recentAlerts, recentQualityGateRejections, emailPreviews }, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
+	}, catalogSummary: {
+		primaryProviderCount: catalog.filter((item) => item.role === "Primary").length,
+		standbyProviderCount: catalog.filter((item) => item.role === "Standby").length,
+		monitoringOnlyProviderCount: catalog.filter((item) => item.role === "Monitoring Only").length,
+		internalProtectionCount: catalog.filter((item) => item.role === "Internal Protection").length,
+		officialProviderCount: catalog.filter((item) => item.officialSource).length,
+	}, providerCatalog, catalogAudit, providers, activeIncidents, recentAlerts, recentQualityGateRejections, emailPreviews }, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
 }
