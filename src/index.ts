@@ -17,6 +17,7 @@ import { dispatchVerification, handleLatestVerification, monitorVerificationRepo
 import { isVerificationHour } from "./verification/run";
 import { handleAnnouncementOptions, handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest, hasTrustedAnnouncementOrigin, withAnnouncementCors } from "./routes/appAnnouncement";
 import { handleProviderHealthAdminRequest } from "./routes/providerHealthAdmin";
+import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
@@ -137,6 +138,12 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
+		}
+		if (pathname === "/admin/verification") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleVerificationAdminRequest(env);
 		}
 		if (pathname === "/admin/provider-catalog") {
 			const identity = await authenticateAdminRequest(request, env);
