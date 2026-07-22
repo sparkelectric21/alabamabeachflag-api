@@ -28,4 +28,4 @@ Completed July 17, 2026. Initial deployment: `0a6a42a4-8ecd-4dfe-a9ac-9545715602
 - Monitoring dashboards and report-history review tools
 - Removal or revision of an official-source adapter when its upstream format changes
 
-Phase 2 delivery remains disabled in production and staging configuration. No third-party alert service is planned unless Cloudflare Email Service proves operationally insufficient.
+Phase 2 delivery is enabled in production after controlled staging incident, suppression, and recovery validation. Staging remains disabled by default. No third-party alert service is planned unless Cloudflare Email Service proves operationally insufficient.

@@ -110,7 +110,7 @@ The existing 15-minute scheduled event checks the most recent due 7:00 AM or noo
 Delivery is disabled by default:
 
 ```txt
-VERIFICATION_ALERTS_ENABLED=false
+VERIFICATION_ALERTS_ENABLED=true
 ```
 
 Immediate disable: set that variable to `false` and deploy only the configuration change. Verification, report creation, public APIs, and refresh jobs continue. Do not set it to `true` until a delivery adapter and destination are approved and configured.
@@ -119,7 +119,7 @@ The adapter uses Cloudflare Email Service with a `VERIFICATION_ALERT_EMAIL` bind
 
 Failure and recovery messages include the provider, location when applicable, expected and actual values, timestamp, and reason.
 
-Both production and staging configuration explicitly keep `VERIFICATION_ALERTS_ENABLED` set to `false`. For a controlled staging validation, deploy the staging configuration with delivery disabled, confirm verification and missing-report monitoring, temporarily change only the staging flag to `true`, trigger one known test incident, confirm one email and Cloudflare sending-log entry, trigger the identical observation to confirm silence, then restore the flag to `false`. Production activation requires separate approval.
+Production verification email delivery was activated after controlled staging validation confirmed one incident email, duplicate suppression, and one recovery email. Staging remains disabled by default. Immediate production disable remains a configuration-only deployment with `VERIFICATION_ALERTS_ENABLED=false`; verification and report persistence continue independently.
 
 Monitoring and inspection:
 
