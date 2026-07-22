@@ -36,8 +36,8 @@ export async function processAlertObservation(
 	await storage.put(stateKey, decision.state);
 	if (!decision.notification) return;
 	try {
-		await delivery(env, decision.notification);
-		await storage.put(`${stateKey}:delivery`, { kind: decision.notification.kind, at: observation.reportTime, outcome: "delivered" });
+		const outcome = await delivery(env, decision.notification);
+		await storage.put(`${stateKey}:delivery`, { kind: decision.notification.kind, at: observation.reportTime, outcome: outcome === "disabled" ? "disabled" : "delivered" });
 	} catch {
 		await storage.put(`${stateKey}:delivery`, { kind: decision.notification.kind, at: observation.reportTime, outcome: "failed" });
 		// Deliberately omit notification contents and environment values from logs.

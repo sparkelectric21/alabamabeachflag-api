@@ -127,7 +127,7 @@ describe("delivery isolation and kill switch", () => {
 	it("does not deliver when the feature is disabled", async () => {
 		const env = { VERIFICATION_ALERTS_ENABLED: "false" } as Env;
 		expect(alertDeliveryEnabled(env)).toBe(false);
-		await expect(deliverAlert(env, evaluateAlert({}, warning).notification!)).resolves.toBeUndefined();
+		await expect(deliverAlert(env, evaluateAlert({}, warning).notification!)).resolves.toBe("disabled");
 	});
 
 	it("fails safely when delivery is enabled without an email binding", async () => {

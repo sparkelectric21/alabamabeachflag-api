@@ -64,8 +64,8 @@ export function formatAlertEmail(env: Env, notification: AlertNotification): { s
 	};
 }
 
-export async function deliverAlert(env: Env, notification: AlertNotification): Promise<void> {
-	if (!alertDeliveryEnabled(env)) return;
+export async function deliverAlert(env: Env, notification: AlertNotification): Promise<"delivered" | "disabled"> {
+	if (!alertDeliveryEnabled(env)) return "disabled";
 	if (!env.VERIFICATION_ALERT_EMAIL?.send) throw new Error("verification_alert_email_not_configured");
 	const message = formatAlertEmail(env, notification);
 	await env.VERIFICATION_ALERT_EMAIL.send({
@@ -74,4 +74,5 @@ export async function deliverAlert(env: Env, notification: AlertNotification): P
 		subject: message.subject,
 		text: message.text,
 	});
+	return "delivered";
 }

@@ -43,4 +43,10 @@ describe("verification admin endpoint", () => {
 		const empty = await (await handleVerificationAdminRequest(harness({}))).json() as any;
 		expect(empty).toMatchObject({ summary: { overallStatus: "unavailable", latestSlot: null }, latest: null, history: [] });
 	});
+
+	it("retains authenticated manual-run reports outside scheduled hours", async () => {
+		const manual = report("pass", "2026-07-21T14", "2026-07-21T19:00:02Z");
+		const body = await (await handleVerificationAdminRequest(harness({ "verification:gulf-shores-flags:latest": manual }))).json() as any;
+		expect(body.verifiers[0].latest.slot).toBe("2026-07-21T14");
+	});
 });
