@@ -28,8 +28,8 @@ describe("verification admin endpoint", () => {
 	it.each(["pass", "warning", "fail"] as const)("returns a sanitized %s response with exact coverage", async (status) => {
 		const current = report(status);
 		const body = await (await handleVerificationAdminRequest(harness({ "verification:latest": current, "verification:report:2026-07-21:12": current }, true))).json() as any;
-		expect(body).toMatchObject({ schemaVersion: 1, status: "ok", summary: { overallStatus: status, coverageLabel: "Gulf Shores flags", coverageCount: 3, alertingEnabled: true }, latest: { status, locations: [{ name: "Gulf Shores Public Beach" }, { name: "Gulf State Park Pavilion" }, { name: "Little Lagoon Pass" }] } });
-		expect(body.coverage.filter((item: any) => item.status === "active")).toHaveLength(1);
+		expect(body).toMatchObject({ schemaVersion: 2, status: "ok", summary: { overallStatus: status, coverageLabel: "Gulf Shores flags", coverageCount: 3, alertingEnabled: true }, latest: { status, locations: [{ name: "Gulf Shores Public Beach" }, { name: "Gulf State Park Pavilion" }, { name: "Little Lagoon Pass" }] } });
+		expect(body.coverage.filter((item: any) => item.status === "active")).toHaveLength(2);
 		expect(JSON.stringify(body)).not.toContain("private");
 		expect(JSON.stringify(body)).not.toContain("raw.test");
 	});

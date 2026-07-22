@@ -1,0 +1,9 @@
+import { describe, expect, it, vi } from "vitest";
+import { evaluateJobHealth, JOB_HEALTH_CONFIG, recordJobAttempt, recordJobCompletion } from "../src/monitoring/jobHealth";
+
+describe("scheduled job heartbeat health", () => {
+	const base = { job: "beach-flags" as const, ...JOB_HEALTH_CONFIG["beach-flags"], lastAttempt: "2026-11-01T06:00:00Z", lastCompletion: "2026-11-01T06:00:02Z", lastSuccess: "2026-11-01T06:00:02Z", outcome: "completed" as const, trigger: "scheduled" as const };
+	it("classifies healthy, late, missing, and failed heartbeats", () => { expect(evaluateJobHealth(base, new Date("2026-11-01T06:05:00Z")).status).toBe("healthy"); expect(evaluateJobHealth(base, new Date("2026-11-01T06:20:03Z")).status).toBe("late"); expect(evaluateJobHealth(null).status).toBe("missing"); expect(evaluateJobHealth({ ...base, outcome: "failed", failureCategory: "provider_request" }, new Date("2026-11-01T06:05:00Z"))).toEqual({ status: "failed", reason: "provider_request" }); });
+	it("records duplicate execution without losing the prior successful timestamp", async () => { const put = vi.fn(); const get = vi.fn().mockResolvedValue({ ...base, lastSuccess: "2026-07-22T11:55:00Z" }); const env = { BEACH_DATA: { get, put } } as any; const attempt = await recordJobAttempt(env, "beach-flags", new Date("2026-07-22T12:00:00Z")); const done = await recordJobCompletion(env, attempt, "duplicate", new Date("2026-07-22T12:00:01Z")); expect(done).toMatchObject({ outcome: "duplicate", durationMs: 1000, trigger: "scheduled", lastSuccess: "2026-07-22T11:55:00Z" }); expect(put).toHaveBeenCalledTimes(2); });
+	it("uses a DST-safe elapsed-time grace for factual verification", () => { const heartbeat = { ...base, job: "factual-verification" as const, ...JOB_HEALTH_CONFIG["factual-verification"] }; expect(evaluateJobHealth(heartbeat, new Date("2026-11-02T01:59:00Z")).status).toBe("healthy"); });
+});

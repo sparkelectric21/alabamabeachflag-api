@@ -1,119 +1,70 @@
 import type { Env } from "../types";
+import { dueVerificationSlot } from "../alerting/schedule";
 import { verificationSlot } from "../verification/run";
-import type { VerificationCheck, VerificationReport, VerificationStatus } from "../verification/types";
+import { historyPrefix, latestReportKey, VERIFIERS } from "../verification/registry";
+import type { VerificationCheck, VerificationReport, VerificationStatus, VerifierId } from "../verification/types";
 
-const REPORT_PREFIX = "verification:report:";
-const LOCATIONS = new Map([
-	["gulf-shores-public-beach", "Gulf Shores Public Beach"],
-	["gulf-state-park-pavilion", "Gulf State Park Pavilion"],
-	["little-lagoon-pass", "Little Lagoon Pass"],
-]);
-
-const safeText = (value: unknown, max = 300): string | null => {
-	if (typeof value !== "string" || value.length === 0) return null;
-	return value.slice(0, max)
-		.replace(/https?:\/\/\S+/gi, "[upstream URL redacted]")
-		.replace(/\b(?:bearer|token|secret|password|api[_-]?key)\s*[:=]?\s*\S+/gi, "[credential redacted]");
-};
-const safeIso = (value: unknown): string | null => {
-	const text = safeText(value, 64);
-	return text && !Number.isNaN(Date.parse(text)) ? new Date(text).toISOString() : null;
-};
+const LEGACY_PREFIX = "verification:report:";
+const safeText = (value: unknown, max = 300): string | null => typeof value !== "string" || !value ? null : value.slice(0, max)
+	.replace(/https?:\/\/\S+/gi, "[upstream URL redacted]").replace(/\b(?:bearer|token|secret|password|api[_-]?key)\s*[:=]?\s*\S+/gi, "[credential redacted]");
+const safeIso = (value: unknown) => { const text = safeText(value, 64); return text && !Number.isNaN(Date.parse(text)) ? new Date(text).toISOString() : null; };
 const isStatus = (value: unknown): value is VerificationStatus => ["pass", "warning", "fail"].includes(String(value));
 
 function sanitizeCheck(value: unknown): VerificationCheck | null {
 	if (!value || typeof value !== "object") return null;
-	const check = value as Partial<VerificationCheck>;
-	const name = safeText(check.name, 100), message = safeText(check.message);
+	const check = value as Partial<VerificationCheck>; const name = safeText(check.name, 100), message = safeText(check.message);
 	if (!name || !message || !isStatus(check.status)) return null;
-	return {
-		name, status: check.status, message,
-		...(safeText(check.provider, 100) ? { provider: safeText(check.provider, 100)! } : {}),
-		...(safeText(check.location, 100) ? { location: safeText(check.location, 100)! } : {}),
-		...(safeText(check.expectedValue, 160) ? { expectedValue: safeText(check.expectedValue, 160)! } : {}),
-		...(safeText(check.actualValue, 160) ? { actualValue: safeText(check.actualValue, 160)! } : {}),
-	};
+	const optional = (key: "provider" | "location" | "expectedValue" | "actualValue", max: number) => safeText(check[key], max);
+	return { name, status: check.status, message,
+		...(optional("provider", 100) ? { provider: optional("provider", 100)! } : {}), ...(optional("location", 100) ? { location: optional("location", 100)! } : {}),
+		...(optional("expectedValue", 160) ? { expectedValue: optional("expectedValue", 160)! } : {}), ...(optional("actualValue", 160) ? { actualValue: optional("actualValue", 160)! } : {}) };
 }
 
-function sanitizeReport(value: unknown): VerificationReport | null {
+function sanitizeReport(value: unknown, fallbackId: VerifierId): (VerificationReport & { verifierId: VerifierId }) | null {
 	if (!value || typeof value !== "object") return null;
-	const report = value as Partial<VerificationReport>;
-	const slot = safeText(report.slot, 32), startedAt = safeIso(report.startedAt), completedAt = safeIso(report.completedAt);
-	if (report.version !== 1 || !slot || !/^\d{4}-\d{2}-\d{2}T(?:07|12)$/.test(slot) || !startedAt || !completedAt || !isStatus(report.status) || !Array.isArray(report.checks)) return null;
-	const checks = report.checks.map(sanitizeCheck).filter((item): item is VerificationCheck => Boolean(item));
-	if (checks.length !== report.checks.length) return null;
-	return { version: 1, slot, startedAt, completedAt, status: report.status, checks };
+	const report = value as Partial<VerificationReport>; const slot = safeText(report.slot, 32), startedAt = safeIso(report.startedAt), completedAt = safeIso(report.completedAt);
+	if (![1, 2].includes(Number(report.version)) || !slot || !/^\d{4}-\d{2}-\d{2}T(?:07|12)$/.test(slot) || !startedAt || !completedAt || !isStatus(report.status) || !Array.isArray(report.checks)) return null;
+	const checks = report.checks.map(sanitizeCheck).filter((item): item is VerificationCheck => Boolean(item)); if (checks.length !== report.checks.length) return null;
+	const id = VERIFIERS.some((item) => item.id === report.verifierId) ? report.verifierId! : fallbackId;
+	return { version: report.version as 1 | 2, verifierId: id, verifierName: safeText(report.verifierName, 100) ?? undefined, slot, startedAt, completedAt, status: report.status, checks };
 }
 
-function parseFlag(value: string | undefined): { flag: string | null; hasPurpleFlag: boolean | null } {
-	if (!value) return { flag: null, hasPurpleFlag: null };
-	const [flag, purple] = value.split("; ");
-	return { flag: flag || null, hasPurpleFlag: purple === "purple=true" ? true : purple === "purple=false" ? false : null };
+function parseFlag(value?: string) { const [flag, purple] = value?.split("; ") ?? []; return { flag: flag || null, purple: purple === "purple=true" ? true : purple === "purple=false" ? false : null }; }
+function nextExpectedSlot(now: Date): string { for (let h = 1; h <= 48; h++) { const slot = verificationSlot(new Date(now.getTime() + h * 3_600_000)); if (/T(?:07|12)$/.test(slot)) return slot; } return "unavailable"; }
+function project(report: VerificationReport & { verifierId: VerifierId }) {
+	const definition = VERIFIERS.find((item) => item.id === report.verifierId)!;
+	const locations = definition.locations.map((location) => { const check = report.checks.find((item) => item.location === location.id || item.name === location.id); const expected = parseFlag(check?.expectedValue), actual = parseFlag(check?.actualValue); return { id: location.id, name: location.name, status: check?.status ?? "fail", officialFlag: expected.flag, publishedFlag: actual.flag, officialPurple: expected.purple, publishedPurple: actual.purple, matches: check?.status === "pass", message: check?.status === "pass" ? null : check?.message ?? "Location was not compared." }; });
+	return { verifierId: report.verifierId, verifierName: definition.displayName, slot: report.slot, startedAt: report.startedAt, completedAt: report.completedAt, durationMs: Math.max(0, Date.parse(report.completedAt) - Date.parse(report.startedAt)), status: report.status, reason: report.checks.find((c) => c.status === "fail")?.message ?? report.checks.find((c) => c.status === "warning")?.message ?? null, checks: report.checks, locations, coverageCount: locations.filter((l) => l.publishedFlag !== null).length };
 }
 
-function projectReport(report: VerificationReport) {
-	const locations = [...LOCATIONS].map(([id, name]) => {
-		const check = report.checks.find((item) => item.location === id || item.name === id);
-		const official = parseFlag(check?.expectedValue), published = parseFlag(check?.actualValue);
-		return {
-			id, name, status: check?.status ?? (report.status === "warning" ? "warning" : "fail"), officialFlag: official.flag, publishedFlag: published.flag,
-			officialPurple: official.hasPurpleFlag, publishedPurple: published.hasPurpleFlag,
-			matches: check?.status === "pass", message: check?.status === "pass" ? null : check?.message ?? "Location was not present in the report.",
-		};
-	});
-	const officialCheck = report.checks.find((item) => item.name === "official_source");
-	const freshness = report.checks.find((item) => item.name === "freshness");
-	return {
-		slot: report.slot, startedAt: report.startedAt, completedAt: report.completedAt,
-		durationMs: Math.max(0, Date.parse(report.completedAt) - Date.parse(report.startedAt)), status: report.status,
-		reason: report.checks.find((item) => item.status === "fail")?.message ?? report.checks.find((item) => item.status === "warning")?.message ?? null,
-		officialSource: { provider: "City of Gulf Shores", observedAt: null, flag: locations[0]?.officialFlag ?? null, hasPurpleFlag: locations[0]?.officialPurple ?? null },
-		publishedResult: { flag: locations[0]?.publishedFlag ?? null, hasPurpleFlag: locations[0]?.publishedPurple ?? null, fetchedAt: freshness ? report.startedAt : null },
-		checks: report.checks, locations, wouldAlert: report.status === "fail",
-		officialSourceAvailable: !officialCheck, coverageCount: locations.filter((item) => item.publishedFlag !== null).length,
-	};
+async function readReports(env: Env, id: VerifierId, includeLegacy: boolean) {
+	const prefixes = [historyPrefix(id), ...(includeLegacy ? [LEGACY_PREFIX] : [])];
+	const [latest, ...lists] = await Promise.all([env.BEACH_DATA.get<unknown>(latestReportKey(id), "json"), ...prefixes.map((prefix) => env.BEACH_DATA.list({ prefix, limit: 100 }))]);
+	const keys = [...new Set(lists.flatMap((list) => list.keys.map((key) => key.name)))];
+	const raw = await Promise.all(keys.map((key) => env.BEACH_DATA.get<unknown>(key, "json")));
+	const history = raw.map((value) => sanitizeReport(value, id)).filter((r): r is VerificationReport & { verifierId: VerifierId } => Boolean(r) && r!.verifierId === id)
+		.sort((a, b) => b.completedAt.localeCompare(a.completedAt)).filter((r, index, all) => all.findIndex((x) => x.slot === r.slot) === index).slice(0, 50);
+	const current = sanitizeReport(latest, id) ?? history[0] ?? (includeLegacy ? sanitizeReport(await env.BEACH_DATA.get("verification:latest", "json"), id) : null);
+	return { latest: current, history, legacyHistoryAvailable: includeLegacy && keys.some((key) => key.startsWith(LEGACY_PREFIX)) };
 }
 
-function nextExpectedSlot(now: Date): string {
-	for (let offset = 1; offset <= 48; offset++) {
-		const slot = verificationSlot(new Date(now.getTime() + offset * 60 * 60 * 1000));
-		if (slot.endsWith("T07") || slot.endsWith("T12")) return slot;
-	}
-	return "unavailable";
-}
-
-export async function handleVerificationAdminRequest(env: Pick<Env, "BEACH_DATA" | "VERIFICATION_ALERTS_ENABLED" | "VERIFICATION_ALERT_EMAIL">): Promise<Response> {
-	const now = new Date();
-	const [rawLatest, listed] = await Promise.all([
-		env.BEACH_DATA.get<unknown>("verification:latest", "json"),
-		env.BEACH_DATA.list({ prefix: REPORT_PREFIX, limit: 100 }),
-	]);
-	const rawHistory = await Promise.all(listed.keys.map((key) => env.BEACH_DATA.get<unknown>(key.name, "json")));
-	const historyReports = rawHistory.map(sanitizeReport).filter((item): item is VerificationReport => Boolean(item))
-		.sort((a, b) => b.completedAt.localeCompare(a.completedAt)).slice(0, 50);
-	const latestReport = sanitizeReport(rawLatest) ?? historyReports[0] ?? null;
-	const reports = latestReport && !historyReports.some((item) => item.slot === latestReport.slot) ? [latestReport, ...historyReports] : historyReports;
-	const lastSuccess = reports.filter((item) => item.status === "pass").sort((a, b) => b.completedAt.localeCompare(a.completedAt))[0];
-	const alertingEnabled = env.VERIFICATION_ALERTS_ENABLED === "true";
-	return Response.json({
-		schemaVersion: 1, status: "ok", generatedAt: now.toISOString(),
-		summary: {
-			overallStatus: latestReport?.status ?? "unavailable", coverageLabel: "Gulf Shores flags", coverageCount: 3,
-			lastVerificationAt: latestReport?.completedAt ?? null, lastSuccessfulVerificationAt: lastSuccess?.completedAt ?? null,
-			latestSlot: latestReport?.slot ?? null, nextExpectedSlot: nextExpectedSlot(now), alertingEnabled,
-		},
-		latest: latestReport ? projectReport(latestReport) : null,
-		history: historyReports.map(projectReport),
+export async function handleVerificationAdminRequest(env: Env): Promise<Response> {
+	const now = new Date(); const datasets = await Promise.all(VERIFIERS.map((v) => readReports(env, v.id, v.id === "gulf-shores-flags")));
+	let alertEntries: any[] = [];
+	try { const id = env.VERIFICATION_COORDINATOR.idFromName("fleet"); const response = await env.VERIFICATION_COORDINATOR.get(id).fetch("https://verification.internal/state", { method: "POST", body: JSON.stringify({ action: "state", now: now.toISOString() }) }); if (response.ok) alertEntries = ((await response.json()) as any).entries ?? []; } catch { /* admin data remains available */ }
+	alertEntries = alertEntries.map((entry) => ({ verifierId: VERIFIERS.some((v) => v.id === entry?.verifierId) ? entry.verifierId : null, state: entry?.state?.active ? { active: { id: safeText(entry.state.active.id, 180), openedAt: safeIso(entry.state.active.openedAt), lastObservedAt: safeIso(entry.state.active.lastObservedAt), status: isStatus(entry.state.active.status) ? entry.state.active.status : "fail", signature: safeText(entry.state.active.signature, 300) } } : null, delivery: entry?.delivery ? { kind: ["incident", "update", "recovery"].includes(entry.delivery.kind) ? entry.delivery.kind : null, at: safeIso(entry.delivery.at), outcome: ["delivered", "failed"].includes(entry.delivery.outcome) ? entry.delivery.outcome : null } : null }));
+	const enabled = env.VERIFICATION_ALERTS_ENABLED === "true", configured = Boolean(env.VERIFICATION_ALERTS_ENABLED), ready = Boolean(env.VERIFICATION_ALERT_EMAIL);
+	const dueSlot = dueVerificationSlot(now);
+	const verifiers = VERIFIERS.map((definition, index) => { const data = datasets[index], latest = data.latest, reports = latest && !data.history.some((r) => r.slot === latest.slot) ? [latest, ...data.history] : data.history; const lastSuccess = reports.find((r) => r.status === "pass"); const alert = alertEntries.find((entry) => entry.verifierId === definition.id) ?? {}; return { id: definition.id, displayName: definition.displayName, provider: definition.provider, coverage: definition.locations, latest: latest ? project(latest) : null, history: data.history.map(project), lastRun: latest?.completedAt ?? null, lastSuccessfulRun: lastSuccess?.completedAt ?? null, nextExpectedRun: nextExpectedSlot(now), durationMs: latest ? project(latest).durationMs : null, reason: latest ? project(latest).reason : "No report available", scheduleHealth: { status: dueSlot && latest?.slot !== dueSlot ? "missing" : "healthy", expectedCadence: "07:00 and 12:00 America/Chicago", nextExpectedSlot: nextExpectedSlot(now) }, alerting: { enabled, configured, bindingReady: ready, activeIncident: alert.state?.active ?? null, suppressed: Boolean(alert.state?.active), recoveryPending: Boolean(alert.state?.active), lastNotification: alert.delivery ? { kind: alert.delivery.kind, timestamp: alert.delivery.at, deliveryOutcome: alert.delivery.outcome } : null }, legacyHistoryAvailable: data.legacyHistoryAvailable }; });
+	const statuses = verifiers.map((v) => v.latest?.status ?? "unavailable"); const overallStatus = statuses.includes("fail") || statuses.includes("unavailable") ? "fail" : statuses.includes("warning") ? "warning" : "pass";
+	const gulf = verifiers[0];
+	return Response.json({ schemaVersion: 2, status: "ok", generatedAt: now.toISOString(), fleet: { overallStatus, verifierCount: verifiers.length, failingVerifierIds: verifiers.filter((v) => v.latest?.status === "fail" || !v.latest).map((v) => v.id) }, verifiers,
+		emailOperations: { enabled, configured, bindingReady: ready, activationNote: "Activation requires a separately approved Worker configuration deployment." },
+		// Backward-compatible v1 projection.
+		summary: { overallStatus: gulf.latest?.status ?? "unavailable", coverageLabel: "Gulf Shores flags", coverageCount: 3, lastVerificationAt: gulf.lastRun, lastSuccessfulVerificationAt: gulf.lastSuccessfulRun, latestSlot: gulf.latest?.slot ?? null, nextExpectedSlot: gulf.nextExpectedRun, alertingEnabled: enabled }, latest: gulf.latest, history: gulf.history,
 		coverage: [
-			{ domain: "Gulf Shores official beach flags", status: "active", description: "Gulf Shores Public Beach, Gulf State Park Pavilion, and Little Lagoon Pass are verified against the City of Gulf Shores." },
-			{ domain: "Orange Beach flags", status: "planned", description: "Not currently verified." },
-			{ domain: "Fort Morgan estimated flags", status: "planned", description: "Not currently verified." },
-			{ domain: "Dauphin Island", status: "planned", description: "Not currently verified." },
-			{ domain: "Water quality", status: "planned", description: "Not currently verified." },
-			{ domain: "Weather", status: "planned", description: "Not currently verified." },
-			{ domain: "Marine forecast", status: "planned", description: "Not currently verified." },
-			{ domain: "Water temperature", status: "planned", description: "Not currently verified." },
-			{ domain: "Other providers", status: "planned", description: "Not currently verified." },
-		],
-	}, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
+			{ domain: "Gulf Shores official beach flags", status: "active", description: "Three Gulf Shores locations are independently verified." },
+			{ domain: "Orange Beach flags", status: "active", description: "Cotton Bayou, Alabama Point, and Florida Point are independently verified." },
+			...(["Fort Morgan estimated flags", "Dauphin Island", "Water quality", "Weather", "Marine forecast", "Water temperature", "Other providers"].map((domain) => ({ domain, status: "planned", description: "Not currently verified." }))),
+		] }, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
 }

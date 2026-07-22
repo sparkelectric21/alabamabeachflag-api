@@ -118,7 +118,8 @@ describe("delivery isolation and kill switch", () => {
 		await expect(processAlertObservation(store, {} as Env, failure, async () => {
 			throw new Error("delivery failed");
 		})).resolves.toBeUndefined();
-		expect(store.put).toHaveBeenCalledOnce();
+		expect(store.put).toHaveBeenCalledTimes(2);
+		expect(store.put).toHaveBeenLastCalledWith("alert-state:delivery", expect.objectContaining({ outcome: "failed" }));
 		expect(error).toHaveBeenCalledWith("[Verification alerts] delivery failed");
 		error.mockRestore();
 	});

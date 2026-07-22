@@ -20,6 +20,7 @@ import { handleProviderHealthAdminRequest } from "./routes/providerHealthAdmin";
 import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
+import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -280,11 +281,13 @@ export default {
 		async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
 			const cron = controller.cron;
 			const runScheduled = async (job: RefreshJob): Promise<void> => {
+				const heartbeat = await recordJobAttempt(env, job, new Date(controller.scheduledTime));
 				const result = await dispatchRefresh(env, {
 					job,
 					trigger: "scheduled",
 					idempotencyKey: scheduledIdempotencyKey(job, controller.scheduledTime),
 				});
+				await recordJobCompletion(env, heartbeat, result.outcome === "completed" ? "completed" : result.outcome === "duplicate" ? "duplicate" : "failed", new Date(), result.outcome === "failed" ? "refresh_failed" : undefined);
 				if (result.outcome === "failed") console.error(`[Cron] ${job} refresh failed`);
 			};
 
@@ -331,7 +334,9 @@ export default {
 		}
 
 		if (cron === "0 * * * *" && isVerificationHour(new Date(controller.scheduledTime))) {
+			const heartbeat = await recordJobAttempt(env, "factual-verification", new Date(controller.scheduledTime));
 			const response = await dispatchVerification(env, new Date(controller.scheduledTime));
+			await recordJobCompletion(env, heartbeat, response.ok ? "completed" : response.status === 409 ? "duplicate" : "failed", new Date(), !response.ok && response.status !== 409 ? "verification_failed" : undefined);
 			if (!response.ok && response.status !== 409) console.error("[Cron] factual verification failed");
 		}
 	},

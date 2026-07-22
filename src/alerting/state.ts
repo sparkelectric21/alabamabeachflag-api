@@ -7,7 +7,7 @@ import type {
 
 function signature(observation: AlertObservation): string {
 	return observation.affected
-		.map((item) => `${item.name}:${item.status}`)
+		.map((item) => [item.name, item.status, item.provider, item.location, item.expectedValue, item.actualValue].map((value) => value ?? "").join(":"))
 		.sort()
 		.join("|");
 }

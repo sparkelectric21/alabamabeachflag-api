@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { readOfficialGulfShoresState } from "./officialSource";
 import type { VerificationCheck, VerificationReport, VerificationStatus } from "./types";
+import { persistVerifierReport, verifierById } from "./registry";
 
 const BEACHES = [
 	"gulf-shores-public-beach",
@@ -9,6 +10,7 @@ const BEACHES = [
 ];
 
 const PROVIDER = "City of Gulf Shores";
+const DEFINITION = verifierById("gulf-shores-flags");
 
 function canonicalPrimaryFlag(value: string): string {
 	return value === "double-red" ? "doubleRed" : value;
@@ -39,7 +41,7 @@ export function isVerificationHour(date: Date): boolean {
 	return hour === "07" || hour === "12";
 }
 
-export async function runVerification(env: Env, now = new Date()): Promise<VerificationReport> {
+export async function runVerification(env: Env, now = new Date()): Promise<VerificationReport & { verifierId: "gulf-shores-flags" }> {
 	const startedAt = now.toISOString();
 	const checks: VerificationCheck[] = [];
 	const [officialResult, apiResult] = await Promise.allSettled([
@@ -49,8 +51,10 @@ export async function runVerification(env: Env, now = new Date()): Promise<Verif
 	if (officialResult.status === "rejected") {
 		checks.push({
 			name: "official_source",
-			status: "warning",
+			status: "fail",
 			provider: PROVIDER,
+			expectedValue: "recognized official beach-safety format",
+			actualValue: "comparison unavailable",
 			message: officialResult.reason instanceof Error
 				? officialResult.reason.message
 				: "official_source_unavailable",
@@ -129,18 +133,15 @@ export async function runVerification(env: Env, now = new Date()): Promise<Verif
 		}
 	}
 	const report: VerificationReport = {
-		version: 1,
+		version: 2,
+		verifierId: "gulf-shores-flags",
+		verifierName: DEFINITION.displayName,
 		slot: verificationSlot(now),
 		startedAt,
 		completedAt: new Date().toISOString(),
 		status: worst(checks),
 		checks,
 	};
-	await Promise.all([
-		env.BEACH_DATA.put("verification:latest", JSON.stringify(report)),
-		env.BEACH_DATA.put(`verification:report:${report.startedAt.slice(0, 10)}:${report.slot.slice(-2)}`, JSON.stringify(report), {
-			expirationTtl: 30 * 24 * 60 * 60,
-		}),
-	]);
-	return report;
+	await persistVerifierReport(env, report as VerificationReport & { verifierId: "gulf-shores-flags" });
+	return report as VerificationReport & { verifierId: "gulf-shores-flags" };
 }

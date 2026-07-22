@@ -48,8 +48,9 @@ describe("verification reports", () => {
 		const report = await runVerification(e, new Date("2026-07-17T12:00:00.000Z"));
 		expect(report.status).toBe("pass");
 		expect(report.checks).toHaveLength(5);
-		expect(e.BEACH_DATA.put).toHaveBeenCalledTimes(2);
+		expect(e.BEACH_DATA.put).toHaveBeenCalledTimes(4);
 		expect(e.BEACH_DATA.put).toHaveBeenCalledWith("verification:latest", expect.any(String));
+		expect(e.BEACH_DATA.put).toHaveBeenCalledWith("verification:gulf-shores-flags:latest", expect.any(String));
 	});
 
 	it("recognizes the current CivicPlus closure IDs and public compatibility value", async () => {
@@ -120,13 +121,13 @@ describe("verification reports", () => {
 		expect(report.checks.some((check) => check.message === "missing_location")).toBe(true);
 	});
 
-	it("warns instead of guessing when the official source format changes", async () => {
+	it("fails instead of guessing when the official source format changes", async () => {
 		vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
 			String(input).includes("gulfshoresal.gov")
 				? new Response("<html>changed</html>", { headers: { "Content-Type": "text/html" } })
 				: Response.json(published)));
 		const report = await runVerification(env(), new Date("2026-07-17T12:00:00.000Z"));
-		expect(report.status).toBe("warning");
+		expect(report.status).toBe("fail");
 		expect(report.checks.find((check) => check.name === "official_source")?.message)
 			.toBe("official_source_format_changed");
 	});

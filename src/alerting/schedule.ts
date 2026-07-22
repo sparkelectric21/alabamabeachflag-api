@@ -27,6 +27,8 @@ export function dueVerificationSlot(now: Date, graceMinutes = MISSING_REPORT_GRA
 	return undefined;
 }
 
-export function reportKeyForSlot(slot: string): string {
-	return `verification:report:${slot.slice(0, 10)}:${slot.slice(-2)}`;
+export function reportKeyForSlot(slot: string, verifierId?: string): string {
+	return verifierId
+		? `verification:${verifierId}:report:${slot.slice(0, 10)}:${slot.slice(-2)}`
+		: `verification:report:${slot.slice(0, 10)}:${slot.slice(-2)}`;
 }
