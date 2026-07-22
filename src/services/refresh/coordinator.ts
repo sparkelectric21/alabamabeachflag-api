@@ -9,6 +9,8 @@ import { buildRipCurrentOutlookPayload } from "../ripCurrentOutlook/refresh";
 import type { RefreshJob, RefreshRunRequest, RefreshRunResult } from "./types";
 import { processProviderHealthObservations, processQualityGateRejection } from "../../providerHealth/process";
 import type { ProviderHealthObservation } from "../../providerHealth/types";
+import { enforceBeachFlagPayload } from "../../routes/beachflags";
+import { readOperationalControl } from "../../operationalControl/store";
 
 interface ActiveRun {
 	generation: number;
@@ -31,6 +33,7 @@ interface RefreshPayload {
 	generatedAt: string;
 	count: number;
 	beachConditions?: unknown[];
+	beachFlags?: unknown[];
 	errors?: Array<{ message?: string }>;
 	refreshDiagnostics?: {
 		expectedBeachCount: number;
@@ -223,7 +226,21 @@ export class RefreshCoordinatorCore {
 						if (!staged.value || staged.metadata?.revision !== write.expectedRevision) throw new Error("staged_revision_validation_failed");
 					}
 				}
-				const { kvWrites: _kvWrites, refreshDiagnostics: _refreshDiagnostics, ...publicPayload } = payload;
+				const { kvWrites: _kvWrites, refreshDiagnostics: _refreshDiagnostics, ...rawPublicPayload } = payload;
+				let publicPayload: Record<string, unknown> = rawPublicPayload;
+				if (request.job === "beach-flags") {
+					const now = new Date(this.now());
+					const control = await readOperationalControl(this.env, now);
+					const enforced = enforceBeachFlagPayload(rawPublicPayload, control, now, "refresh-publication");
+					const prior = await this.env.BEACH_DATA.get<Record<string, unknown>>(config.cacheKey, "json");
+					const candidateReports = Array.isArray(rawPublicPayload.beachFlags) ? rawPublicPayload.beachFlags : [];
+					const priorReports = Array.isArray(prior?.beachFlags) ? prior.beachFlags : [];
+					if (candidateReports.length === 0 && priorReports.length > 0) {
+						logWarn("Refresh Coordinator", "Rejected empty beach flag candidate", { priorCount: priorReports.length });
+						throw new Error("beach_flags_quality_gate_rejected");
+					}
+					publicPayload = enforced;
+				}
 				await this.env.BEACH_DATA.put(
 					config.cacheKey,
 					JSON.stringify(publicPayload),

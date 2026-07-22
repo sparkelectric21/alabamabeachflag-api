@@ -7,6 +7,7 @@ import {
 } from "../src/services/refresh/coordinator";
 import type { RefreshJob, RefreshRunRequest } from "../src/services/refresh/types";
 import type { Env } from "../src/types";
+import { defaultOperationalControl } from "../src/operationalControl/store";
 
 class MemoryStorage {
 	private readonly values = new Map<string, unknown>();
@@ -176,6 +177,31 @@ describe("refresh coordinator", () => {
 		const h = harness({ "water-quality": vi.fn().mockRejectedValue(new Error("provider detail\ninjected")) });
 		expect((await h.core.run(request("water-quality", "admin-request-001"))).outcome).toBe("failed");
 		expect(h.put).not.toHaveBeenCalled();
+	});
+
+	it("rechecks controls at commit so a pre-disable refresh cannot publish Gulf Shores", async () => {
+		const pending = deferred<any>();
+		let controls = defaultOperationalControl(new Date("2026-07-16T18:00:00.000Z"));
+		const get = vi.fn(async (key: string) => key === "operational-control:v1:current" ? controls : null);
+		const h = harness({ "beach-flags": vi.fn(() => pending.promise) }, { get } as Partial<KVNamespace>);
+		const run = h.core.run(request("beach-flags", "race", "scheduled"));
+		await Promise.resolve();
+		controls = { ...controls, revision: "disabled-revision", controls: { ...controls.controls, "providers.gulfShoresFlags": { state: "disabled", activatedAt: "2026-07-16T18:00:00.000Z" } } };
+		pending.resolve({ generatedAt: "2026-07-16T18:00:00.000Z", count: 2, beachFlags: [
+			{ beachId: "gulf-shores-public-beach", primaryFlag: "green", lastUpdated: "2026-07-16T18:00:00.000Z" },
+			{ beachId: "cotton-bayou", primaryFlag: "yellow", lastUpdated: "2026-07-16T18:00:00.000Z" },
+		], errors: [] });
+		expect((await run).outcome).toBe("completed");
+		const published = JSON.parse(writesFor(h, "beach-flags")[0][1] as string);
+		expect(published.beachFlags.map((item: { beachId: string }) => item.beachId)).toEqual(["cotton-bayou"]);
+	});
+
+	it("rejects a total empty flag candidate instead of replacing a valid snapshot", async () => {
+		const prior = { count: 1, beachFlags: [{ beachId: "cotton-bayou", primaryFlag: "yellow", lastUpdated: "2026-07-16T18:00:00.000Z" }] };
+		const get = vi.fn(async (key: string) => key === "beach-flags" ? prior : null);
+		const h = harness({ "beach-flags": vi.fn().mockResolvedValue({ generatedAt: "2026-07-16T18:00:00.000Z", count: 0, beachFlags: [], errors: [] }) }, { get } as Partial<KVNamespace>);
+		expect((await h.core.run(request("beach-flags", "empty", "scheduled"))).outcome).toBe("failed");
+		expect(writesFor(h, "beach-flags")).toHaveLength(0);
 	});
 
 	it("preserves a healthy nine-beach snapshot when a shared outage produces zero beaches", async () => {

@@ -129,14 +129,15 @@ describe("public API compatibility", () => {
 	});
 
 	it("serializes only Double Red with the proven iOS 1.2.0 compatibility value", async () => {
+		const lastUpdated = new Date().toISOString();
 		const beachFlags = [
-			{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false },
-			{ beachId: "cotton-bayou", primaryFlag: "doubleRed", hasPurpleFlag: false },
-			{ beachId: "fort-morgan-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false, sourceType: "estimated" },
-			{ beachId: "green", primaryFlag: "green", hasPurpleFlag: false },
-			{ beachId: "yellow", primaryFlag: "yellow", hasPurpleFlag: false },
-			{ beachId: "red", primaryFlag: "red", hasPurpleFlag: false },
-			{ beachId: "purple", primaryFlag: "yellow", hasPurpleFlag: true },
+			{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false, lastUpdated },
+			{ beachId: "cotton-bayou", primaryFlag: "doubleRed", hasPurpleFlag: false, lastUpdated },
+			{ beachId: "fort-morgan-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false, sourceType: "estimated", lastUpdated },
+			{ beachId: "green", primaryFlag: "green", hasPurpleFlag: false, lastUpdated },
+			{ beachId: "yellow", primaryFlag: "yellow", hasPurpleFlag: false, lastUpdated },
+			{ beachId: "red", primaryFlag: "red", hasPurpleFlag: false, lastUpdated },
+			{ beachId: "purple", primaryFlag: "yellow", hasPurpleFlag: true, lastUpdated },
 		];
 		const payload = { status: "ok", beachFlags };
 		const env = {
@@ -155,7 +156,7 @@ describe("public API compatibility", () => {
 	});
 
 	it("preserves canonical Double Red serialization when compatibility is disabled", async () => {
-		const payload = { beachFlags: [{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false }] };
+		const payload = { beachFlags: [{ beachId: "gulf-shores-public-beach", primaryFlag: "doubleRed", hasPurpleFlag: false, lastUpdated: new Date().toISOString() }] };
 		const env = {
 			BEACH_DATA: { get: vi.fn(async () => payload) },
 			IOS_1_2_DOUBLE_RED_COMPATIBILITY: "false",

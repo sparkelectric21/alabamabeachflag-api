@@ -514,3 +514,6 @@ The backend should be built carefully and honestly.
 Safety-related data should never be guessed without clear labeling. Official data should be preferred. Estimated data should be transparent. Unavailable data should be shown as unavailable rather than fabricated.
 
 The long-term goal is not just to serve data, but to make Alabama Beach Flag a trustworthy beach safety platform for Alabama residents and visitors.
+# Operational control
+
+Beach-flag publication has a backend-authoritative Phase 1 control plane documented in [`docs/OPERATIONAL_CONTROL.md`](docs/OPERATIONAL_CONTROL.md). It is enforced both at public serialization and inside the refresh coordinator's final publication boundary. Provider health, factual verification, announcements, and provider catalog metadata remain evidence/communication systems and never mutate control intent automatically.

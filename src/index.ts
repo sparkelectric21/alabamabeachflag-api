@@ -19,6 +19,7 @@ import { handleAnnouncementOptions, handleAppAnnouncementRequest, handleDeleteAp
 import { handleProviderHealthAdminRequest } from "./routes/providerHealthAdmin";
 import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
+import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -151,6 +152,25 @@ export default {
 			if (request.method !== "PATCH") return methodNotAllowed("PATCH");
 			return await handleProviderCatalogUpdate(request, env, identity);
 		}
+		if (pathname === "/admin/operational-control") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method === "GET") return await handleOperationalControlGet(env);
+			if (request.method === "PATCH") return await handleOperationalControlPatch(request, env, identity);
+			return methodNotAllowed("GET, PATCH");
+		}
+		if (pathname === "/admin/operational-control/rollback") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await handleOperationalControlRollback(request, env, identity);
+		}
+		if (pathname === "/admin/operational-control/audit") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleOperationalControlAudit(request, env);
+		}
 		if (url.pathname === "/health" || url.pathname === "/v1/health") {
 			if (request.method === "GET" || request.method === "HEAD") {
 				return handleHealthRequest(request.method, APP_VERSION, API_PATH_VERSION);
@@ -224,6 +244,7 @@ export default {
 		}
 
 		if (pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
+		if (pathname === "/v1/app-configuration") return await handleAppConfiguration(env);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);
@@ -234,8 +255,9 @@ export default {
 		}
 
 		if (url.pathname === "/v1/beach-flags") {
-			return await handleBeachFlagsRequest(env);
+			return await handleBeachFlagsRequest(request, env, "v1");
 		}
+		if (url.pathname === "/v2/beach-flags") return await handleBeachFlagsRequest(request, env, "v2");
 		if (url.pathname === "/v1/rip-current-outlook") return await handleRipCurrentOutlookRequest(env);
 		if (url.pathname === "/v1/rip-current-outlook/image") return await handleRipCurrentOutlookImageRequest(request, env);
 
