@@ -21,6 +21,8 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
+import { handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "./routes/beachEvents";
+import { refreshBeachEvents } from "./beachEvents/refresh";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -153,6 +155,33 @@ export default {
 			if (request.method !== "PATCH") return methodNotAllowed("PATCH");
 			return await handleProviderCatalogUpdate(request, env, identity);
 		}
+		if (pathname === "/admin/beach-events") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method === "GET") return await handleBeachEventsAdminGet(request, env);
+			if (request.method === "POST") return await handleBeachEventsAdminCreate(request, env, identity);
+			return methodNotAllowed("GET, POST");
+		}
+		if (pathname === "/admin/beach-events/rules") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await handleBeachEventRuleCreate(request, env, identity);
+		}
+		if (pathname === "/admin/beach-events/suggest") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await handleBeachEventSuggest(request);
+		}
+		if (pathname.startsWith("/admin/beach-events/")) {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			const id = decodeURIComponent(pathname.slice("/admin/beach-events/".length));
+			if (request.method === "PATCH") return await handleBeachEventsAdminUpdate(request, env, identity, id);
+			if (request.method === "DELETE") return await handleBeachEventsAdminDelete(env, identity, id);
+			return methodNotAllowed("PATCH, DELETE");
+		}
 		if (pathname === "/admin/operational-control") {
 			const identity = await authenticateAdminRequest(request, env);
 			if (!identity) return forbiddenAdminResponse();
@@ -220,6 +249,7 @@ export default {
 				if (pathname === "/internal/refresh/beach-flags") {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
+				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env));
 				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
@@ -246,6 +276,7 @@ export default {
 
 		if (pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
 		if (pathname === "/v1/app-configuration") return await handleAppConfiguration(env);
+		if (pathname === "/v1/beach-events") return await handleBeachEventsRequest(env);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);
@@ -330,6 +361,7 @@ export default {
 				console.error("Scheduled water quality refresh failed");
 			}
 			try { await runScheduled("rip-current-outlook"); } catch { console.error("Scheduled rip current outlook refresh failed"); }
+			try { await refreshBeachEvents(env, new Date(controller.scheduledTime)); } catch { console.error("Scheduled beach events refresh failed"); }
 			return;
 		}
 

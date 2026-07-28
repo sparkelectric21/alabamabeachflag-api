@@ -1,6 +1,6 @@
 import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
-import { CONTROL_IDS, type ControlId, type ControlState, type EffectiveControl, type FlagProvider, type OperationalControlAudit, type OperationalControlDocument, type OperationalControlValue } from "./types";
+import { CONTROL_IDS, type BeachEventProvider, type ControlId, type ControlState, type EffectiveControl, type FlagProvider, type OperationalControlAudit, type OperationalControlDocument, type OperationalControlValue } from "./types";
 
 export const CURRENT_KEY = "operational-control:v1:current";
 export const AUDIT_PREFIX = "operational-control:v1:audit:";
@@ -72,6 +72,21 @@ export function evaluateFlagControl(doc: OperationalControlDocument, provider: F
 		retryAfter: selected?.value.expiresAt ?? null,
 		wouldBlock: selected?.value.state === "disabled",
 	};
+}
+
+function evaluateControls(doc: OperationalControlDocument, ids: ControlId[], now: Date): EffectiveControl {
+	let selected: { id: ControlId; value: OperationalControlValue } | null = null;
+	for (const id of ids) {
+		const value = effectiveValue(doc.controls[id], now);
+		if (!selected || STATE_RANK[value.state] > STATE_RANK[selected.value.state]) selected = { id, value };
+	}
+	return { state: selected?.value.state ?? "enabled", controlId: selected?.value.state === "enabled" ? null : selected?.id ?? null, revision: doc.revision, effectiveAt: selected?.value.activatedAt ?? null, retryAfter: selected?.value.expiresAt ?? null, wouldBlock: selected?.value.state === "disabled" };
+}
+
+export function evaluateBeachEventsControl(doc: OperationalControlDocument, now = new Date(), provider?: BeachEventProvider): EffectiveControl {
+	const ids: ControlId[] = ["global.liveData", "domains.beachEvents"];
+	if (provider) ids.push(provider === "gulfShoresEvents" ? "providers.gulfShoresEvents" : "providers.orangeBeachEvents");
+	return evaluateControls(doc, ids, now);
 }
 
 export async function persistTransition(env: Env, current: OperationalControlDocument, next: OperationalControlDocument, audit: OperationalControlAudit): Promise<void> {

@@ -48,7 +48,7 @@ describe("operational control routes", () => {
 		const doc = defaultOperationalControl(new Date("2026-07-21T20:00:00.000Z"));
 		const h = memoryEnv(doc);
 		expect((await worker.fetch(new Request("https://example.com/admin/operational-control"), h.env)).status).toBe(403);
-		const body = { controlId: "providers.gulfShoresFlags", state: "disabled", reasonCode: "verification_failed", operatorReason: "Official value cannot be verified", expiresAt: "2026-07-22T20:00:00.000Z" };
+		const body = { controlId: "providers.gulfShoresFlags", state: "disabled", reasonCode: "verification_failed", operatorReason: "Official value cannot be verified", expiresAt: "2026-08-22T20:00:00.000Z" };
 		expect((await worker.fetch(new Request("https://example.com/admin/operational-control", { method: "PATCH", headers: adminHeaders("wrong"), body: JSON.stringify(body) }), h.env)).status).toBe(412);
 		const response = await worker.fetch(new Request("https://example.com/admin/operational-control", { method: "PATCH", headers: adminHeaders(doc.revision), body: JSON.stringify(body) }), h.env);
 		expect(response.status).toBe(200);
@@ -61,7 +61,7 @@ describe("operational control routes", () => {
 	it("rejects unknown fields and requires reason and expiry", async () => {
 		const doc = defaultOperationalControl(); const h = memoryEnv(doc);
 		for (const body of [
-			{ controlId: "domains.beachFlags", state: "disabled", reasonCode: "incident_response", operatorReason: "x", expiresAt: "2026-07-22T20:00:00.000Z", extra: true },
+			{ controlId: "domains.beachFlags", state: "disabled", reasonCode: "incident_response", operatorReason: "x", expiresAt: "2026-08-22T20:00:00.000Z", extra: true },
 			{ controlId: "domains.beachFlags", state: "disabled", reasonCode: "incident_response", operatorReason: "x" },
 		]) expect((await worker.fetch(new Request("https://example.com/admin/operational-control", { method: "PATCH", headers: adminHeaders(doc.revision), body: JSON.stringify(body) }), h.env)).status).toBe(400);
 	});

@@ -1,8 +1,11 @@
 export const CONTROL_IDS = [
 	"global.liveData",
 	"domains.beachFlags",
+	"domains.beachEvents",
 	"providers.gulfShoresFlags",
 	"providers.orangeBeachFlags",
+	"providers.gulfShoresEvents",
+	"providers.orangeBeachEvents",
 ] as const;
 
 export type ControlId = typeof CONTROL_IDS[number];
@@ -53,6 +56,7 @@ export interface OperationalControlAudit {
 }
 
 export type FlagProvider = "gulfShoresFlags" | "orangeBeachFlags";
+export type BeachEventProvider = "gulfShoresEvents" | "orangeBeachEvents";
 export type AvailabilityReason = "temporarily_disabled" | "stale" | "provider_unavailable" | "validation_failed";
 
 export interface EffectiveControl {

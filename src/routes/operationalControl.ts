@@ -1,6 +1,6 @@
 import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
-import { AUDIT_PREFIX, SNAPSHOT_PREFIX, actorLabel, defaultOperationalControl, evaluateFlagControl, parseOperationalControl, persistTransition, readOperationalControl } from "../operationalControl/store";
+import { AUDIT_PREFIX, SNAPSHOT_PREFIX, actorLabel, defaultOperationalControl, evaluateBeachEventsControl, evaluateFlagControl, parseOperationalControl, persistTransition, readOperationalControl } from "../operationalControl/store";
 import { CONTROL_IDS, type ControlId, type ControlState, type OperationalControlAudit, type OperationalControlDocument, type OperationalControlValue } from "../operationalControl/types";
 
 const REASONS = new Set(["source_format_change", "verification_failed", "provider_outage", "data_integrity", "incident_response", "manual_restore", "rollback"]);
@@ -11,7 +11,7 @@ function publicConfig(doc: OperationalControlDocument, now: Date) {
 	const gulf = evaluateFlagControl(doc, "gulfShoresFlags", now);
 	const orange = evaluateFlagControl(doc, "orangeBeachFlags", now);
 	const status = gulf.state === "disabled" && orange.state === "disabled" ? "unavailable" : gulf.state === "disabled" || orange.state === "disabled" ? "partial" : "available";
-	return { schemaVersion: 1, controlRevision: doc.revision, generatedAt: now.toISOString(), cacheUntil: new Date(now.valueOf() + 30_000).toISOString(), domains: { beachFlags: status }, providers: { gulfShoresFlags: gulf.state, orangeBeachFlags: orange.state }, versionPolicy: doc.versionPolicy };
+	return { schemaVersion: 1, controlRevision: doc.revision, generatedAt: now.toISOString(), cacheUntil: new Date(now.valueOf() + 30_000).toISOString(), domains: { beachFlags: status, beachEvents: evaluateBeachEventsControl(doc, now).state }, providers: { gulfShoresFlags: gulf.state, orangeBeachFlags: orange.state }, versionPolicy: doc.versionPolicy };
 }
 
 export async function handleAppConfiguration(env: Env, now = new Date()): Promise<Response> {
@@ -20,7 +20,7 @@ export async function handleAppConfiguration(env: Env, now = new Date()): Promis
 
 export async function handleOperationalControlGet(env: Env, now = new Date()): Promise<Response> {
 	const doc = await readOperationalControl(env, now);
-	return respond({ configuration: doc, effective: { gulfShoresFlags: evaluateFlagControl(doc, "gulfShoresFlags", now), orangeBeachFlags: evaluateFlagControl(doc, "orangeBeachFlags", now) } });
+	return respond({ configuration: doc, effective: { gulfShoresFlags: evaluateFlagControl(doc, "gulfShoresFlags", now), orangeBeachFlags: evaluateFlagControl(doc, "orangeBeachFlags", now), beachEvents: evaluateBeachEventsControl(doc, now) } });
 }
 
 function validText(value: unknown, max: number): value is string { return typeof value === "string" && value.trim().length > 0 && value.length <= max && !/[<>\u0000-\u001f\u007f]/.test(value); }

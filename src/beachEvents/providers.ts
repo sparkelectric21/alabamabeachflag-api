@@ -1,0 +1,38 @@
+export const BEACH_EVENT_PROVIDERS = [
+	{
+		id: "gulfShoresCity",
+		name: "City of Gulf Shores Special Events",
+		feedURL: "https://www.gulfshoresal.gov/common/modules/iCalendar/iCalendar.aspx?catID=44&feed=calendar",
+		mode: "enabled" as const,
+		authority: "Official City of Gulf Shores",
+		cadence: "Every 6 hours",
+		notes: "Official CivicEngage iCalendar subscription. Only exact approved beach venues are retained.",
+	},
+	{
+		id: "orangeBeachParks",
+		name: "City of Orange Beach Parks and Recreation",
+		feedURL: "https://www.orangebeachal.gov/common/modules/iCalendar/iCalendar.aspx?catID=34&feed=calendar",
+		mode: "enabled" as const,
+		authority: "Official City of Orange Beach",
+		cadence: "Every 6 hours",
+		notes: "Official CivicEngage iCalendar category. Citywide and inland events are rejected by exact matching.",
+	},
+	{
+		id: "gulfStatePark",
+		name: "Gulf State Park Activities Calendar",
+		feedURL: "https://www.alapark.com/parks/gulf-state-park/activities-calendar",
+		mode: "disabled" as const,
+		authority: "Official Alabama State Parks",
+		cadence: "Not automated",
+		notes: "Embedded third-party calendar has no verified structured public feed. Adapter boundary retained; scraping disabled.",
+	},
+	{
+		id: "tourismCalendar",
+		name: "Gulf Shores & Orange Beach Tourism Calendar",
+		feedURL: "https://www.gulfshores.com/events-calendar/",
+		mode: "disabled" as const,
+		authority: "Tourism organization",
+		cadence: "Not automated",
+		notes: "Permission required. Scraping and undocumented endpoints are prohibited.",
+	},
+] as const;
