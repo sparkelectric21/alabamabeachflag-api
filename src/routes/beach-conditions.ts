@@ -3,7 +3,11 @@ import {
 	readCache,
 } from "../services/cache/kv";
 import type { Env } from "../types";
-import { classifyDirectObservation, directObservationAgeMs } from "../services/waterTemperature/freshness";
+import {
+	classifyDirectObservation,
+	directObservationAgeMs,
+	sourceFreshnessThresholds,
+} from "../services/waterTemperature/freshness";
 
 export function withCurrentWaterTemperatureFreshness(payload: unknown, now = new Date()): unknown {
 	if (!payload || typeof payload !== "object") return payload;
@@ -18,7 +22,16 @@ export function withCurrentWaterTemperatureFreshness(payload: unknown, now = new
 			if (!water || typeof water !== "object") return item;
 			const observation = water as Record<string, unknown>;
 			if (typeof observation.observedAt !== "string") return { ...beach, waterTemperature: null };
-			const freshness = classifyDirectObservation(observation.observedAt, now);
+			const thresholds = sourceFreshnessThresholds(
+				typeof observation.provider === "string" ? observation.provider : "",
+				typeof observation.stationId === "string" ? observation.stationId : "",
+			);
+			const freshness = classifyDirectObservation(
+				observation.observedAt,
+				now,
+				thresholds.freshAfterMinutes * 60_000,
+				thresholds.unavailableAfterMinutes * 60_000,
+			);
 			if (freshness !== "current" && freshness !== "stale") return { ...beach, waterTemperature: null };
 			return {
 				...beach,
@@ -26,8 +39,8 @@ export function withCurrentWaterTemperatureFreshness(payload: unknown, now = new
 					...observation,
 					freshnessStatus: freshness,
 					ageMinutes: Math.max(0, Math.round((directObservationAgeMs(observation.observedAt, now) ?? 0) / 60_000)),
-					staleAfterMinutes: 120,
-					unavailableAfterMinutes: 360,
+					staleAfterMinutes: thresholds.freshAfterMinutes,
+					unavailableAfterMinutes: thresholds.unavailableAfterMinutes,
 				},
 			};
 		}),

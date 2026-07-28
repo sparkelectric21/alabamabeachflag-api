@@ -6,14 +6,28 @@ import type { Env } from "../src/types";
 const testEnv = {} as Env;
 
 describe("cached water-temperature serialization", () => {
-	const payload = (observedAt: string) => ({ beachConditions: [{ beachId: "test", waterTemperature: { temperature: 84, temperatureUnit: "F", observedAt, provider: "ndbc", stationId: "PPTA1" } }] });
+	const payload = (observedAt: string, provider = "", stationId = "") => ({ beachConditions: [{ beachId: "test", waterTemperature: { temperature: 84, temperatureUnit: "F", observedAt, provider, stationId } }] });
 	const water = (value: unknown) => (value as { beachConditions: Array<{ waterTemperature: Record<string, unknown> | null }> }).beachConditions[0].waterTemperature;
 	const now = new Date("2026-07-20T18:00:00.000Z");
 
-	it("reclassifies cached observations at the current and stale boundaries", () => {
+	it("reclassifies legacy cached observations at the default boundaries", () => {
 		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T16:00:00.000Z"), now))).toMatchObject({ freshnessStatus: "current", ageMinutes: 120 });
 		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T15:59:59.999Z"), now))).toMatchObject({ freshnessStatus: "stale", staleAfterMinutes: 120, unavailableAfterMinutes: 360 });
 		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T12:00:00.000Z"), now))).toMatchObject({ freshnessStatus: "stale", ageMinutes: 360 });
+	});
+
+	it("uses the selected source's freshness thresholds", () => {
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T16:30:00.000Z", "ndbc", "PPTA1"), now))).toMatchObject({
+			freshnessStatus: "current",
+			staleAfterMinutes: 90,
+			unavailableAfterMinutes: 180,
+		});
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T16:29:59.999Z", "ndbc", "PPTA1"), now))).toMatchObject({ freshnessStatus: "stale" });
+		expect(water(withCurrentWaterTemperatureFreshness(payload("2026-07-20T14:00:00.000Z", "ndbc", "42357"), now))).toMatchObject({
+			freshnessStatus: "stale",
+			staleAfterMinutes: 120,
+			unavailableAfterMinutes: 240,
+		});
 	});
 
 	it("removes cached observations beyond the hard cutoff or with invalid timestamps", () => {
