@@ -24,7 +24,7 @@ describe("per-beach Vibrio coverage policy", () => {
 
 	it("uses separate general-temperature and Vibrio station policies", () => {
 		const gulfShores = beach("gulf-shores-public-beach");
-		expect(gulfShores.waterTemperature?.sources.map(({ stationId }) => stationId)).toEqual(["PPTA1"]);
+		expect(gulfShores.waterTemperature?.sources.map(({ stationId }) => stationId)).toEqual(["42012", "PPTA1"]);
 		expect(gulfShores.vibrioConditions).toMatchObject({
 			eligible: true,
 			waterTemperature: { sources: [
@@ -33,9 +33,9 @@ describe("per-beach Vibrio coverage policy", () => {
 		});
 	});
 
-	it("uses only DPHA1 for Fort Morgan water temperature", () => {
+	it("keeps Fort Morgan's general hierarchy separate from its Vibrio source", () => {
 		const fortMorgan = beach("fort-morgan-public-beach");
-		expect(fortMorgan.waterTemperature?.sources.map(({ stationId }) => stationId)).toEqual(["DPHA1"]);
+		expect(fortMorgan.waterTemperature?.sources.map(({ stationId }) => stationId)).toEqual(["42357", "DPHA1", "42012"]);
 		if (!fortMorgan.vibrioConditions.eligible) throw new Error("Fort Morgan unexpectedly excluded");
 		expect(fortMorgan.vibrioConditions.waterTemperature.sources.map(({ stationId }) => stationId)).toEqual(["DPHA1"]);
 	});

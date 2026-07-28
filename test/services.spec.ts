@@ -46,8 +46,18 @@ describe("NDBC water temperatures", () => {
 		)));
 
 		await expect(fetchNDBCWaterTemperature("TEST")).rejects.toThrow(
-			"Invalid water temperature",
+			"No valid water temperature",
 		);
+	});
+
+	it("scans past newer missing WTMP rows to the newest valid temperature row", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 15 00 MM\n2026 07 06 14 30 28.5\n",
+			{ status: 200, headers: { "Content-Type": "text/plain" } },
+		)));
+		const result = await fetchNDBCWaterTemperature("TEST");
+		expect(result.temperature).toBe(83);
+		expect(result.observedAt).toBe("2026-07-06T14:30:00.000Z");
 	});
 });
 

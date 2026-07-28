@@ -4,8 +4,27 @@ export const DIRECT_OBSERVATION_FUTURE_TOLERANCE_MS = 10 * 60 * 1_000;
 
 export type DirectObservationFreshness = "current" | "stale" | "unavailable" | "invalid" | "future";
 
-export function directObservationMaxAgeMs(_provider: string, _stationId: string): number {
-	return DIRECT_OBSERVATION_MAX_AGE_MS;
+export interface SourceFreshnessThresholds {
+	freshAfterMinutes: number;
+	unavailableAfterMinutes: number;
+}
+
+const SOURCE_THRESHOLDS: Record<string, SourceFreshnessThresholds> = {
+	"ndbc:42012": { freshAfterMinutes: 60, unavailableAfterMinutes: 180 },
+	"ndbc:PPTA1": { freshAfterMinutes: 90, unavailableAfterMinutes: 180 },
+	"ndbc:DPHA1": { freshAfterMinutes: 90, unavailableAfterMinutes: 180 },
+	"ndbc:42357": { freshAfterMinutes: 120, unavailableAfterMinutes: 240 },
+};
+
+export function sourceFreshnessThresholds(provider: string, stationId: string): SourceFreshnessThresholds {
+	return SOURCE_THRESHOLDS[`${provider}:${stationId}`] ?? {
+		freshAfterMinutes: DIRECT_OBSERVATION_MAX_AGE_MS / 60_000,
+		unavailableAfterMinutes: DIRECT_OBSERVATION_UNAVAILABLE_AFTER_MS / 60_000,
+	};
+}
+
+export function directObservationMaxAgeMs(provider: string, stationId: string): number {
+	return sourceFreshnessThresholds(provider, stationId).freshAfterMinutes * 60_000;
 }
 
 export function directObservationAgeMs(observedAt: string, now: Date): number | undefined {

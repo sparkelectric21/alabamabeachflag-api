@@ -68,25 +68,27 @@ export async function fetchNDBCWaterTemperature(
 	}
 
 	const headers = lines[0].trim().split(/\s+/);
-	const values = lines[2].trim().split(/\s+/);
-
 	const wtIndex = headers.indexOf("WTMP");
 
 	if (wtIndex === -1) {
 		throw new Error(`WTMP column not found for station ${stationId}`);
 	}
 
-	const waterTempC = Number(values[wtIndex]);
-
-	if (!Number.isFinite(waterTempC) || waterTempC < -5 || waterTempC > 45) {
-		throw new Error(`Invalid water temperature for station ${stationId}`);
+	let selected: { values: string[]; waterTempC: number } | undefined;
+	for (const line of lines.slice(2)) {
+		const values = line.trim().split(/\s+/);
+		const waterTempC = Number(values[wtIndex]);
+		if (values.length < headers.length || !Number.isFinite(waterTempC) || waterTempC < -5 || waterTempC > 45) continue;
+		selected = { values, waterTempC };
+		break;
 	}
+	if (!selected) throw new Error(`No valid water temperature for station ${stationId}`);
 
-	const waterTempF = Math.round((waterTempC * 9) / 5 + 32);
+	const waterTempF = Math.round((selected.waterTempC * 9) / 5 + 32);
 
 	return {
 		temperature: waterTempF,
 		temperatureUnit: "F",
-		observedAt: parseNDBCTimestamp(headers, values),
+		observedAt: parseNDBCTimestamp(headers, selected.values),
 	};
 }

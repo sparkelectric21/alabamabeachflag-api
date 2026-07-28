@@ -7,8 +7,7 @@ import { fetchNDBCWaterTemperature } from "./ndbcClient";
 import {
 	classifyDirectObservation,
 	directObservationAgeMs,
-	DIRECT_OBSERVATION_MAX_AGE_MS,
-	DIRECT_OBSERVATION_UNAVAILABLE_AFTER_MS,
+	sourceFreshnessThresholds,
 } from "./freshness";
 import { logInfo, logWarn } from "../../utils/logger";
 
@@ -27,6 +26,13 @@ export interface ClassifiedWaterTemperatureObservation extends WaterTemperatureO
 	ageMinutes: number;
 	staleAfterMinutes: number;
 	unavailableAfterMinutes: number;
+	ingestedAt: string;
+	sourceName?: string;
+	sourceType: "observation";
+	environment?: string;
+	sensorDepthM?: number;
+	isModeled: false;
+	selectionReason: string;
 }
 
 async function fetchFromSource(
@@ -46,6 +52,7 @@ async function fetchFromSource(
 
 function withFreshness(
 	observation: WaterTemperatureObservationWithSource,
+	source: WaterTemperatureSource,
 	now: Date,
 	freshnessStatus: "current" | "stale",
 ): ClassifiedWaterTemperatureObservation {
@@ -53,8 +60,17 @@ function withFreshness(
 		...observation,
 		freshnessStatus,
 		ageMinutes: Math.max(0, Math.round((directObservationAgeMs(observation.observedAt, now) ?? 0) / 60_000)),
-		staleAfterMinutes: DIRECT_OBSERVATION_MAX_AGE_MS / 60_000,
-		unavailableAfterMinutes: DIRECT_OBSERVATION_UNAVAILABLE_AFTER_MS / 60_000,
+		staleAfterMinutes: sourceFreshnessThresholds(observation.provider, observation.stationId).freshAfterMinutes,
+		unavailableAfterMinutes: sourceFreshnessThresholds(observation.provider, observation.stationId).unavailableAfterMinutes,
+		ingestedAt: now.toISOString(),
+		sourceName: source.sourceName,
+		sourceType: "observation",
+		environment: source.environment,
+		sensorDepthM: source.sensorDepthM,
+		isModeled: false,
+		selectionReason: freshnessStatus === "current"
+			? "Highest-priority fresh approved observation"
+			: "Latest approved observation; no fresh approved source was available",
 	};
 }
 
@@ -116,10 +132,16 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			const observation = await request;
-			const freshness = classifyDirectObservation(observation.observedAt, now);
+			const thresholds = sourceFreshnessThresholds(source.provider, source.stationId);
+			const freshness = classifyDirectObservation(
+				observation.observedAt,
+				now,
+				thresholds.freshAfterMinutes * 60_000,
+				thresholds.unavailableAfterMinutes * 60_000,
+			);
 
 			if (freshness === "current") {
-				const selected = withFreshness(observation, now, "current");
+				const selected = withFreshness(observation, source, now, "current");
 				if (staleCandidates.length > 0) {
 					logInfo("Water Temperature", "Skipped stale candidate for fresh fallback", {
 						staleCandidates: staleCandidates.map((candidate) => `${candidate.provider}:${candidate.stationId}`).join(","),
@@ -133,9 +155,9 @@ export async function fetchLatestWaterTemperature(
 			}
 
 			if (freshness === "stale") {
-				staleCandidates.push(withFreshness(observation, now, "stale"));
+				staleCandidates.push(withFreshness(observation, source, now, "stale"));
 			} else if (freshness === "unavailable") {
-				const rejected = withFreshness(observation, now, "stale");
+				const rejected = withFreshness(observation, source, now, "stale");
 				logWarn("Water Temperature", "Observation rejected beyond hard cutoff", freshnessLogFields(rejected));
 			} else {
 				logWarn("Water Temperature", "Approved source candidate failed", {

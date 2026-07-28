@@ -4,6 +4,9 @@ export interface WaterTemperatureSourceConfiguration {
 	sources: Array<{
 		provider: "coops" | "ndbc";
 		stationId: string;
+		sourceName?: string;
+		environment?: "inlet" | "nearshore" | "offshore" | "bay_entrance";
+		sensorDepthM?: number;
 	}>;
 }
 
@@ -142,7 +145,8 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "ndbc", stationId: "PPTA1", sourceName: "NOAA NDBC Perdido Pass (PPTA1)", environment: "inlet" },
+				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
 			],
 		},
 		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
@@ -190,7 +194,8 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
+				{ provider: "ndbc", stationId: "PPTA1", sourceName: "NOAA NDBC Perdido Pass (PPTA1)", environment: "inlet" },
 			],
 		},
 		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
@@ -238,7 +243,8 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "PPTA1" },
+				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
+				{ provider: "ndbc", stationId: "PPTA1", sourceName: "NOAA NDBC Perdido Pass (PPTA1)", environment: "inlet" },
 			],
 		},
 		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
@@ -377,7 +383,9 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
+				{ provider: "ndbc", stationId: "DPHA1", sourceName: "NOAA NDBC Dauphin Island (DPHA1)", environment: "bay_entrance" },
+				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
 			],
 		},
 		tide: { stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },

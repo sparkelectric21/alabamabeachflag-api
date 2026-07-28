@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { beaches } from "../src/config/BeachRegistry";
 import { fetchTideEvents } from "../src/services/tide/client";
-import { clearTideMemoryCacheForTests, deriveTideDirection, fetchTidePrediction, selectNextTideEvent } from "../src/services/tide/service";
+import { clearTideMemoryCacheForTests, deriveTideDirection, fetchTidePrediction, fitTideCurveFromEvents, selectNextTideEvent } from "../src/services/tide/service";
 import { beachDate, parseNoaaLocalTime } from "../src/services/tide/time";
 
 afterEach(() => {
@@ -96,7 +96,7 @@ describe("NOAA tide parsing and dates", () => {
 		});
 	});
 
-	it("returns subordinate high/low data without fabricating a curve", async () => {
+	it("fits a monotonic display curve through subordinate high/low data", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ predictions: [
 			{ t: "2026-07-18 06:00", v: "0.2", type: "L" },
 			{ t: "2026-07-18 16:00", v: "1.1", type: "H" },
@@ -105,9 +105,20 @@ describe("NOAA tide parsing and dates", () => {
 			{ stationId: "8734635", stationName: "Mobile Point (Fort Morgan), AL", stationType: "subordinate" },
 			new Date("2026-07-18T15:00:00Z"),
 		);
-		expect(tide.points).toEqual([]);
-		expect(tide.direction).toBeUndefined();
+		expect(tide.curveMethod).toBe("fittedFromHighLow");
+		expect(tide.points[0]).toEqual({ time: tide.events[0].time, height: tide.events[0].height });
+		expect(tide.points.at(-1)).toEqual({ time: tide.events.at(-1)?.time, height: tide.events.at(-1)?.height });
+		expect(tide.points.every((point) => point.height >= 0.2 && point.height <= 1.1)).toBe(true);
+		expect(tide.direction).toBe("rising");
 		expect(tide.nextEvent?.type).toBe("high");
+	});
+
+	it("does not fit incomplete or nonalternating events", () => {
+		expect(fitTideCurveFromEvents([{ type: "high", time: "2026-07-18T12:00:00Z", height: 1 }])).toEqual([]);
+		expect(fitTideCurveFromEvents([
+			{ type: "high", time: "2026-07-18T12:00:00Z", height: 1 },
+			{ type: "high", time: "2026-07-18T18:00:00Z", height: 1.1 },
+		])).toEqual([]);
 	});
 
 	it("uses expired same-day cached events when a refresh fails", async () => {

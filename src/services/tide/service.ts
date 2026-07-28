@@ -7,6 +7,28 @@ import { beachDate, noaaDate } from "./time";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const cache = new Map<string, { expiresAt: number; value: TidePrediction }>();
 
+export function fitTideCurveFromEvents(events: TideEvent[], intervalMinutes = 15): TidePredictionPoint[] {
+	if (events.length < 2 || events.some((event, index) =>
+		index > 0 && (event.type === events[index - 1].type || Date.parse(event.time) <= Date.parse(events[index - 1].time))
+	)) return [];
+	const points: TidePredictionPoint[] = [];
+	for (let index = 0; index < events.length - 1; index++) {
+		const left = events[index];
+		const right = events[index + 1];
+		const start = Date.parse(left.time);
+		const end = Date.parse(right.time);
+		if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+		if (index === 0) points.push({ time: left.time, height: left.height });
+		for (let time = start + intervalMinutes * 60_000; time < end; time += intervalMinutes * 60_000) {
+			const progress = (time - start) / (end - start);
+			const eased = (1 - Math.cos(Math.PI * progress)) / 2;
+			points.push({ time: new Date(time).toISOString(), height: left.height + (right.height - left.height) * eased });
+		}
+		points.push({ time: right.time, height: right.height });
+	}
+	return points;
+}
+
 export function deriveTideDirection(points: TidePredictionPoint[], now: Date): TideDirection | undefined {
 	if (points.length < 2) return undefined;
 	const after = points.findIndex((point) => Date.parse(point.time) >= now.getTime());
@@ -48,15 +70,20 @@ export async function fetchTidePrediction(
 	}
 
 	let points: TidePredictionPoint[] = [];
+	let curveMethod: TidePrediction["curveMethod"] = "eventOnly";
 	if (configuration.stationType === "harmonic") {
 		try {
 			points = await fetchTidePoints(configuration.stationId, date);
+			curveMethod = "noaaInterval";
 		} catch (error) {
 			logWarn("Tide", "Interval predictions unavailable; preserving high/low events", {
 				stationId: configuration.stationId, stationType: configuration.stationType,
 				reason: "interval_points_failed", error: error instanceof Error ? error.message : String(error),
 			});
 		}
+	} else {
+		points = fitTideCurveFromEvents(events);
+		if (points.length >= 2) curveMethod = "fittedFromHighLow";
 	}
 	if (!events.every((event) => beachDate(new Date(event.time)) === predictionDate) ||
 		!points.every((point) => beachDate(new Date(point.time)) === predictionDate)) {
@@ -65,7 +92,7 @@ export async function fetchTidePrediction(
 	const fetchedAt = new Date();
 	const value: TidePrediction = {
 		...configuration, predictionDate, timeZone: "America/Chicago", datum: "MLLW", units: "feet",
-		points, events, direction: deriveTideDirection(points, now), nextEvent: selectNextTideEvent(events, now),
+		points, events, curveMethod, direction: deriveTideDirection(points, now), nextEvent: selectNextTideEvent(events, now),
 		fetchedAt: fetchedAt.toISOString(),
 		stationUrl: `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${configuration.stationId}`,
 	};

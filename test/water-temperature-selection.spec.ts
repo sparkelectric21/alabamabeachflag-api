@@ -5,6 +5,7 @@ import {
 	fetchLatestWaterTemperature,
 	type WaterTemperatureObservationWithSource,
 } from "../src/services/waterTemperature/service";
+import { sourceFreshnessThresholds } from "../src/services/waterTemperature/freshness";
 
 const now = new Date("2026-07-17T18:00:00.000Z");
 const sources = (...items: Array<["ndbc" | "coops", string]>): NonNullable<BeachDefinition["waterTemperature"]> => ({
@@ -32,8 +33,17 @@ const classified = (
 	...observation(provider, stationId, observedAt, temperature),
 	freshnessStatus,
 	ageMinutes: Math.max(0, Math.round((now.getTime() - new Date(observedAt).getTime()) / 60_000)),
-	staleAfterMinutes: 120,
-	unavailableAfterMinutes: 360,
+	staleAfterMinutes: sourceFreshnessThresholds(provider, stationId).freshAfterMinutes,
+	unavailableAfterMinutes: sourceFreshnessThresholds(provider, stationId).unavailableAfterMinutes,
+	ingestedAt: now.toISOString(),
+	sourceName: undefined,
+	sourceType: "observation",
+	environment: undefined,
+	sensorDepthM: undefined,
+	isModeled: false,
+	selectionReason: freshnessStatus === "current"
+		? "Highest-priority fresh approved observation"
+		: "Latest approved observation; no fresh approved source was available",
 });
 
 function loader(entries: Record<string, WaterTemperatureObservationWithSource | Error>) {
@@ -58,15 +68,15 @@ describe("water-temperature source selection", () => {
 		expect(result).toEqual(classified("ndbc", "PPTA1", "2026-07-17T17:00:00.000Z", "current"));
 		expect(loadSource).toHaveBeenCalledTimes(1);
 		expect(log).toHaveBeenCalledWith(expect.stringMatching(
-			/Current observation accepted.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T17:00:00.000Z.*ageMinutes=60.*staleAfterMinutes=120.*unavailableAfterMinutes=360/,
+			/Current observation accepted.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T17:00:00.000Z.*ageMinutes=60.*staleAfterMinutes=90.*unavailableAfterMinutes=180/,
 		));
 		log.mockRestore();
 	});
 
 	it.each([
-		["exactly 120 minutes as current", "2026-07-17T16:00:00.000Z", "current"],
-		["immediately beyond 120 minutes as stale", "2026-07-17T15:59:59.999Z", "stale"],
-		["exactly 360 minutes as stale", "2026-07-17T12:00:00.000Z", "stale"],
+		["exactly 90 minutes as current", "2026-07-17T16:30:00.000Z", "current"],
+		["immediately beyond 90 minutes as stale", "2026-07-17T16:29:59.999Z", "stale"],
+		["exactly 180 minutes as stale", "2026-07-17T15:00:00.000Z", "stale"],
 	] as const)("classifies PPTA1 %s", async (_case, observedAt, freshnessStatus) => {
 		const expected = observation("ndbc", "PPTA1", observedAt);
 		const result = await fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), {
@@ -77,14 +87,14 @@ describe("water-temperature source selection", () => {
 		expect(result).toEqual(classified("ndbc", "PPTA1", observedAt, freshnessStatus));
 	});
 
-	it("rejects PPTA1 observations immediately beyond 360 minutes", async () => {
+	it("rejects PPTA1 observations immediately beyond 180 minutes", async () => {
 		const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-		const loadSource = async () => observation("ndbc", "PPTA1", "2026-07-17T11:59:59.999Z");
+		const loadSource = async () => observation("ndbc", "PPTA1", "2026-07-17T14:59:59.999Z");
 
 		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource }))
 			.rejects.toThrow("No approved usable water temperature source");
 		expect(log).toHaveBeenCalledWith(expect.stringMatching(
-			/Observation rejected beyond hard cutoff.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T11:59:59.999Z.*ageMinutes=360.*staleAfterMinutes=120.*unavailableAfterMinutes=360/,
+			/Observation rejected beyond hard cutoff.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T14:59:59.999Z.*ageMinutes=180.*staleAfterMinutes=90.*unavailableAfterMinutes=180/,
 		));
 		log.mockRestore();
 	});
@@ -141,7 +151,7 @@ describe("water-temperature source selection", () => {
 			{ now, loadSource },
 		)).resolves.toEqual(classified("ndbc", "PPTA1", preferred.observedAt, "stale", 82));
 		expect(log).toHaveBeenCalledWith(expect.stringMatching(
-			/Stale observation accepted.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T15:00:00.000Z.*ageMinutes=180.*staleAfterMinutes=120.*unavailableAfterMinutes=360/,
+			/Stale observation accepted.*provider=ndbc.*stationId=PPTA1.*observedAt=2026-07-17T15:00:00.000Z.*ageMinutes=180.*staleAfterMinutes=90.*unavailableAfterMinutes=180/,
 		));
 		log.mockRestore();
 	});
@@ -261,12 +271,12 @@ describe("water-temperature source selection", () => {
 		expect(fortMorgan).toMatchObject({ stationId: "DPHA1", temperature: 86 });
 	});
 
-	it("configures the sole-source beaches with only their approved station", () => {
+	it("configures each beach with its approved observation hierarchy", () => {
 		const expected = new Map([
-			["gulf-shores-public-beach", ["ndbc:PPTA1"]],
-			["cotton-bayou", ["ndbc:PPTA1"]],
-			["gulf-state-park-pavilion", ["ndbc:PPTA1"]],
-			["fort-morgan-public-beach", ["ndbc:DPHA1"]],
+			["gulf-shores-public-beach", ["ndbc:42012", "ndbc:PPTA1"]],
+			["cotton-bayou", ["ndbc:PPTA1", "ndbc:42012"]],
+			["gulf-state-park-pavilion", ["ndbc:42012", "ndbc:PPTA1"]],
+			["fort-morgan-public-beach", ["ndbc:42357", "ndbc:DPHA1", "ndbc:42012"]],
 			["dauphin-island-public-beach", ["coops:8735180"]],
 		]);
 

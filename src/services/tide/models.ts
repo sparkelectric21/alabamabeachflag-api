@@ -1,5 +1,6 @@
 export type TideDirection = "rising" | "falling";
 export type TideEventType = "high" | "low";
+export type TideCurveMethod = "noaaInterval" | "fittedFromHighLow" | "eventOnly";
 
 export interface TidePredictionPoint {
 	time: string;
@@ -20,6 +21,7 @@ export interface TidePrediction {
 	units: "feet";
 	points: TidePredictionPoint[];
 	events: TideEvent[];
+	curveMethod: TideCurveMethod;
 	direction?: TideDirection;
 	nextEvent?: TideEvent;
 	fetchedAt: string;
