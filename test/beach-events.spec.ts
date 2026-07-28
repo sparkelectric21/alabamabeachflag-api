@@ -65,6 +65,18 @@ describe("event lifecycle", () => {
 		expect(validateManualEvent({ title: "x", beachId: "cotton-bayou", venue: "Cotton Bayou Public Beach", startAt: "2026-08-01T10:00:00Z", endAt: "2026-08-01T11:00:00Z", eventType: "unknown", impactLevel: "loud", status: "invalid", sourceName: "Organizer", sourceURL: "http://example.com", bannerTitle: "x", bannerMessage: "x" })).toEqual(expect.arrayContaining(["eventType", "impactLevel", "status", "sourceURL"]));
 	});
 
+	it("allows an ended event to transition to expired but rejects premature expiry", () => {
+		const event = {
+			title: "Cleanup", beachId: "cotton-bayou", venue: "Cotton Bayou Public Beach",
+			startAt: "2026-08-01T10:00:00Z", endAt: "2026-08-01T11:00:00Z",
+			eventType: "beachCleanup", impactLevel: "informational", status: "expired",
+			sourceName: "Organizer", sourceURL: "https://example.com/event",
+			bannerTitle: "Beach cleanup here today", bannerMessage: "Activity scheduled.",
+		};
+		expect(validateManualEvent(event, new Date("2026-08-01T12:00:00Z"))).toEqual([]);
+		expect(validateManualEvent(event, new Date("2026-08-01T10:30:00Z"))).toContain("status");
+	});
+
 	it("isolates provider failures and does not write a beach-condition key", async () => {
 		const h = memoryEnv();
 		const fetcher = vi.fn(async () => new Response("down", { status: 503 })) as unknown as typeof fetch;

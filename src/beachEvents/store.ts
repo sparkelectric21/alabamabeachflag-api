@@ -116,11 +116,12 @@ export function validateManualEvent(input: Record<string, unknown>, now = new Da
 	if (!iso(input.startAt) || !iso(input.endAt) || (iso(input.startAt) && iso(input.endAt) && Date.parse(input.endAt) <= Date.parse(input.startAt))) errors.push("dates");
 	if (!EVENT_TYPES.includes(input.eventType as never)) errors.push("eventType");
 	if (!IMPACT_LEVELS.includes(input.impactLevel as never)) errors.push("impactLevel");
-	if (!EVENT_STATUSES.includes(input.status as never) || input.status === "expired") errors.push("status");
+	if (!EVENT_STATUSES.includes(input.status as never)) errors.push("status");
 	if (!safeText(input.sourceName, 160)) errors.push("sourceName");
 	if (!httpsURL(input.sourceURL)) errors.push("sourceURL");
 	if (!safeText(input.bannerTitle, 100) || !safeText(input.bannerMessage, 300)) errors.push("banner");
 	if (iso(input.endAt) && Date.parse(input.endAt) <= now.getTime() && input.status === "published") errors.push("expired");
+	if (iso(input.endAt) && Date.parse(input.endAt) > now.getTime() && input.status === "expired") errors.push("status");
 	return [...new Set(errors)];
 }
 
