@@ -21,9 +21,10 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
-import { handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
+import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
+import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -162,6 +163,24 @@ export default {
 			if (request.method === "GET") return await handleBeachEventsAdminGet(request, env);
 			if (request.method === "POST") return await handleBeachEventsAdminCreate(request, env, identity);
 			return methodNotAllowed("GET, POST");
+		}
+		if (pathname === "/admin/beach-events/notifications") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "PATCH") return methodNotAllowed("PATCH");
+			return await handleBeachActivityNotificationPreferences(request, env, identity);
+		}
+		if (pathname === "/admin/beach-events/notifications/send") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await handleBeachActivityNotificationSend(request, env, identity, "manual");
+		}
+		if (pathname === "/admin/beach-events/notifications/test") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await handleBeachActivityNotificationSend(request, env, identity, "test");
 		}
 		if (pathname === "/admin/beach-events/rules") {
 			const identity = await authenticateAdminRequest(request, env);
@@ -355,6 +374,16 @@ export default {
 				await monitorVerificationReports(env, new Date(controller.scheduledTime));
 			} catch {
 				console.error("[Verification alerts] missing-report monitor failed");
+			}
+
+			try {
+				const scheduledAt = new Date(controller.scheduledTime);
+				const preferences = await readBeachActivityNotificationConfig(env);
+				if (isBeachActivityReminderTime(scheduledAt, preferences.reminderTime)) {
+					await evaluateBeachActivityNotifications(env, scheduledAt, { kind: "reminder" });
+				}
+			} catch {
+				console.error("[Beach activity notifications] reminder evaluation failed");
 			}
 
 			return;

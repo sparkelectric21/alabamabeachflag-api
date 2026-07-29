@@ -7,6 +7,7 @@ import { BEACH_EVENT_PROVIDERS } from "./providers";
 import { BEACH_EVENT_SCHEDULE_DESCRIPTION, nextBeachEventRefresh } from "./schedule";
 import { applyImportedEvents, audit, listEvents, normalizedEvent, saveSnapshot } from "./store";
 import type { BeachEventProviderRefresh, BeachEventRefreshStatus } from "./types";
+import { evaluateBeachActivityNotifications } from "./notifications";
 
 export const REFRESH_STATUS_KEY = "beach-events:v1:refresh-status";
 const RUN_LOCK_MS = 10 * 60 * 1000;
@@ -56,7 +57,8 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		const refresh = { ...running, status: "disabled" as const, completedAt: now.toISOString() };
 		await env.BEACH_DATA.put(REFRESH_STATUS_KEY, JSON.stringify(refresh));
 		if (options.identity) await audit(env, options.identity, "refresh_event_sources", "beach-events", refresh, now);
-		return { outcome: "disabled" as const, providers: [], snapshot: null, refresh };
+		const notification = await evaluateBeachActivityNotifications(env, now, { kind: "immediate", ...(options.identity ? { identity: options.identity } : {}) });
+		return { outcome: "disabled" as const, providers: [], snapshot: null, refresh, notification };
 	}
 
 	const observations = [], providerResults: BeachEventProviderRefresh[] = [];
@@ -133,5 +135,6 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 	};
 	await env.BEACH_DATA.put(REFRESH_STATUS_KEY, JSON.stringify(refresh));
 	if (options.identity) await audit(env, options.identity, "refresh_event_sources", "beach-events", refresh, now);
-	return { outcome: status === "failed" ? "failed" as const : status === "warning" ? "partial" as const : "completed" as const, providers: providerResults, snapshot, refresh };
+	const notification = await evaluateBeachActivityNotifications(env, now, { kind: "immediate", ...(options.identity ? { identity: options.identity } : {}) });
+	return { outcome: status === "failed" ? "failed" as const : status === "warning" ? "partial" as const : "completed" as const, providers: providerResults, snapshot, refresh, notification };
 }

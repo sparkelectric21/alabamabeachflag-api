@@ -42,7 +42,7 @@ export function parseOperationalControl(value: unknown): OperationalControlDocum
 	if (!doc.controls || typeof doc.controls !== "object" || Array.isArray(doc.controls)) return null;
 	const controls = doc.controls as Record<string, unknown>;
 	if (Object.keys(controls).some((id) => !CONTROL_IDS.includes(id as ControlId))) return null;
-	const legacyRequired = CONTROL_IDS.filter((id) => id !== "providers.gulfStateParkEvents" && id !== "providers.orangeBeachCoastalEvents");
+	const legacyRequired = CONTROL_IDS.filter((id) => !["providers.gulfStateParkEvents", "providers.orangeBeachCoastalEvents", "notifications.beachActivity"].includes(id));
 	if (legacyRequired.some((id) => !validControl(controls[id]))) return null;
 	for (const id of CONTROL_IDS) if (controls[id] === undefined) controls[id] = { state: "enabled" };
 	const policy = doc.versionPolicy as Record<string, unknown> | null;
@@ -90,6 +90,10 @@ export function evaluateBeachEventsControl(doc: OperationalControlDocument, now 
 	const ids: ControlId[] = ["global.liveData", "domains.beachEvents"];
 	if (provider) ids.push(`providers.${provider}` as ControlId);
 	return evaluateControls(doc, ids, now);
+}
+
+export function evaluateBeachActivityNotificationsControl(doc: OperationalControlDocument, now = new Date()): EffectiveControl {
+	return evaluateControls(doc, ["global.liveData", "domains.beachEvents", "notifications.beachActivity"], now);
 }
 
 export async function persistTransition(env: Env, current: OperationalControlDocument, next: OperationalControlDocument, audit: OperationalControlAudit): Promise<void> {

@@ -2,6 +2,7 @@ export const CONTROL_IDS = [
 	"global.liveData",
 	"domains.beachFlags",
 	"domains.beachEvents",
+	"notifications.beachActivity",
 	"providers.gulfShoresFlags",
 	"providers.orangeBeachFlags",
 	"providers.gulfShoresEvents",

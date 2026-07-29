@@ -8,9 +8,18 @@ import { beaches } from "../config/BeachRegistry";
 import { readBeachEventRefreshStatus } from "../beachEvents/refresh";
 import { nextBeachEventRefresh } from "../beachEvents/schedule";
 import { beachReferences } from "../beachEvents/beachReference";
+import { evaluateBeachActivityNotifications, readBeachActivityNotificationConfig, readBeachActivityNotificationState, updateBeachActivityNotificationConfig } from "../beachEvents/notifications";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
+
+async function notifyQueueChange(env: Env, now: Date, identity: AdminIdentity): Promise<void> {
+	try {
+		await evaluateBeachActivityNotifications(env, now, { kind: "immediate", identity });
+	} catch (error) {
+		console.error("Beach activity queue-change notification failed", error);
+	}
+}
 
 function visibleSnapshot(snapshot: BeachEventsSnapshot, now: Date): BeachEventsSnapshot {
 	const beaches = Object.fromEntries(
@@ -78,6 +87,11 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 		audit: history.sort((a: any, b: any) => String(b.timestamp).localeCompare(String(a.timestamp))),
 		exclusions: exclusions.sort((a, b) => a.startAt.localeCompare(b.startAt)),
 		coverage,
+		notifications: {
+			configuration: await readBeachActivityNotificationConfig(env),
+			state: await readBeachActivityNotificationState(env),
+			bindingReady: Boolean(env.VERIFICATION_ALERT_EMAIL),
+		},
 		refresh: {
 			...await readBeachEventRefreshStatus(env, now),
 			nextScheduledRefresh: nextBeachEventRefresh(now),
@@ -85,6 +99,16 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 			staleCache: Boolean(await env.BEACH_DATA.get<BeachEventsSnapshot>(SNAPSHOT_KEY, "json").then((snapshot) => snapshot && Date.parse(snapshot.generatedAt) + 6 * 60 * 60 * 1000 < now.getTime())),
 		},
 	});
+}
+
+export async function handleBeachActivityNotificationPreferences(request: Request, env: Env, identity: AdminIdentity): Promise<Response> {
+	return updateBeachActivityNotificationConfig(request, env, identity);
+}
+
+export async function handleBeachActivityNotificationSend(request: Request, env: Env, identity: AdminIdentity, kind: "manual" | "test"): Promise<Response> {
+	const result = await evaluateBeachActivityNotifications(env, new Date(), { kind, identity });
+	const status = result.outcome === "failed" ? 502 : result.outcome === "disabled" || result.outcome === "monitorOnly" ? 409 : result.outcome === "empty" ? 422 : 200;
+	return respond(result, status);
 }
 
 export async function handleBeachEventsAdminCreate(request: Request, env: Env, identity: AdminIdentity, now = new Date()): Promise<Response> {
@@ -136,6 +160,7 @@ export async function handleBeachEventsAdminCreate(request: Request, env: Env, i
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${id}`, JSON.stringify(event));
 	await audit(env, identity, "create_event", id, event, now);
 	await saveSnapshot(env, now);
+	await notifyQueueChange(env, now, identity);
 	return respond({ event }, 201);
 }
 
@@ -155,6 +180,7 @@ export async function handleBeachEventsAdminUpdate(request: Request, env: Env, i
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${id}`, JSON.stringify(next));
 	await audit(env, identity, "update_event", id, changedFields, now);
 	await saveSnapshot(env, now);
+	await notifyQueueChange(env, now, identity);
 	return respond({ event: next });
 }
 
@@ -165,6 +191,7 @@ export async function handleBeachEventsAdminDelete(env: Env, identity: AdminIden
 	await env.BEACH_DATA.delete(`${EVENT_PREFIX}${id}`);
 	await audit(env, identity, "delete_event", id, { title: current.title }, now);
 	await saveSnapshot(env, now);
+	await notifyQueueChange(env, now, identity);
 	return respond({ status: "deleted" });
 }
 
@@ -199,6 +226,7 @@ export async function handleExcludedEventAssign(request: Request, env: Env, iden
 	await env.BEACH_DATA.put(key, JSON.stringify({ ...candidate, suggestedBeachId: beachId, decision: "admin", lastSeenAt: now.toISOString() }), { expirationTtl: 90 * 24 * 60 * 60 });
 	await audit(env, identity, "assign_excluded_candidate", id, { beachId, eventId }, now);
 	await saveSnapshot(env, now);
+	await notifyQueueChange(env, now, identity);
 	return respond({ event }, 201);
 }
 

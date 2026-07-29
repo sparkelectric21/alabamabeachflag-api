@@ -11,6 +11,8 @@ This isolated domain answers whether a scheduled activity is physically happenin
 - `PATCH|DELETE /admin/beach-events/:id` changes a local record or performs a guarded deletion.
 - `POST /admin/beach-events/rules` creates a narrowly scoped decision-memory rule.
 - `POST /admin/beach-events/exclusions/:id` assigns an excluded candidate to a canonical beach and creates a pending-review occurrence.
+- `PATCH /admin/beach-events/notifications` updates the review-notification preferences.
+- `POST /admin/beach-events/notifications/send` sends the current pending-review summary; `/test` verifies delivery without changing event state.
 - `POST /internal/refresh/beach-events` performs an authenticated isolated refresh.
 
 Imported source facts remain nested and unchanged while editable local fields control app presentation. Event states are draft, discovered, pending review, approved, scheduled, published, disregarded, cancelled, expired, and hidden.
@@ -59,6 +61,14 @@ The current Dauphin Island app/backend model represents `dauphin-island-public-b
 The Town calendar is publisher-controlled in the limited sense that the official Town page directly configures the embedded Events Calendar project. The public endpoint is technically structured and currently requires no authentication, but it is not suitable for scheduled ingestion: the vendor terms expressly disallow automated access and systematic retrieval. No provider operational-control switch or 7:00 a.m. job is enabled, no production request is made, and no source descriptions, photographs, or logos are copied. Administrators may continue to create a limited factual event manually, assign it only to an exact represented beach, write independent app copy, attribute the Town, and link to the official Town calendar or event page. Written permission from Events Calendar/inlight labs (and confirmation from the Town if needed) is the condition for revisiting automated integration.
 
 The operational controls `domains.beachEvents`, `providers.gulfShoresEvents`, `providers.orangeBeachEvents`, `providers.gulfStateParkEvents`, and `providers.orangeBeachCoastalEvents` support enabled, disabled, and monitor-only states. Disabling this domain returns an empty disabled response without affecting other app data.
+
+## Review notifications
+
+Beach Activity Review Notifications use the existing production Worker email binding and the allowlisted recipients in `BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS`. `BEACH_ACTIVITY_NOTIFICATIONS_ENABLED` supplies the default master state; protected admin preferences can independently enable the daily reminder and immediate queue-change message and select a 15-minute Central-Time reminder boundary. The production default is 7:15 a.m. Central.
+
+An immediate summary is evaluated after an import refresh and after an administrator creates, edits, deletes, or assigns an event. A stable revision of the pending event IDs and material review fields suppresses duplicate messages. The 15-minute scheduler evaluates the daily reminder in `America/Chicago`; a same-morning message for the same queue revision suppresses the reminder. Empty queues never produce review-summary email. Manual and test sends are explicit one-shot actions and never approve, publish, or otherwise mutate an event.
+
+The summary contains limited factual metadata, high-impact-first ordering, official source links, and links to Review Events, Provider Health, and Operational Control. Delivery is attempted twice before a terminal failure. Configuration changes, sends, retry attempts, suppressions, disabled or monitor-only decisions, and failures are retained in the administrative audit history. Current queue revision, counts, last success/failure, provider error, and duplicate count are persisted for admin observability. Provider Health reports the internal `beach_activity_notifications` provider, while the `notifications.beachActivity` operational control can enable, disable, or monitor the subsystem without affecting beach-event ingestion or publication.
 
 ## Administration and decision memory
 

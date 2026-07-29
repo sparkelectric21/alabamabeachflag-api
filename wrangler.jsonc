@@ -74,6 +74,8 @@
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev",
 		"VERIFICATION_ALERTS_ENABLED": "true",
 		"VERIFICATION_ALERT_ENVIRONMENT": "production",
+		"BEACH_ACTIVITY_NOTIFICATIONS_ENABLED": "true",
+		"BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS": "operations@alabamabeachflag.com",
 		// Temporary: App Store 1.2.0 decodes "double-red", but not canonical "doubleRed".
 		"IOS_1_2_DOUBLE_RED_COMPATIBILITY": "true"
 	},
