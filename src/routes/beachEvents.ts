@@ -12,6 +12,23 @@ import { beachReferences } from "../beachEvents/beachReference";
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
 
+function visibleSnapshot(snapshot: BeachEventsSnapshot, now: Date): BeachEventsSnapshot {
+	const beaches = Object.fromEntries(
+		Object.entries(snapshot.beaches)
+			.map(([beachId, events]) => [beachId, events.filter((event) => isEventVisibleNow(event, now))] as const)
+			.filter(([, events]) => events.length),
+	);
+	const providerIds = new Set(Object.values(beaches).flat().map((event) => event.sourceFacts.providerId));
+	return { ...snapshot, beaches, attribution: snapshot.attribution.filter((source) => providerIds.has(source.providerId)) };
+}
+
+function visibleRevision(revision: string, snapshot: BeachEventsSnapshot): string {
+	const identity = Object.values(snapshot.beaches).flat().map((event) => `${event.id}:${event.updatedAt}`).sort().join("|");
+	let hash = 2166136261;
+	for (let index = 0; index < identity.length; index += 1) hash = Math.imul(hash ^ identity.charCodeAt(index), 16777619);
+	return `${revision}-${(hash >>> 0).toString(16)}`;
+}
+
 export async function handleBeachEventsRequest(request: Request, env: Env, now = new Date()): Promise<Response> {
 	const control = evaluateBeachEventsControl(await readOperationalControl(env, now), now);
 	if (control.state === "disabled") return respond({ status: "disabled", generatedAt: now.toISOString(), beaches: {}, attribution: [], control }, 200);
@@ -19,11 +36,12 @@ export async function handleBeachEventsRequest(request: Request, env: Env, now =
 	if (!snapshot) return respond({ status: "unavailable", generatedAt: now.toISOString(), beaches: {}, attribution: [] }, 503);
 	if (Date.parse(snapshot.staleUntil) < now.getTime()) return respond({ status: "unavailable", generatedAt: now.toISOString(), beaches: {}, attribution: [], lastSuccessfulRefresh: snapshot.lastSuccessfulRefresh }, 503);
 	const status = Date.parse(snapshot.generatedAt) + 6 * 60 * 60 * 1000 < now.getTime() ? "stale" : snapshot.status;
-	const revision = snapshot.revision ?? snapshot.generatedAt;
+	const visible = visibleSnapshot(snapshot, now);
+	const revision = visibleRevision(snapshot.revision ?? snapshot.generatedAt, visible);
 	const etag = `"${revision}"`;
 	const responseHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, no-cache, max-age=0, must-revalidate, stale-if-error=1800", ETag: etag };
 	if (request.headers.get("If-None-Match") === etag) return new Response(null, { status: 304, headers: responseHeaders });
-	return Response.json({ ...snapshot, revision, status }, { headers: responseHeaders });
+	return Response.json({ ...visible, revision, status }, { headers: responseHeaders });
 }
 
 export async function handleBeachEventsAdminGet(request: Request, env: Env): Promise<Response> {

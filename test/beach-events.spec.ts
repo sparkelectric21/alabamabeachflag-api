@@ -158,6 +158,20 @@ describe("event lifecycle", () => {
 		expect(conditional.status).toBe(304);
 	});
 
+	it("expires a stored event at request time and changes the visible revision", async () => {
+		const h = memoryEnv();
+		const event = { ...normalizedEvent(facts(), new Date("2026-08-01T12:00:00Z"))!, status: "published" } as BeachEvent;
+		const snapshot = buildSnapshot([event], new Date("2026-08-01T12:00:00Z"));
+		h.values.set("beach-events:v1:snapshot", JSON.stringify(snapshot));
+		const active = await handleBeachEventsRequest(new Request("https://example.com/v1/beach-events"), h.env, new Date("2026-08-01T14:00:00Z"));
+		const activeBody = await active.json() as BeachEventsSnapshot;
+		expect(activeBody.beaches[event.beachId]).toEqual([event]);
+		const expired = await handleBeachEventsRequest(new Request("https://example.com/v1/beach-events", { headers: { "If-None-Match": active.headers.get("etag")! } }), h.env, new Date("2026-08-01T16:00:00Z"));
+		expect(expired.status).toBe(200);
+		expect((await expired.json() as BeachEventsSnapshot).beaches).toEqual({});
+		expect(expired.headers.get("etag")).not.toBe(active.headers.get("etag"));
+	});
+
 	it("isolates provider failures and does not write a beach-condition key", async () => {
 		const h = memoryEnv();
 		const fetcher = vi.fn(async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
