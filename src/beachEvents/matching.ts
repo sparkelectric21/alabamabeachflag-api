@@ -78,10 +78,10 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 	},
 	{
 		beachId: "dauphin-island-public-beach",
-		venues: ["Dauphin Island Public Beach", "Dauphin Island Middle Beach"],
-		addresses: ["1501 Bienville Blvd, Dauphin Island, AL 36528"],
+		venues: ["Dauphin Island Public Beach", "Dauphin Island Middle Beach", "Middle Beach", "Bienville Beach"],
+		addresses: ["1501 Bienville Blvd, Dauphin Island, AL 36528", "1917 Bienville Boulevard, Dauphin Island, AL 36528", "1917 Bienville Blvd, Dauphin Island, AL 36528"],
 		sourceAliases: { alabamaCoastalCleanup: ["Dauphin Island Public Beach Cleanup Zone"], alabamaAudubon: ["Dauphin Island Middle Beach"] },
-		excludes: ["Dauphin Island Sea Lab", "Alabama Aquarium", "Audubon Bird Sanctuary", "Fort Gaines", "Dauphin Island Town Hall"],
+		excludes: ["Dauphin Island Sea Lab", "Alabama Aquarium", "Audubon Bird Sanctuary", "Fort Gaines", "Dauphin Island Town Hall", "Dauphin Island Community Center", "Dauphin Island Campground", "Dauphin Island Marina"],
 	},
 	{
 		beachId: "dauphin-island-east-end",
@@ -98,7 +98,7 @@ const unsupportedWestEnd = ["dauphin island west end beach", "west end beach"];
 const inlandOrUnsupported = [
 	"gulf state park nature center", "gulf state park learning campus", "gulf state park campground", "lake shelby picnic area", "lake shelby playground",
 	"fort morgan historic site", "fort morgan state historic site", "mobile bay ferry fort morgan", "fort morgan campground",
-	"dauphin island sea lab", "alabama aquarium", "audubon bird sanctuary", "fort gaines", "dauphin island town hall", "the wharf",
+	"dauphin island sea lab", "alabama aquarium", "audubon bird sanctuary", "fort gaines", "dauphin island town hall", "dauphin island community center", "dauphin island campground", "dauphin island marina", "the wharf",
 	"gulf state park nature center orange beach al 36561 usa", "gulf state park nature center 22120 campground rd orange beach al 36561 usa",
 ];
 
@@ -106,7 +106,7 @@ export function explainBeachMatch(input: { providerId: string; venue?: string; a
 	const venue = normalize(input.venue);
 	const address = normalize(input.address);
 	if (!venue && !address) return { confidence: "none", ruleId: "missing-location", reason: "No venue or address was supplied", exclusionReason: "unknownVenue" };
-	if (unsupportedWestEnd.includes(venue)) return { confidence: "none", ruleId: "unsupported-dauphin-west-end", reason: "The exact beach is not represented in the app", exclusionReason: "exactBeachNotRepresented" };
+	if (unsupportedWestEnd.includes(venue)) return { confidence: "none", ruleId: "unsupported-dauphin-west-end", reason: "Exact beach not represented in app", exclusionReason: "exactBeachNotRepresented" };
 	if (broadLocations.includes(venue)) return { confidence: "none", ruleId: "broad-location", reason: "City, island, or regional locations do not identify an exact beach", exclusionReason: "citywideOrBroadLocation" };
 	if (inlandOrUnsupported.includes(venue)) return { confidence: "none", ruleId: `excluded-${venue.replace(/ /g, "-")}`, reason: "Known inland or unsupported venue", exclusionReason: "inlandVenue" };
 	for (const mapping of VENUE_MAPPINGS) {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { exactBeachMatch, explainBeachMatch } from "../src/beachEvents/matching";
 import { parseICalendar } from "../src/beachEvents/ical";
+import { BEACH_EVENT_PROVIDERS } from "../src/beachEvents/providers";
 import { applyImportedEvents, buildSnapshot, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
 import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
 import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEvents/schedule";
@@ -30,9 +31,22 @@ const facts = (overrides: Partial<SourceFacts> = {}): SourceFacts => ({
 });
 
 describe("exact beach event matching", () => {
+	it("keeps the Town provider disabled while automated retrieval lacks permission", () => {
+		expect(BEACH_EVENT_PROVIDERS.find((provider) => provider.id === "dauphinIslandTown")).toMatchObject({
+			mode: "disabled",
+			legalStatus: "permission-required",
+			publicFeed: true,
+			supportedBeachIds: ["dauphin-island-public-beach", "dauphin-island-east-end"],
+		});
+	});
+
 	it("matches approved exact venue and address aliases", () => {
 		expect(exactBeachMatch({ providerId: "gulfShoresCity", venue: "Gulf Place Town Green" })).toEqual({ beachId: "gulf-shores-public-beach", method: "sourceAlias" });
 		expect(exactBeachMatch({ providerId: "x", address: "25900 Perdido Beach Blvd, Orange Beach, AL 36561" })).toEqual({ beachId: "cotton-bayou", method: "exactAddress" });
+		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "East End Beach" })).toEqual({ beachId: "dauphin-island-east-end", method: "exactVenue" });
+		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "Middle Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactVenue" });
+		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "Bienville Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactVenue" });
+		expect(exactBeachMatch({ providerId: "dauphinIslandTown", address: "1917 Bienville Boulevard, Dauphin Island, AL 36528" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactAddress" });
 	});
 
 	it("rejects citywide, excluded, nearby, and unsupported Flora-Bama locations", () => {
@@ -50,7 +64,10 @@ describe("exact beach event matching", () => {
 		expect(explainBeachMatch({ providerId: "alabamaAudubon", venue: "Fort Morgan State Historic Site" })).toMatchObject({ exclusionReason: "inlandVenue" });
 		expect(exactBeachMatch({ providerId: "alabamaCoastalCleanup", venue: "Fort Morgan Public Beach Cleanup Zone" })).toEqual({ beachId: "fort-morgan-public-beach", method: "sourceAlias" });
 		expect(exactBeachMatch({ providerId: "orangeBeachCoastalResources", venue: "Alabama Point" })).toEqual({ beachId: "alabama-point", method: "sourceAlias" });
-		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ exclusionReason: "exactBeachNotRepresented" });
+		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ reason: "Exact beach not represented in app", exclusionReason: "exactBeachNotRepresented" });
+		for (const venue of ["Dauphin Island", "Dauphin Island Town Hall", "Dauphin Island Community Center", "Dauphin Island Sea Lab", "Alabama Aquarium", "Fort Gaines", "Audubon Bird Sanctuary", "Dauphin Island Campground", "Dauphin Island Marina"]) {
+			expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue })).toBeNull();
+		}
 	});
 
 	it("maps only official exact Gulf State Park Pier aliases to Pavilion", () => {
