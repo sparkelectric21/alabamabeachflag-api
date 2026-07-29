@@ -5,7 +5,7 @@ export const BEACH_EVENT_PROVIDERS = [
 		feedURL: "https://www.gulfshoresal.gov/common/modules/iCalendar/iCalendar.aspx?catID=44&feed=calendar",
 		mode: "enabled" as const,
 		authority: "Official City of Gulf Shores",
-		cadence: "Every 6 hours",
+		cadence: "Daily at 7:00 AM Central",
 		notes: "Official CivicEngage iCalendar subscription. Only exact approved beach venues are retained.",
 	},
 	{
@@ -14,7 +14,7 @@ export const BEACH_EVENT_PROVIDERS = [
 		feedURL: "https://www.orangebeachal.gov/common/modules/iCalendar/iCalendar.aspx?catID=34&feed=calendar",
 		mode: "enabled" as const,
 		authority: "Official City of Orange Beach",
-		cadence: "Every 6 hours",
+		cadence: "Daily at 7:00 AM Central",
 		notes: "Official CivicEngage iCalendar category. Citywide and inland events are rejected by exact matching.",
 	},
 	{

@@ -28,8 +28,8 @@ Event type and impact are independent. Types are festival, race or sport, beach 
 
 | Provider | Exposure | Authority | Refresh | Status | Usage and attribution |
 | --- | --- | --- | --- | --- | --- |
-| City of Gulf Shores Special Events | Official CivicEngage iCalendar | City of Gulf Shores | 6 hours | Enabled | Normalize facts; retain only exact beach matches; display source and official link. |
-| City of Orange Beach Parks and Recreation | Official CivicEngage iCalendar | City of Orange Beach | 6 hours | Enabled | Reject citywide/inland venues; display source and official link. |
+| City of Gulf Shores Special Events | Official CivicEngage iCalendar | City of Gulf Shores | Daily, 7:00 a.m. Central | Enabled | Normalize facts; retain only exact beach matches; display source and official link. |
+| City of Orange Beach Parks and Recreation | Official CivicEngage iCalendar | City of Orange Beach | Daily, 7:00 a.m. Central | Enabled | Reject citywide/inland venues; display source and official link. |
 | Gulf State Park Activities Calendar | Embedded calendar | Alabama State Parks | None | Disabled | No verified structured public feed; brittle scraping prohibited. |
 | Gulf Shores & Orange Beach Tourism Calendar | Website | Tourism organization | None | Disabled / permission required | No scraping, undocumented endpoint, copied description, image, logo, or deep link. |
 
@@ -37,7 +37,9 @@ Alabama Coastal Cleanup, Orange Beach Coastal Resources, Alabama Audubon, Dauphi
 
 ## Refresh, failure, and stale behavior
 
-The six-hour cron invokes this domain independently after other jobs. Provider observations flow to Provider Health. A provider failure cannot write beach-condition, flag, tide, weather, water-quality, or rip-current keys. Successful output is cached in `beach-events:v1:snapshot`; the public endpoint may serve that last-known-good snapshot for at most 12 hours and returns unavailable after the safe stale window.
+The hourly Worker cron invokes this domain once when the local clock reaches 7:00 a.m. in `America/Chicago`, so daylight-saving transitions intentionally preserve the Central-Time wall clock. Provider observations flow to Provider Health. A provider failure cannot write beach-condition, flag, tide, weather, water-quality, or rip-current keys. Successful output is cached in `beach-events:v1:snapshot`; the public endpoint may serve that last-known-good snapshot for at most 12 hours and returns unavailable after the safe stale window.
+
+Each attempt persists status at `beach-events:v1:refresh-status`, including trigger, timing, outcome, provider results, raw/matched/excluded/review/published counts, operational controls, snapshot timestamps, and the next scheduled refresh. The protected admin Source Refresh panel displays this record and may invoke `POST /internal/refresh/beach-events`; the endpoint rejects unauthenticated callers and duplicate attempts while a recent refresh is running. Manual attempts use the same ingestion path and write an administrative audit record.
 
 The operational controls `domains.beachEvents`, `providers.gulfShoresEvents`, and `providers.orangeBeachEvents` support enabled, disabled, and monitor-only states. Disabling this domain returns an empty disabled response without affecting other app data.
 

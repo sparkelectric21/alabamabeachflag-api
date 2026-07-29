@@ -76,3 +76,40 @@ export interface DecisionRule {
 	createdAt: string;
 	createdBy: string;
 }
+
+export interface BeachEventProviderRefresh {
+	providerId: string;
+	status: "ok" | "failed" | "disabled" | "monitored";
+	fetched: number;
+	matched: number;
+	excluded: number;
+	pendingReview: number;
+	ruleSuppressed: number;
+	error?: string;
+}
+
+export interface BeachEventRefreshStatus {
+	schemaVersion: 1;
+	status: "running" | "healthy" | "warning" | "failed" | "disabled" | "monitorOnly" | "neverRun";
+	trigger: "scheduled" | "admin";
+	lastAttempt: string;
+	lastSuccess?: string;
+	lastFailure?: string;
+	lastFailureMessage?: string;
+	completedAt?: string;
+	nextScheduledRefresh: string;
+	scheduleDescription: string;
+	operationalState: "enabled" | "disabled" | "monitorOnly";
+	providers: BeachEventProviderRefresh[];
+	counts: {
+		raw: number;
+		matched: number;
+		excluded: number;
+		pendingReview: number;
+		published: number;
+		ruleSuppressed: number;
+		unsupportedOrAmbiguous: number;
+	};
+	snapshotGeneratedAt?: string;
+	staleUntil?: string;
+}

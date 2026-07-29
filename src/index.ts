@@ -23,6 +23,7 @@ import { handleAppConfiguration, handleOperationalControlAudit, handleOperationa
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
 import { handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
+import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -249,7 +250,7 @@ export default {
 				if (pathname === "/internal/refresh/beach-flags") {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
-				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env));
+				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env, new Date(), fetch, { trigger: "admin", identity }));
 				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
@@ -361,15 +362,20 @@ export default {
 				console.error("Scheduled water quality refresh failed");
 			}
 			try { await runScheduled("rip-current-outlook"); } catch { console.error("Scheduled rip current outlook refresh failed"); }
-			try { await refreshBeachEvents(env, new Date(controller.scheduledTime)); } catch { console.error("Scheduled beach events refresh failed"); }
 			return;
 		}
 
-		if (cron === "0 * * * *" && isVerificationHour(new Date(controller.scheduledTime))) {
-			const heartbeat = await recordJobAttempt(env, "factual-verification", new Date(controller.scheduledTime));
-			const response = await dispatchVerification(env, new Date(controller.scheduledTime));
-			await recordJobCompletion(env, heartbeat, response.ok ? "completed" : response.status === 409 ? "duplicate" : "failed", new Date(), !response.ok && response.status !== 409 ? "verification_failed" : undefined);
-			if (!response.ok && response.status !== 409) console.error("[Cron] factual verification failed");
+		if (cron === "0 * * * *") {
+			const scheduledAt = new Date(controller.scheduledTime);
+			if (isBeachEventRefreshHour(scheduledAt)) {
+				try { await refreshBeachEvents(env, scheduledAt, fetch, { trigger: "scheduled" }); } catch { console.error("Scheduled beach events refresh failed"); }
+			}
+			if (isVerificationHour(scheduledAt)) {
+				const heartbeat = await recordJobAttempt(env, "factual-verification", scheduledAt);
+				const response = await dispatchVerification(env, scheduledAt);
+				await recordJobCompletion(env, heartbeat, response.ok ? "completed" : response.status === 409 ? "duplicate" : "failed", new Date(), !response.ok && response.status !== 409 ? "verification_failed" : undefined);
+				if (!response.ok && response.status !== 409) console.error("[Cron] factual verification failed");
+			}
 		}
 	},
 } satisfies ExportedHandler<AppEnv>;

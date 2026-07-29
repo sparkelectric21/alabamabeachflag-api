@@ -88,6 +88,15 @@ describe("administrative routing", () => {
 		expect(h.coordinatorFetch).not.toHaveBeenCalled();
 	});
 
+	it("keeps the beach-event manual refresh endpoint protected", async () => {
+		const response = await worker.fetch(
+			new Request("https://example.com/internal/refresh/beach-events", { method: "POST" }),
+			{} as Env,
+		);
+		expect(response.status).toBe(403);
+		expect(await response.json()).toEqual({ error: "Forbidden" });
+	});
+
 	it("requires an Idempotency-Key before coordinator work", async () => {
 		const h = adminEnv();
 		const response = await worker.fetch(adminRequest("/internal/refresh/water-quality"), h.env);

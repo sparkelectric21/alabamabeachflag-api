@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { exactBeachMatch } from "../src/beachEvents/matching";
 import { parseICalendar } from "../src/beachEvents/ical";
 import { applyImportedEvents, buildSnapshot, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
-import { refreshBeachEvents } from "../src/beachEvents/refresh";
+import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
+import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEvents/schedule";
+import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
 import type { BeachEvent, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
 
@@ -81,7 +83,70 @@ describe("event lifecycle", () => {
 		const h = memoryEnv();
 		const fetcher = vi.fn(async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
 		const result = await refreshBeachEvents(h.env, new Date("2026-07-28T12:00:00Z"), fetcher);
-		expect(result.outcome).toBe("partial");
+		expect(result.outcome).toBe("failed");
 		expect(h.kv.put.mock.calls.some(([key]) => key === "beach-conditions")).toBe(false);
+	});
+});
+
+describe("event refresh observability", () => {
+	const emptyFeed = "BEGIN:VCALENDAR\r\nEND:VCALENDAR";
+	const inlandFeed = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:inland\r\nSUMMARY:Community event\r\nLOCATION:The Wharf\r\nDTSTART:20260801T130000Z\r\nDTEND:20260801T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR";
+	const beachFeed = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:beach\r\nSUMMARY:Beach Cleanup\r\nLOCATION:Gulf Shores Public Beach\r\nDTSTART:20260801T130000Z\r\nDTEND:20260801T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR";
+	const response = (body: string, status = 200) => Promise.resolve(new Response(body, { status }));
+
+	it("returns an explicit never-run state and DST-safe next morning", async () => {
+		const h = memoryEnv();
+		expect(await readBeachEventRefreshStatus(h.env, new Date("2026-01-15T12:00:00Z"))).toMatchObject({ status: "neverRun", nextScheduledRefresh: "2026-01-15T13:00:00.000Z" });
+		expect(nextBeachEventRefresh(new Date("2026-07-15T11:00:00Z"))).toBe("2026-07-15T12:00:00.000Z");
+		expect(isBeachEventRefreshHour(new Date("2026-01-15T13:00:00Z"))).toBe(true);
+		expect(isBeachEventRefreshHour(new Date("2026-07-15T12:00:00Z"))).toBe(true);
+	});
+
+	it("persists zero-raw and raw-with-zero-match results distinctly", async () => {
+		const zero = memoryEnv();
+		await refreshBeachEvents(zero.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(emptyFeed)) as unknown as typeof fetch);
+		expect(JSON.parse(zero.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 0, matched: 0, excluded: 0 }, lastAttempt: "2026-07-28T12:00:00.000Z" });
+		const excluded = memoryEnv();
+		await refreshBeachEvents(excluded.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(inlandFeed)) as unknown as typeof fetch);
+		expect(JSON.parse(excluded.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 2, matched: 0, excluded: 2, unsupportedOrAmbiguous: 2 } });
+	});
+
+	it("records pending review, success timestamps, failure, and partial failure", async () => {
+		const healthy = memoryEnv();
+		await refreshBeachEvents(healthy.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(beachFeed)) as unknown as typeof fetch);
+		expect(JSON.parse(healthy.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 2, matched: 2, pendingReview: 1 }, lastSuccess: expect.any(String) });
+		const failed = memoryEnv();
+		await refreshBeachEvents(failed.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response("down", 503)) as unknown as typeof fetch);
+		expect(JSON.parse(failed.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "failed", lastFailure: expect.any(String), providers: [{ status: "failed" }, { status: "failed" }] });
+		const partial = memoryEnv();
+		const fetcher = vi.fn((url: RequestInfo | URL) => String(url).includes("gulfshores") ? response(beachFeed) : response("down", 503));
+		await refreshBeachEvents(partial.env, new Date("2026-07-28T12:00:00Z"), fetcher as unknown as typeof fetch);
+		expect(JSON.parse(partial.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "warning", lastSuccess: expect.any(String), lastFailure: expect.any(String) });
+	});
+
+	it("reports disabled and monitor-only controls without unsafe ingestion", async () => {
+		const disabled = memoryEnv(), doc = defaultOperationalControl(new Date("2026-07-28T12:00:00Z"));
+		doc.controls["domains.beachEvents"] = { state: "disabled" };
+		disabled.values.set(CURRENT_KEY, JSON.stringify(doc));
+		expect(await refreshBeachEvents(disabled.env, new Date("2026-07-28T12:00:00Z"))).toMatchObject({ outcome: "disabled", refresh: { status: "disabled" } });
+		const providerDisabled = memoryEnv(), providerDoc = defaultOperationalControl(new Date("2026-07-28T12:00:00Z"));
+		providerDoc.controls["providers.orangeBeachEvents"] = { state: "disabled" };
+		providerDisabled.values.set(CURRENT_KEY, JSON.stringify(providerDoc));
+		const result = await refreshBeachEvents(providerDisabled.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(emptyFeed)) as unknown as typeof fetch);
+		expect(result.providers.find((item) => item.providerId === "orangeBeachParks")?.status).toBe("disabled");
+		const monitored = memoryEnv(), monitorDoc = defaultOperationalControl(new Date("2026-07-28T12:00:00Z"));
+		monitorDoc.controls["providers.gulfShoresEvents"] = { state: "monitorOnly" };
+		monitored.values.set(CURRENT_KEY, JSON.stringify(monitorDoc));
+		const monitorResult = await refreshBeachEvents(monitored.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(beachFeed)) as unknown as typeof fetch);
+		expect(monitorResult.providers.find((item) => item.providerId === "gulfShoresCity")?.status).toBe("monitored");
+	});
+
+	it("prevents concurrent admin refreshes and records the manual audit", async () => {
+		const h = memoryEnv();
+		h.values.set(REFRESH_STATUS_KEY, JSON.stringify({ ...(await readBeachEventRefreshStatus(h.env)), status: "running", lastAttempt: "2026-07-28T12:00:00.000Z" }));
+		expect(await refreshBeachEvents(h.env, new Date("2026-07-28T12:01:00Z"))).toMatchObject({ outcome: "duplicate" });
+		h.values.delete(REFRESH_STATUS_KEY);
+		await refreshBeachEvents(h.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(emptyFeed)) as unknown as typeof fetch, { trigger: "admin", identity: { method: "access", subject: "operator@example.com" } });
+		expect([...h.values.keys()].some((key) => key.startsWith("beach-events:v1:audit:"))).toBe(true);
 	});
 });

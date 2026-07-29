@@ -69,12 +69,12 @@ export async function listRules(env: Pick<Env, "BEACH_DATA">): Promise<DecisionR
 	return (await Promise.all(listed.keys.map((key) => env.BEACH_DATA.get<DecisionRule>(key.name, "json")))).filter((item): item is DecisionRule => Boolean(item));
 }
 
-export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number }> {
+export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number; pendingReview: number; ruleSuppressed: number }> {
 	const existing = await listEvents(env);
 	const rules = await listRules(env);
 	const existingById = new Map(existing.map((event) => [event.id, event]));
 	const existingDedupe = new Set(existing.map(dedupeKey));
-	let matched = 0, discovered = 0;
+	let matched = 0, discovered = 0, pendingReview = 0, ruleSuppressed = 0;
 	for (const fact of facts) {
 		const event = normalizedEvent(fact, now);
 		if (!event) continue;
@@ -87,10 +87,12 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 		if (existingDedupe.has(dedupeKey(event))) continue;
 		const rule = rules.find((candidate) => candidate.enabled && candidate.providerId === fact.providerId && (!candidate.venue || candidate.venue.toLowerCase() === fact.venue.toLowerCase()) && (!candidate.titlePattern || fact.title.toLowerCase().includes(candidate.titlePattern.toLowerCase())) && (!candidate.beachId || candidate.beachId === event.beachId));
 		const status = rule?.action === "disregard" ? "disregarded" : rule?.action === "autoApprove" && event.matchConfidence === "exact" ? "approved" : "pendingReview";
+		if (status === "pendingReview") pendingReview += 1;
+		if (status === "disregarded") ruleSuppressed += 1;
 		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, status, ...(rule?.eventType ? { eventType: rule.eventType } : {}), ...(rule?.impactLevel ? { impactLevel: rule.impactLevel } : {}) }));
 		existingDedupe.add(dedupeKey(event)); discovered += 1;
 	}
-	return { discovered, matched };
+	return { discovered, matched, pendingReview, ruleSuppressed };
 }
 
 export function buildSnapshot(events: BeachEvent[], now: Date): BeachEventsSnapshot {

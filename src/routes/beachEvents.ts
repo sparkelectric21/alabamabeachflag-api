@@ -5,6 +5,8 @@ import { BEACH_EVENT_PROVIDERS } from "../beachEvents/providers";
 import { AUDIT_PREFIX, EVENT_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, listEvents, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
 import type { BeachEvent, BeachEventsSnapshot, DecisionRule } from "../beachEvents/types";
 import { beaches } from "../config/BeachRegistry";
+import { readBeachEventRefreshStatus } from "../beachEvents/refresh";
+import { nextBeachEventRefresh } from "../beachEvents/schedule";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
@@ -20,6 +22,7 @@ export async function handleBeachEventsRequest(env: Env, now = new Date()): Prom
 }
 
 export async function handleBeachEventsAdminGet(request: Request, env: Env): Promise<Response> {
+	const now = new Date();
 	const url = new URL(request.url);
 	const events = await listEvents(env);
 	const status = url.searchParams.get("status");
@@ -32,6 +35,12 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 		providers: BEACH_EVENT_PROVIDERS,
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
 		audit: history.sort((a: any, b: any) => String(b.timestamp).localeCompare(String(a.timestamp))),
+		refresh: {
+			...await readBeachEventRefreshStatus(env, now),
+			nextScheduledRefresh: nextBeachEventRefresh(now),
+			operationalState: evaluateBeachEventsControl(await readOperationalControl(env, now), now).state,
+			staleCache: Boolean(await env.BEACH_DATA.get<BeachEventsSnapshot>(SNAPSHOT_KEY, "json").then((snapshot) => snapshot && Date.parse(snapshot.generatedAt) + 6 * 60 * 60 * 1000 < now.getTime())),
+		},
 	});
 }
 
