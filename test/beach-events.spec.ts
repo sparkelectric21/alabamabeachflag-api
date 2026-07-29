@@ -206,10 +206,15 @@ describe("event refresh observability", () => {
 	const beachFeed = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:beach\r\nSUMMARY:Beach Cleanup\r\nLOCATION:Gulf Shores Public Beach\r\nDTSTART:20260801T130000Z\r\nDTEND:20260801T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR";
 	const response = (body: string, status = 200) => Promise.resolve(new Response(body, { status }));
 	const townIssueURL = "https://www.townofdauphinisland.org/_files/ugd/222868_test.pdf";
+	const townPDF = new Uint8Array([
+		...new TextEncoder().encode("%PDF\n1 0 obj\n<< /Subtype /Image /Filter [/FlateDecode/DCTDecode] /Width 1 /Height 1 >>\nstream\n"),
+		120, 156, 251, 127, 227, 255, 77, 0, 9, 95, 3, 176,
+		...new TextEncoder().encode("\nendstream\nendobj\n%%EOF"),
+	]);
 	const feedFetcher = (body: string, status = 200) => vi.fn((url: RequestInfo | URL) => {
 		const value = String(url);
 		if (value.endsWith("/newsletters")) return response(`<a href="${townIssueURL}">July 2026</a>`);
-		if (value === townIssueURL) return response("%PDF");
+		if (value === townIssueURL) return Promise.resolve(new Response(townPDF));
 		return response(body, status);
 	}) as unknown as typeof fetch;
 

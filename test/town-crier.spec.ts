@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { discoverNewestTownCrier, extractTownCrierEvents, fetchTownCrierFacts, TOWN_CRIER_SOURCE_NOTE, townCrierFacts } from "../src/beachEvents/townCrier";
+import { discoverNewestTownCrier, extractFirstNewsletterPage, extractTownCrierEvents, fetchTownCrierFacts, TOWN_CRIER_SOURCE_NOTE, townCrierFacts } from "../src/beachEvents/townCrier";
 import { BEACH_EVENT_PROVIDERS } from "../src/beachEvents/providers";
 
 const provider = BEACH_EVENT_PROVIDERS.find((item) => item.id === "dauphinIslandTown")!;
@@ -9,6 +9,18 @@ const issue = {
 	year: 2026,
 	pdfURL: "https://www.townofdauphinisland.org/_files/ugd/222868_latest.pdf",
 };
+
+async function imagePDF(): Promise<Uint8Array> {
+	const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+	const compressed = new Uint8Array(await new Response(new Blob([jpeg]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+	const prefix = new TextEncoder().encode("%PDF\n1 0 obj\n<< /Subtype /Image /Filter [/FlateDecode/DCTDecode] /Width 1 /Height 1 >>\nstream\n");
+	const suffix = new TextEncoder().encode("\nendstream\nendobj\n%%EOF");
+	const pdf = new Uint8Array(prefix.length + compressed.length + suffix.length);
+	pdf.set(prefix);
+	pdf.set(compressed, prefix.length);
+	pdf.set(suffix, prefix.length + compressed.length);
+	return pdf;
+}
 
 describe("Town Crier newsletter discovery", () => {
 	it("selects the newest official Town PDF without relying on document order", () => {
@@ -64,6 +76,14 @@ describe("Town Crier event extraction", () => {
 		expect(Date.parse(facts[0].endAt)).toBe(Date.parse("2026-07-20T05:00:00.000Z"));
 	});
 
+	it("parses image-conversion bullets and ampersand date ranges", () => {
+		const events = extractTownCrierEvents("* **July 30:** Family Movie Night\n* **August 17 & 18:** Beach Festival", issue, new Date("2026-07-29T00:00:00Z"));
+		expect(events).toMatchObject([
+			{ date: "2026-07-30", name: "Family Movie Night" },
+			{ date: "2026-08-17", endDate: "2026-08-18", name: "Beach Festival" },
+		]);
+	});
+
 	it("excludes passed dates and non-event prose", () => {
 		const events = extractTownCrierEvents(markdown, issue, new Date("2026-08-02T05:01:00Z"));
 		expect(events.map((event) => event.name)).toEqual(["Island Luau", "Coastal Cleanup"]);
@@ -90,7 +110,7 @@ describe("Town Crier retrieval", () => {
 	it("discovers, converts, and links the current issue", async () => {
 		const fetcher = vi.fn()
 			.mockResolvedValueOnce(new Response(`<a href="${issue.pdfURL}">July 2026</a>`, { headers: { "Content-Type": "text/html" } }))
-			.mockResolvedValueOnce(new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "Content-Type": "application/pdf" } }));
+			.mockResolvedValueOnce(new Response(await imagePDF(), { headers: { "Content-Type": "application/pdf" } }));
 		const AI = { toMarkdown: vi.fn().mockResolvedValue({ format: "markdown", data: "JULY 30 Family Movie Night\nFamily Movie Night is held at East End Beach." }) };
 		const facts = await fetchTownCrierFacts({ AI } as any, provider, new Date("2026-07-29T18:00:00Z"), fetcher);
 		expect(fetcher).toHaveBeenCalledTimes(2);
@@ -98,10 +118,14 @@ describe("Town Crier retrieval", () => {
 		expect(facts[0]).toMatchObject({ title: "Family Movie Night", venue: "East End Beach", sourceURL: issue.pdfURL });
 	});
 
+	it("extracts the first newsletter page image before conversion", async () => {
+		expect([...await extractFirstNewsletterPage((await imagePDF()).buffer)]).toEqual([0xff, 0xd8, 0xff, 0xd9]);
+	});
+
 	it("reports conversion failure so refresh can retain last-good records", async () => {
 		const fetcher = vi.fn()
 			.mockResolvedValueOnce(new Response(`<a href="${issue.pdfURL}">July 2026</a>`))
-			.mockResolvedValueOnce(new Response(new Uint8Array([37, 80, 68, 70])));
+			.mockResolvedValueOnce(new Response(await imagePDF()));
 		const AI = { toMarkdown: vi.fn().mockResolvedValue({ format: "error", error: "OCR unavailable" }) };
 		await expect(fetchTownCrierFacts({ AI } as any, provider, new Date(), fetcher)).rejects.toThrow("town_crier_pdf_conversion_failed");
 	});

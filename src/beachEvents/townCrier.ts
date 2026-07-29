@@ -85,6 +85,36 @@ function cleanLine(value: string): string {
 	return value.replace(/^[-*#>\s]+/, "").replace(/\*\*|__/g, "").replace(/\s+/g, " ").trim();
 }
 
+function byteIndex(bytes: Uint8Array, needle: Uint8Array, from: number): number {
+	outer: for (let index = from; index <= bytes.length - needle.length; index += 1) {
+		for (let offset = 0; offset < needle.length; offset += 1) if (bytes[index + offset] !== needle[offset]) continue outer;
+		return index;
+	}
+	return -1;
+}
+
+export async function extractFirstNewsletterPage(pdf: ArrayBuffer): Promise<Uint8Array> {
+	const bytes = new Uint8Array(pdf);
+	const encoder = new TextEncoder();
+	const imageAt = byteIndex(bytes, encoder.encode("/Subtype /Image"), 0);
+	if (imageAt < 0) throw new Error("town_crier_page_image_not_found");
+	const dictionary = new TextDecoder().decode(bytes.slice(imageAt, Math.min(bytes.length, imageAt + 500)));
+	if (!/\/Filter\s*\[\s*\/FlateDecode\s*\/DCTDecode\s*\]/.test(dictionary)) throw new Error("town_crier_page_image_encoding_unsupported");
+	const streamAt = byteIndex(bytes, encoder.encode("stream"), imageAt);
+	if (streamAt < 0) throw new Error("town_crier_page_image_not_found");
+	let start = streamAt + 6;
+	if (bytes[start] === 13) start += 1;
+	if (bytes[start] === 10) start += 1;
+	const endMarker = byteIndex(bytes, encoder.encode("endstream"), start);
+	if (endMarker < 0) throw new Error("town_crier_page_image_not_found");
+	let end = endMarker;
+	while (bytes[end - 1] === 10 || bytes[end - 1] === 13) end -= 1;
+	const inflated = await new Response(new Blob([bytes.slice(start, end)]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+	const jpeg = new Uint8Array(inflated);
+	if (jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new Error("town_crier_page_image_invalid");
+	return jpeg;
+}
+
 function supportingParagraph(lines: string[], title: string): string {
 	const tokens = normalized(title).split(" ").filter((token) => token.length > 3);
 	let best = "";
@@ -130,7 +160,7 @@ function eventDescription(title: string, paragraph: string): string {
 export function extractTownCrierEvents(markdown: string, issue: TownCrierIssue, now = new Date()): TownCrierExtractedEvent[] {
 	const lines = markdown.split(/\r?\n/).map(cleanLine).filter(Boolean);
 	const candidates: TownCrierExtractedEvent[] = [];
-	const pattern = new RegExp(`^(${MONTH_PATTERN})[a-z]*\\.?\\s+(\\d{1,2})(?:\\s*[-–—]\\s*(\\d{1,2}))?\\s+(.+)$`, "i");
+	const pattern = new RegExp(`^(${MONTH_PATTERN})[a-z]*\\.?\\s+(\\d{1,2})(?:\\s*(?:[-–—]|&)\\s*(\\d{1,2}))?\\s*:?[\\s—–-]+(.+)$`, "i");
 	for (const line of lines) {
 		const match = line.match(pattern);
 		if (!match) continue;
@@ -218,7 +248,8 @@ export async function fetchTownCrierFacts(env: Env, provider: BeachEventProvider
 	if (!pdf.ok) throw new Error(`town_crier_pdf_http_${pdf.status}`);
 	const bytes = await boundedBody(pdf, MAX_PDF_BYTES);
 	if (new TextDecoder().decode(bytes.slice(0, 4)) !== "%PDF") throw new Error("town_crier_invalid_pdf");
-	const converted = await env.AI.toMarkdown({ name: `Town-Crier-${issue.month.replace(/\s+/g, "-")}.pdf`, blob: new Blob([bytes], { type: "application/pdf" }) });
+	const page = await extractFirstNewsletterPage(bytes);
+	const converted = await env.AI.toMarkdown({ name: `Town-Crier-${issue.month.replace(/\s+/g, "-")}-Page-1.jpg`, blob: new Blob([page], { type: "image/jpeg" }) });
 	const result = Array.isArray(converted) ? converted[0] : converted;
 	if (!result || result.format === "error" || !("data" in result) || !result.data?.trim()) throw new Error("town_crier_pdf_conversion_failed");
 	return townCrierFacts(extractTownCrierEvents(result.data, issue, now), provider);
