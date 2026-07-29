@@ -12,9 +12,14 @@ describe("per-beach Vibrio coverage policy", () => {
 		expect(beach(id).vibrioConditions.eligible).toBe(false);
 	});
 
-	it("keeps the corrected Pavilion coordinate isolated from shared app geography", () => {
+	it("keeps the corrected Pavilion destination isolated from provider-driving geography", () => {
 		const pavilion = beach("gulf-state-park-pavilion");
-		expect(pavilion.location).toEqual({ latitude: 30.2499, longitude: -87.6847 });
+		expect(pavilion.location).toEqual({ latitude: 30.25517036, longitude: -87.64240986 });
+		expect(pavilion.regionalCondition).toEqual({
+			region: "gulfShores",
+			latitude: 30.2499,
+			longitude: -87.6847,
+		});
 		expect(pavilion.weather).toEqual({ latitude: 30.2499, longitude: -87.6847 });
 		expect(pavilion.vibrioConditions).toMatchObject({
 			eligible: false,

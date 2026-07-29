@@ -37,7 +37,18 @@ export interface BeachDefinition {
 	ademCode: string;
 	displayName: string;
 	waterbody: string;
+	address?: string;
+	managingAuthority?: string;
 	location: {
+		latitude: number;
+		longitude: number;
+	};
+	regionalCondition?: {
+		region: "gulfShores" | "orangeBeach" | "fortMorgan" | "dauphinIsland";
+		latitude: number;
+		longitude: number;
+	};
+	waterQualitySample?: {
 		latitude: number;
 		longitude: number;
 	};
@@ -226,11 +237,22 @@ export const beaches: BeachDefinition[] = [
 	{
 		id: "gulf-state-park-pavilion",
 		ademCode: "GSP_PAV",
-		displayName: "Gulf State Park Pavilion",
+		displayName: "Gulf State Park Beach Pavilion",
 		waterbody: "Gulf of Mexico",
+		address: "22250 East Beach Boulevard, Gulf Shores, AL 36542",
+		managingAuthority: "Alabama State Parks",
 		location: {
+			latitude: 30.25517036,
+			longitude: -87.64240986,
+		},
+		regionalCondition: {
+			region: "gulfShores",
 			latitude: 30.2499,
 			longitude: -87.6847,
+		},
+		waterQualitySample: {
+			latitude: 30.25472,
+			longitude: -87.64333,
 		},
 		weather: {
 			latitude: 30.2499,
@@ -366,11 +388,21 @@ export const beaches: BeachDefinition[] = [
 	{
 		id: "fort-morgan-public-beach",
 		ademCode: "FRT_MGN",
-		displayName: "Fort Morgan Public Beach",
+		displayName: "Fort Morgan — Mobile Street Beach Access",
 		waterbody: "Gulf of Mexico",
+		managingAuthority: "U.S. Fish and Wildlife Service",
 		location: {
+			latitude: 30.2299,
+			longitude: -88.0244,
+		},
+		regionalCondition: {
+			region: "fortMorgan",
 			latitude: 30.2285,
 			longitude: -88.0243,
+		},
+		waterQualitySample: {
+			latitude: 30.2258,
+			longitude: -88.0094,
 		},
 		weather: {
 			latitude: 30.2285,
