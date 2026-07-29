@@ -284,7 +284,7 @@ export default {
 
 		if (pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
 		if (pathname === "/v1/app-configuration") return await handleAppConfiguration(env);
-		if (pathname === "/v1/beach-events") return await handleBeachEventsRequest(env);
+		if (pathname === "/v1/beach-events") return await handleBeachEventsRequest(request, env);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);

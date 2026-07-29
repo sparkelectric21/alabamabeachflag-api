@@ -2,23 +2,28 @@ import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
 import { evaluateBeachEventsControl, readOperationalControl } from "../operationalControl/store";
 import { BEACH_EVENT_PROVIDERS } from "../beachEvents/providers";
-import { AUDIT_PREFIX, EVENT_PREFIX, EXCLUSION_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, listEvents, listExcludedCandidates, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
+import { AUDIT_PREFIX, EVENT_PREFIX, EXCLUSION_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, isEventVisibleNow, listEvents, listExcludedCandidates, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
 import type { BeachEvent, BeachEventsSnapshot, DecisionRule, ExcludedEventCandidate } from "../beachEvents/types";
 import { beaches } from "../config/BeachRegistry";
 import { readBeachEventRefreshStatus } from "../beachEvents/refresh";
 import { nextBeachEventRefresh } from "../beachEvents/schedule";
+import { beachReferences } from "../beachEvents/beachReference";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
 
-export async function handleBeachEventsRequest(env: Env, now = new Date()): Promise<Response> {
+export async function handleBeachEventsRequest(request: Request, env: Env, now = new Date()): Promise<Response> {
 	const control = evaluateBeachEventsControl(await readOperationalControl(env, now), now);
 	if (control.state === "disabled") return respond({ status: "disabled", generatedAt: now.toISOString(), beaches: {}, attribution: [], control }, 200);
 	const snapshot = await env.BEACH_DATA.get<BeachEventsSnapshot>(SNAPSHOT_KEY, "json");
 	if (!snapshot) return respond({ status: "unavailable", generatedAt: now.toISOString(), beaches: {}, attribution: [] }, 503);
 	if (Date.parse(snapshot.staleUntil) < now.getTime()) return respond({ status: "unavailable", generatedAt: now.toISOString(), beaches: {}, attribution: [], lastSuccessfulRefresh: snapshot.lastSuccessfulRefresh }, 503);
 	const status = Date.parse(snapshot.generatedAt) + 6 * 60 * 60 * 1000 < now.getTime() ? "stale" : snapshot.status;
-	return Response.json({ ...snapshot, status }, { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300, stale-if-error=1800" } });
+	const revision = snapshot.revision ?? snapshot.generatedAt;
+	const etag = `"${revision}"`;
+	const responseHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, no-cache, max-age=0, must-revalidate, stale-if-error=1800", ETag: etag };
+	if (request.headers.get("If-None-Match") === etag) return new Response(null, { status: 304, headers: responseHeaders });
+	return Response.json({ ...snapshot, revision, status }, { headers: responseHeaders });
 }
 
 export async function handleBeachEventsAdminGet(request: Request, env: Env): Promise<Response> {
@@ -30,7 +35,7 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 100 });
 	const history = (await Promise.all(auditKeys.keys.map((key) => env.BEACH_DATA.get(key.name, "json")))).filter(Boolean);
 	const exclusions = await listExcludedCandidates(env);
-	const activeEvents = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
+	const activeEvents = events.filter((event) => isEventVisibleNow(event, now));
 	const coverage = beaches.map(({ id, displayName }) => {
 		const beachEvents = events.filter((event) => event.beachId === id);
 		const active = activeEvents.filter((event) => event.beachId === id);
@@ -51,6 +56,7 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 		rules: await listRules(env),
 		providers: BEACH_EVENT_PROVIDERS,
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
+		beachReferences,
 		audit: history.sort((a: any, b: any) => String(b.timestamp).localeCompare(String(a.timestamp))),
 		exclusions: exclusions.sort((a, b) => a.startAt.localeCompare(b.startAt)),
 		coverage,
@@ -122,13 +128,14 @@ export async function handleBeachEventsAdminUpdate(request: Request, env: Env, i
 	if (!current) return respond({ error: "not_found" }, 404);
 	let changes: Record<string, unknown>; try { changes = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
 	if (!changes || Object.keys(changes).some((key) => !EDITABLE.has(key))) return respond({ error: "invalid_changes" }, 400);
-	const candidate = { ...current, ...changes };
+	const candidate = { ...current, ...changes, id: current.id, createdAt: current.createdAt, sourceFacts: current.sourceFacts };
 	const errors = validateManualEvent(candidate, now);
 	if (errors.length) return respond({ error: "invalid_event", fields: errors }, 400);
 	if (!beaches.some((beach) => beach.id === candidate.beachId)) return respond({ error: "unknown_beach" }, 400);
+	const changedFields = Object.fromEntries(Object.entries(changes).filter(([key, value]) => JSON.stringify((current as unknown as Record<string, unknown>)[key]) !== JSON.stringify(value)));
 	const next = { ...candidate, updatedAt: now.toISOString() } as BeachEvent;
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${id}`, JSON.stringify(next));
-	await audit(env, identity, "update_event", id, changes, now);
+	await audit(env, identity, "update_event", id, changedFields, now);
 	await saveSnapshot(env, now);
 	return respond({ event: next });
 }

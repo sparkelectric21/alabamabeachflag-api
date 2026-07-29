@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { exactBeachMatch, explainBeachMatch } from "../src/beachEvents/matching";
 import { parseICalendar } from "../src/beachEvents/ical";
-import { applyImportedEvents, buildSnapshot, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
+import { applyImportedEvents, buildSnapshot, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
 import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
 import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEvents/schedule";
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
 import type { BeachEvent, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
+import { handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
 
 function memoryEnv() {
 	const values = new Map<string, string>();
@@ -51,6 +52,16 @@ describe("exact beach event matching", () => {
 		expect(exactBeachMatch({ providerId: "orangeBeachCoastalResources", venue: "Alabama Point" })).toEqual({ beachId: "alabama-point", method: "sourceAlias" });
 		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ exclusionReason: "exactBeachNotRepresented" });
 	});
+
+	it("maps only official exact Gulf State Park Pier aliases to Pavilion", () => {
+		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Pier" })).toEqual({ beachId: "gulf-state-park-pavilion", method: "sourceAlias" });
+		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Fishing and Education Pier, 20800 E Beach Blvd, Gulf Shores, AL 36542, USA" })).toEqual({ beachId: "gulf-state-park-pavilion", method: "sourceAlias" });
+		expect(exactBeachMatch({ providerId: "x", venue: "Gulf State Park Pier" })).toBeNull();
+		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Pier" })).toBeNull();
+		for (const venue of ["Gulf State Park Nature Center", "Gulf State Park Learning Campus", "Lake Shelby Picnic Area"]) {
+			expect(explainBeachMatch({ providerId: "gulfStatePark", venue })).toMatchObject({ exclusionReason: "inlandVenue" });
+		}
+	});
 });
 
 describe("iCalendar normalization", () => {
@@ -70,11 +81,29 @@ describe("event lifecycle", () => {
 		expect([...h.values.keys()].filter((key) => key.includes(":event:"))).toHaveLength(1);
 	});
 
+	it("reassesses a formerly excluded Pier candidate as pending review", async () => {
+		const h = memoryEnv();
+		const pier = facts({ providerId: "gulfStatePark", externalId: "pier-1", venue: "Gulf State Park Pier" });
+		h.values.set("beach-events:v1:excluded:gulfStatePark-pier-1", JSON.stringify({ id: "gulfStatePark-pier-1" }));
+		expect(await applyImportedEvents(h.env, [pier], new Date("2026-07-28T12:00:00Z"))).toMatchObject({ discovered: 1, pendingReview: 1 });
+		expect(h.values.has("beach-events:v1:excluded:gulfStatePark-pier-1")).toBe(false);
+		expect(JSON.parse(h.values.get("beach-events:v1:event:imported-gulfStatePark-pier-1")!)).toMatchObject({ beachId: "gulf-state-park-pavilion", status: "pendingReview", matchExplanation: "Exact source venue alias" });
+	});
+
 	it("expires ended items from the public snapshot and keeps active multi-day items", () => {
 		const base = normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!;
 		const active = { ...base, status: "published", endAt: "2026-08-02T12:00:00Z" } as BeachEvent;
 		const expired = { ...base, id: "old", status: "published", endAt: "2026-07-27T12:00:00Z" } as BeachEvent;
 		expect(buildSnapshot([active, expired], new Date("2026-08-01T12:00:00Z")).beaches["gulf-shores-public-beach"]).toEqual([active]);
+	});
+
+	it("uses the same Central-Time display window as iOS for active counts", () => {
+		const base = normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!;
+		const ordinaryTomorrow = { ...base, status: "published", startAt: "2026-08-02T15:00:00Z", endAt: "2026-08-02T16:00:00Z" } as BeachEvent;
+		expect(isEventVisibleNow(ordinaryTomorrow, new Date("2026-08-01T18:00:00Z"))).toBe(false);
+		expect(isEventVisibleNow({ ...ordinaryTomorrow, impactLevel: "high" }, new Date("2026-08-01T18:00:00Z"))).toBe(true);
+		expect(isEventVisibleNow({ ...ordinaryTomorrow, displayFrom: "2026-08-01T17:00:00Z" }, new Date("2026-08-01T18:00:00Z"))).toBe(true);
+		expect(isEventVisibleNow({ ...ordinaryTomorrow, startAt: "2026-08-01T20:00:00Z", endAt: "2026-08-03T01:00:00Z" }, new Date("2026-08-02T12:00:00Z"))).toBe(true);
 	});
 
 	it("validates manual types, impacts, dates, and HTTPS sources", () => {
@@ -91,6 +120,42 @@ describe("event lifecycle", () => {
 		};
 		expect(validateManualEvent(event, new Date("2026-08-01T12:00:00Z"))).toEqual([]);
 		expect(validateManualEvent(event, new Date("2026-08-01T10:30:00Z"))).toContain("status");
+	});
+
+	it("edits imported app fields while preserving identity, source facts, and status", async () => {
+		const h = memoryEnv();
+		const original = { ...normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!, status: "pendingReview" } as BeachEvent;
+		h.values.set(`beach-events:v1:event:${original.id}`, JSON.stringify(original));
+		const response = await handleBeachEventsAdminUpdate(
+			new Request(`https://example.com/admin/beach-events/${original.id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end" }),
+			}),
+			h.env,
+			{ method: "access", subject: "operator@example.com" },
+			original.id,
+			new Date("2026-07-28T13:00:00Z"),
+		);
+		expect(response.status).toBe(200);
+		const updated = (await response.json() as { event: BeachEvent }).event;
+		expect(updated).toMatchObject({ id: original.id, title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end", status: "pendingReview", sourceFacts: original.sourceFacts, createdAt: original.createdAt });
+		const auditRecord = [...h.values.entries()].find(([key]) => key.startsWith("beach-events:v1:audit:"))?.[1];
+		expect(JSON.parse(auditRecord!)).toMatchObject({ changes: { title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end" } });
+	});
+
+	it("publishes a revision ETag and honors conditional revalidation", async () => {
+		const h = memoryEnv();
+		const event = { ...normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!, status: "published" } as BeachEvent;
+		h.values.set(`beach-events:v1:event:${event.id}`, JSON.stringify(event));
+		const snapshot = buildSnapshot([event], new Date("2026-07-28T12:00:00Z"));
+		h.values.set("beach-events:v1:snapshot", JSON.stringify(snapshot));
+		const first = await handleBeachEventsRequest(new Request("https://example.com/v1/beach-events"), h.env, new Date("2026-07-28T13:00:00Z"));
+		expect(first.status).toBe(200);
+		expect(first.headers.get("cache-control")).toContain("must-revalidate");
+		const etag = first.headers.get("etag")!;
+		const conditional = await handleBeachEventsRequest(new Request("https://example.com/v1/beach-events", { headers: { "If-None-Match": etag } }), h.env, new Date("2026-07-28T13:00:00Z"));
+		expect(conditional.status).toBe(304);
 	});
 
 	it("isolates provider failures and does not write a beach-condition key", async () => {

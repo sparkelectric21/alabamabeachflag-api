@@ -103,6 +103,8 @@ async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, re
 	await env.BEACH_DATA.put(key, JSON.stringify(candidate), { expirationTtl: 90 * 24 * 60 * 60 });
 }
 
+const exclusionKey = (fact: SourceFacts) => `${EXCLUSION_PREFIX}${fact.providerId}-${encodeURIComponent(fact.externalId).slice(0, 150)}`;
+
 export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number; excluded: number; pendingReview: number; ruleSuppressed: number; unsupportedOrAmbiguous: number }> {
 	const existing = await listEvents(env);
 	const rules = await listRules(env);
@@ -125,6 +127,7 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 			continue;
 		}
 		matched += 1;
+		await env.BEACH_DATA.delete(exclusionKey(fact));
 		const prior = existingById.get(event.id);
 		if (prior) {
 			await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, ...prior, sourceFacts: fact, updatedAt: now.toISOString() }));
@@ -145,13 +148,32 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 	return { discovered, matched, excluded, pendingReview, ruleSuppressed, unsupportedOrAmbiguous };
 }
 
+function centralDayOrdinal(value: Date): number {
+	const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" })
+		.formatToParts(value).reduce<Record<string, number>>((result, part) => {
+			if (part.type === "year" || part.type === "month" || part.type === "day") result[part.type] = Number(part.value);
+			return result;
+		}, {});
+	return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
+}
+
+export function isEventVisibleNow(event: BeachEvent, now: Date): boolean {
+	if (event.status !== "published" || Date.parse(event.endAt) <= now.getTime()) return false;
+	if (event.displayFrom && Date.parse(event.displayFrom) <= now.getTime()) return true;
+	const today = centralDayOrdinal(now);
+	const firstDay = centralDayOrdinal(new Date(event.startAt));
+	const lastDay = centralDayOrdinal(new Date(Date.parse(event.endAt) - 1));
+	if (firstDay <= today && lastDay >= today) return true;
+	return ["high", "major"].includes(event.impactLevel) && firstDay <= today + 1 && lastDay >= today + 1;
+}
+
 export function buildSnapshot(events: BeachEvent[], now: Date): BeachEventsSnapshot {
 	const beaches: Record<string, BeachEvent[]> = {};
 	const visible = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
 	for (const event of visible) (beaches[event.beachId] ??= []).push(event);
 	for (const items of Object.values(beaches)) items.sort((a, b) => a.startAt.localeCompare(b.startAt));
 	const attribution = [...new Map(visible.map((event) => [event.sourceFacts.providerId, { providerId: event.sourceFacts.providerId, sourceName: event.sourceName, sourceURL: event.sourceFacts.sourceURL }])).values()];
-	return { schemaVersion: 1, status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: now.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
+	return { schemaVersion: 1, revision: crypto.randomUUID(), status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: now.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
 }
 
 export async function saveSnapshot(env: Pick<Env, "BEACH_DATA">, now: Date): Promise<BeachEventsSnapshot> {

@@ -38,8 +38,14 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 			"Gulf State Park Pavillion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
 			"Gulf State Park Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
 			"Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
+			"Gulf State Park Pier",
+			"Gulf State Park Pier, 20800 E Beach Blvd, Gulf Shores, AL 36542, USA",
+			"Gulf State Park Pier, 20800 East Beach Boulevard, Gulf Shores, AL 36542, USA",
+			"Gulf State Park Fishing and Education Pier",
+			"Gulf State Park Fishing and Education Pier, 20800 E Beach Blvd, Gulf Shores, AL 36542, USA",
+			"Gulf State Park Fishing and Education Pier, 20800 East Beach Boulevard, Gulf Shores, AL 36542, USA",
 		] },
-		excludes: ["Gulf State Park Nature Center", "Gulf State Park Learning Campus", "Gulf State Park Campground", "Lake Shelby Picnic Area", "Gulf State Park Pier", "Lake Shelby Playground"],
+		excludes: ["Gulf State Park Nature Center", "Gulf State Park Learning Campus", "Gulf State Park Campground", "Lake Shelby Picnic Area", "Lake Shelby Playground"],
 	},
 	{
 		beachId: "little-lagoon-pass",
@@ -91,10 +97,9 @@ const broadLocations = ["gulf shores", "orange beach", "dauphin island", "fort m
 const unsupportedWestEnd = ["dauphin island west end beach", "west end beach"];
 const inlandOrUnsupported = [
 	"gulf state park nature center", "gulf state park learning campus", "gulf state park campground", "lake shelby picnic area", "lake shelby playground",
-	"gulf state park pier", "fort morgan historic site", "fort morgan state historic site", "mobile bay ferry fort morgan", "fort morgan campground",
+	"fort morgan historic site", "fort morgan state historic site", "mobile bay ferry fort morgan", "fort morgan campground",
 	"dauphin island sea lab", "alabama aquarium", "audubon bird sanctuary", "fort gaines", "dauphin island town hall", "the wharf",
 	"gulf state park nature center orange beach al 36561 usa", "gulf state park nature center 22120 campground rd orange beach al 36561 usa",
-	"gulf state park pier 20800 e beach blvd gulf shores al 36542 usa",
 ];
 
 export function explainBeachMatch(input: { providerId: string; venue?: string; address?: string }): MatchExplanation {

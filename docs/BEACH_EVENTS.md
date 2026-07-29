@@ -50,6 +50,12 @@ The hourly Worker cron invokes this domain once when the local clock reaches 7:0
 
 Each attempt persists status at `beach-events:v1:refresh-status`, including trigger, timing, outcome, provider results, raw/matched/excluded/review/published counts, operational controls, snapshot timestamps, and the next scheduled refresh. The protected admin Source Refresh panel displays this record and may invoke `POST /internal/refresh/beach-events`; the endpoint rejects unauthenticated callers and duplicate attempts while a recent refresh is running. Manual attempts use the same ingestion path and write an administrative audit record.
 
+Every saved public snapshot has a new `revision` and strong `ETag`. Clients may retain the representation, but they must revalidate it; a publish, edit, unpublish, cancellation, or expiration therefore becomes observable without retaining an old valid-but-empty response. The last-known-good safety bound remains 12 hours.
+
+The admin response includes reusable `beachReferences` derived from `BeachRegistry`, exact venue mappings, and the event provider catalog. Addresses and aliases come only from approved matching configuration; coordinates and environmental sources come from `BeachRegistry`; event coverage and source URLs come from the provider catalog. Missing parking/access facts are stated as unavailable rather than inferred. This reference is read-only and remains separate from event `internalNotes`.
+
+The current Dauphin Island app/backend model represents `dauphin-island-public-beach` (including the exact Middle Beach alias) and `dauphin-island-east-end`. West End Beach has no canonical beach ID and remains `exactBeachNotRepresented`. Town, Coastal Cleanup, and Sea Lab coverage remains manual-only; Alabama Audubon remains disabled pending permission.
+
 The operational controls `domains.beachEvents`, `providers.gulfShoresEvents`, `providers.orangeBeachEvents`, `providers.gulfStateParkEvents`, and `providers.orangeBeachCoastalEvents` support enabled, disabled, and monitor-only states. Disabling this domain returns an empty disabled response without affecting other app data.
 
 ## Administration and decision memory

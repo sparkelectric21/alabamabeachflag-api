@@ -95,7 +95,7 @@ export const BEACH_EVENT_PROVIDERS: BeachEventProvider[] = [
 		legalStatus: "clear",
 		coverage: ["Gulf State Park Beach Pavilion"],
 		supportedBeachIds: ["gulf-state-park-pavilion"],
-		notes: "Public Google Calendar embedded by Alabama State Parks. Nature Center, Learning Campus, campground, lake, trail, and pier locations are excluded.",
+		notes: "Public Google Calendar embedded by Alabama State Parks. Exact official Pier aliases map to Pavilion for nearby visitor impact; Nature Center, Learning Campus, campground, lake, and trail locations remain excluded.",
 	},
 	{
 		id: "dauphinIslandTown",

@@ -57,6 +57,7 @@ export interface BeachEvent {
 
 export interface BeachEventsSnapshot {
 	schemaVersion: 1;
+	revision: string;
 	status: "ok" | "stale" | "disabled";
 	generatedAt: string;
 	lastSuccessfulRefresh: string;
