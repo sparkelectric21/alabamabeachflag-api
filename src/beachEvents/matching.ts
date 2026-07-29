@@ -33,7 +33,12 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 		beachId: "gulf-state-park-pavilion",
 		venues: ["Gulf State Park Beach Pavilion", "Gulf State Park Pavilion", "Beach Pavilion"],
 		addresses: ["22250 East Beach Blvd, Gulf Shores, AL 36542", "22250 E Beach Blvd, Gulf Shores, AL 36542"],
-		sourceAliases: { gulfStatePark: ["Gulf State Park Beach Pavillion"] },
+		sourceAliases: { gulfStatePark: [
+			"Gulf State Park Beach Pavillion",
+			"Gulf State Park Pavillion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
+			"Gulf State Park Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
+			"Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
+		] },
 		excludes: ["Gulf State Park Nature Center", "Gulf State Park Learning Campus", "Gulf State Park Campground", "Lake Shelby Picnic Area", "Gulf State Park Pier", "Lake Shelby Playground"],
 	},
 	{
@@ -88,6 +93,8 @@ const inlandOrUnsupported = [
 	"gulf state park nature center", "gulf state park learning campus", "gulf state park campground", "lake shelby picnic area", "lake shelby playground",
 	"gulf state park pier", "fort morgan historic site", "fort morgan state historic site", "mobile bay ferry fort morgan", "fort morgan campground",
 	"dauphin island sea lab", "alabama aquarium", "audubon bird sanctuary", "fort gaines", "dauphin island town hall", "the wharf",
+	"gulf state park nature center orange beach al 36561 usa", "gulf state park nature center 22120 campground rd orange beach al 36561 usa",
+	"gulf state park pier 20800 e beach blvd gulf shores al 36542 usa",
 ];
 
 export function explainBeachMatch(input: { providerId: string; venue?: string; address?: string }): MatchExplanation {

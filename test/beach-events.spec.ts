@@ -40,7 +40,9 @@ describe("exact beach event matching", () => {
 
 	it("matches Tier One exact locations and explains strict exclusions", () => {
 		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Beach Pavilion" })).toEqual({ beachId: "gulf-state-park-pavilion", method: "exactVenue" });
+		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Pavillion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA" })).toEqual({ beachId: "gulf-state-park-pavilion", method: "sourceAlias" });
 		expect(explainBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Nature Center" })).toMatchObject({ exclusionReason: "inlandVenue" });
+		expect(explainBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Nature Center, 22120 Campground Rd, Orange Beach, AL 36561, USA" })).toMatchObject({ exclusionReason: "inlandVenue" });
 		expect(exactBeachMatch({ providerId: "alabamaAudubon", venue: "Dauphin Island Middle Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "sourceAlias" });
 		expect(explainBeachMatch({ providerId: "alabamaAudubon", venue: "Dauphin Island" })).toMatchObject({ exclusionReason: "citywideOrBroadLocation" });
 		expect(explainBeachMatch({ providerId: "dauphinIslandSeaLab", venue: "Dauphin Island Sea Lab" })).toMatchObject({ exclusionReason: "inlandVenue" });
