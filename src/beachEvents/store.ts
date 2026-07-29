@@ -1,13 +1,14 @@
 import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
-import { dedupeKey, exactBeachMatch } from "./matching";
-import type { BeachEvent, BeachEventsSnapshot, DecisionRule, SourceFacts } from "./types";
+import { dedupeKey, explainBeachMatch } from "./matching";
+import type { BeachEvent, BeachEventsSnapshot, DecisionRule, ExcludedEventCandidate, SourceFacts } from "./types";
 import { EVENT_STATUSES, EVENT_TYPES, IMPACT_LEVELS } from "./types";
 
 export const SNAPSHOT_KEY = "beach-events:v1:snapshot";
 export const EVENT_PREFIX = "beach-events:v1:event:";
 export const RULE_PREFIX = "beach-events:v1:rule:";
 export const AUDIT_PREFIX = "beach-events:v1:audit:";
+export const EXCLUSION_PREFIX = "beach-events:v1:excluded:";
 export const STALE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 const safeText = (value: unknown, max: number): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value);
@@ -32,14 +33,14 @@ export function suggestPresentation(title: string, description = ""): Pick<Beach
 	};
 }
 
-export function normalizedEvent(facts: SourceFacts, now: Date): BeachEvent | null {
-	const match = exactBeachMatch({ providerId: facts.providerId, venue: facts.venue, address: facts.address });
-	if (!match) return null;
+export function normalizedEvent(facts: SourceFacts, now: Date, override?: { beachId: string; ruleId: string; explanation: string }): BeachEvent | null {
+	const match = explainBeachMatch({ providerId: facts.providerId, venue: facts.venue, address: facts.address });
+	if ((!match.beachId || !match.method) && !override) return null;
 	const suggested = suggestPresentation(facts.title, facts.description);
 	const sourceURL = httpsURL(facts.officialURL) ? facts.officialURL : facts.sourceURL;
 	return {
 		id: `imported-${facts.providerId}-${encodeURIComponent(facts.externalId).slice(0, 120)}`,
-		beachId: match.beachId,
+		beachId: override?.beachId ?? match.beachId!,
 		title: facts.title,
 		venue: facts.venue,
 		address: facts.address,
@@ -51,8 +52,10 @@ export function normalizedEvent(facts: SourceFacts, now: Date): BeachEvent | nul
 		status: "pendingReview",
 		sourceName: facts.sourceName,
 		sourceURL,
-		matchMethod: match.method,
-		matchConfidence: "exact",
+		matchMethod: override ? "adminOverride" : match.method!,
+		matchConfidence: override ? "admin" : "exact",
+		matchRuleId: override?.ruleId ?? match.ruleId,
+		matchExplanation: override?.explanation ?? match.reason,
 		sourceFacts: facts,
 		createdAt: now.toISOString(),
 		updatedAt: now.toISOString(),
@@ -69,22 +72,69 @@ export async function listRules(env: Pick<Env, "BEACH_DATA">): Promise<DecisionR
 	return (await Promise.all(listed.keys.map((key) => env.BEACH_DATA.get<DecisionRule>(key.name, "json")))).filter((item): item is DecisionRule => Boolean(item));
 }
 
-export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number; pendingReview: number; ruleSuppressed: number }> {
+export async function listExcludedCandidates(env: Pick<Env, "BEACH_DATA">): Promise<ExcludedEventCandidate[]> {
+	const listed = await env.BEACH_DATA.list({ prefix: EXCLUSION_PREFIX, limit: 1000 });
+	return (await Promise.all(listed.keys.map((key) => env.BEACH_DATA.get<ExcludedEventCandidate>(key.name, "json")))).filter((item): item is ExcludedEventCandidate => Boolean(item));
+}
+
+async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, reason: ExcludedEventCandidate["reason"], reasonDetail: string, ruleId: string, now: Date): Promise<void> {
+	const id = `${fact.providerId}-${encodeURIComponent(fact.externalId).slice(0, 150)}`;
+	const key = `${EXCLUSION_PREFIX}${id}`;
+	const prior = await env.BEACH_DATA.get<ExcludedEventCandidate>(key, "json");
+	const candidate: ExcludedEventCandidate = {
+		id,
+		providerId: fact.providerId,
+		title: fact.title,
+		venue: fact.venue,
+		...(fact.address ? { address: fact.address } : {}),
+		startAt: fact.startAt,
+		endAt: fact.endAt,
+		sourceName: fact.sourceName,
+		sourceURL: fact.officialURL ?? fact.sourceURL,
+		reason,
+		reasonDetail,
+		matchConfidence: "none",
+		ruleId,
+		decision: "automatic",
+		sourceFacts: fact,
+		firstSeenAt: prior?.firstSeenAt ?? now.toISOString(),
+		lastSeenAt: now.toISOString(),
+	};
+	await env.BEACH_DATA.put(key, JSON.stringify(candidate), { expirationTtl: 90 * 24 * 60 * 60 });
+}
+
+export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number; excluded: number; pendingReview: number; ruleSuppressed: number; unsupportedOrAmbiguous: number }> {
 	const existing = await listEvents(env);
 	const rules = await listRules(env);
 	const existingById = new Map(existing.map((event) => [event.id, event]));
 	const existingDedupe = new Set(existing.map(dedupeKey));
-	let matched = 0, discovered = 0, pendingReview = 0, ruleSuppressed = 0;
+	let matched = 0, discovered = 0, excluded = 0, pendingReview = 0, ruleSuppressed = 0, unsupportedOrAmbiguous = 0;
 	for (const fact of facts) {
-		const event = normalizedEvent(fact, now);
-		if (!event) continue;
+		if (Date.parse(fact.endAt) <= now.getTime()) {
+			excluded += 1;
+			await saveExclusion(env, fact, "expiredBeforeDiscovery", "Event ended before this discovery window", "expired-before-discovery", now);
+			continue;
+		}
+		const explanation = explainBeachMatch({ providerId: fact.providerId, venue: fact.venue, address: fact.address });
+		const aliasRule = rules.find((candidate) => candidate.enabled && candidate.action === "suggest" && candidate.providerId === fact.providerId && candidate.beachId && ((!candidate.venue || candidate.venue.toLowerCase() === fact.venue.toLowerCase()) && (!candidate.address || candidate.address.toLowerCase() === (fact.address ?? "").toLowerCase())));
+		const event = normalizedEvent(fact, now, aliasRule?.beachId ? { beachId: aliasRule.beachId, ruleId: aliasRule.id, explanation: aliasRule.address ? "Exact administrator-approved address alias" : "Exact administrator-approved venue alias" } : undefined);
+		if (!event) {
+			excluded += 1;
+			unsupportedOrAmbiguous += 1;
+			await saveExclusion(env, fact, explanation.exclusionReason ?? "unknownVenue", explanation.reason, explanation.ruleId, now);
+			continue;
+		}
 		matched += 1;
 		const prior = existingById.get(event.id);
 		if (prior) {
 			await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, ...prior, sourceFacts: fact, updatedAt: now.toISOString() }));
 			continue;
 		}
-		if (existingDedupe.has(dedupeKey(event))) continue;
+		if (existingDedupe.has(dedupeKey(event))) {
+			excluded += 1;
+			await saveExclusion(env, fact, "duplicate", "A matching event from this or another provider already exists", "cross-provider-deduplication", now);
+			continue;
+		}
 		const rule = rules.find((candidate) => candidate.enabled && candidate.providerId === fact.providerId && (!candidate.venue || candidate.venue.toLowerCase() === fact.venue.toLowerCase()) && (!candidate.titlePattern || fact.title.toLowerCase().includes(candidate.titlePattern.toLowerCase())) && (!candidate.beachId || candidate.beachId === event.beachId));
 		const status = rule?.action === "disregard" ? "disregarded" : rule?.action === "autoApprove" && event.matchConfidence === "exact" ? "approved" : "pendingReview";
 		if (status === "pendingReview") pendingReview += 1;
@@ -92,7 +142,7 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, status, ...(rule?.eventType ? { eventType: rule.eventType } : {}), ...(rule?.impactLevel ? { impactLevel: rule.impactLevel } : {}) }));
 		existingDedupe.add(dedupeKey(event)); discovered += 1;
 	}
-	return { discovered, matched, pendingReview, ruleSuppressed };
+	return { discovered, matched, excluded, pendingReview, ruleSuppressed, unsupportedOrAmbiguous };
 }
 
 export function buildSnapshot(events: BeachEvent[], now: Date): BeachEventsSnapshot {

@@ -2,8 +2,8 @@ import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
 import { evaluateBeachEventsControl, readOperationalControl } from "../operationalControl/store";
 import { BEACH_EVENT_PROVIDERS } from "../beachEvents/providers";
-import { AUDIT_PREFIX, EVENT_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, listEvents, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
-import type { BeachEvent, BeachEventsSnapshot, DecisionRule } from "../beachEvents/types";
+import { AUDIT_PREFIX, EVENT_PREFIX, EXCLUSION_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, listEvents, listExcludedCandidates, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
+import type { BeachEvent, BeachEventsSnapshot, DecisionRule, ExcludedEventCandidate } from "../beachEvents/types";
 import { beaches } from "../config/BeachRegistry";
 import { readBeachEventRefreshStatus } from "../beachEvents/refresh";
 import { nextBeachEventRefresh } from "../beachEvents/schedule";
@@ -29,12 +29,31 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 	const filtered = status ? events.filter((event) => event.status === status) : events;
 	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 100 });
 	const history = (await Promise.all(auditKeys.keys.map((key) => env.BEACH_DATA.get(key.name, "json")))).filter(Boolean);
+	const exclusions = await listExcludedCandidates(env);
+	const activeEvents = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
+	const coverage = beaches.map(({ id, displayName }) => {
+		const beachEvents = events.filter((event) => event.beachId === id);
+		const active = activeEvents.filter((event) => event.beachId === id);
+		const supportedProviders = BEACH_EVENT_PROVIDERS.filter((provider) => provider.supportedBeachIds.includes(id));
+		return {
+			beachId: id,
+			beachName: displayName,
+			activeEvents: active.length,
+			upcomingHighImpact: beachEvents.filter((event) => ["high", "major"].includes(event.impactLevel) && Date.parse(event.endAt) > now.getTime()).sort((a, b) => a.startAt.localeCompare(b.startAt))[0] ?? null,
+			pendingCandidates: beachEvents.filter((event) => event.status === "pendingReview").length,
+			lastMatchedEventAt: beachEvents.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.updatedAt ?? null,
+			coverageState: supportedProviders.some((provider) => provider.mode === "enabled") ? "active" : supportedProviders.length ? "partial" : "none",
+			providerIds: supportedProviders.map((provider) => provider.id),
+		};
+	});
 	return respond({
 		events: filtered.sort((a, b) => a.startAt.localeCompare(b.startAt)),
 		rules: await listRules(env),
 		providers: BEACH_EVENT_PROVIDERS,
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
 		audit: history.sort((a: any, b: any) => String(b.timestamp).localeCompare(String(a.timestamp))),
+		exclusions: exclusions.sort((a, b) => a.startAt.localeCompare(b.startAt)),
+		coverage,
 		refresh: {
 			...await readBeachEventRefreshStatus(env, now),
 			nextScheduledRefresh: nextBeachEventRefresh(now),
@@ -126,12 +145,36 @@ export async function handleBeachEventsAdminDelete(env: Env, identity: AdminIden
 
 export async function handleBeachEventRuleCreate(request: Request, env: Env, identity: AdminIdentity, now = new Date()): Promise<Response> {
 	let input: Record<string, unknown>; try { input = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
-	if (!["disregard", "autoApprove", "suggest"].includes(String(input.action)) || typeof input.providerId !== "string" || !input.providerId || (!input.venue && !input.titlePattern)) return respond({ error: "invalid_rule" }, 400);
+	if (!["disregard", "autoApprove", "suggest"].includes(String(input.action)) || typeof input.providerId !== "string" || !input.providerId || (!input.venue && !input.address && !input.titlePattern)) return respond({ error: "invalid_rule" }, 400);
 	if (input.action === "autoApprove" && (!input.venue || !input.beachId)) return respond({ error: "auto_approve_requires_exact_venue_and_beach" }, 400);
-	const rule: DecisionRule = { id: crypto.randomUUID(), action: input.action as DecisionRule["action"], providerId: input.providerId.slice(0, 80), ...(typeof input.venue === "string" ? { venue: input.venue.slice(0, 200) } : {}), ...(typeof input.titlePattern === "string" ? { titlePattern: input.titlePattern.slice(0, 160) } : {}), ...(typeof input.beachId === "string" ? { beachId: input.beachId.slice(0, 80) } : {}), enabled: true, createdAt: now.toISOString(), createdBy: identity.subject.slice(0, 200) };
+	if (input.action === "suggest" && ((!input.venue && !input.address) || !input.beachId)) return respond({ error: "alias_requires_exact_location_and_beach" }, 400);
+	const rule: DecisionRule = { id: crypto.randomUUID(), action: input.action as DecisionRule["action"], providerId: input.providerId.slice(0, 80), ...(typeof input.venue === "string" ? { venue: input.venue.slice(0, 200) } : {}), ...(typeof input.address === "string" ? { address: input.address.slice(0, 240) } : {}), ...(typeof input.titlePattern === "string" ? { titlePattern: input.titlePattern.slice(0, 160) } : {}), ...(typeof input.beachId === "string" ? { beachId: input.beachId.slice(0, 80) } : {}), enabled: true, createdAt: now.toISOString(), createdBy: identity.subject.slice(0, 200) };
 	await env.BEACH_DATA.put(`${RULE_PREFIX}${rule.id}`, JSON.stringify(rule));
 	await audit(env, identity, "create_rule", rule.id, rule, now);
 	return respond({ rule }, 201);
+}
+
+export async function handleExcludedEventAssign(request: Request, env: Env, identity: AdminIdentity, id: string, now = new Date()): Promise<Response> {
+	const key = `${EXCLUSION_PREFIX}${id}`;
+	const candidate = await env.BEACH_DATA.get<ExcludedEventCandidate>(key, "json");
+	if (!candidate) return respond({ error: "not_found" }, 404);
+	let input: Record<string, unknown>; try { input = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
+	const beachId = String(input.beachId ?? "");
+	if (!beaches.some((beach) => beach.id === beachId)) return respond({ error: "unknown_beach" }, 400);
+	const presentation = suggestPresentation(candidate.title, candidate.sourceFacts.description);
+	const eventId = `imported-${candidate.providerId}-${encodeURIComponent(candidate.sourceFacts.externalId).slice(0, 120)}`;
+	const event: BeachEvent = {
+		id: eventId, beachId, title: candidate.title, venue: candidate.venue, ...(candidate.address ? { address: candidate.address } : {}),
+		startAt: candidate.startAt, endAt: candidate.endAt, allDay: candidate.sourceFacts.allDay, recurring: candidate.sourceFacts.recurring,
+		...presentation, status: "pendingReview", sourceName: candidate.sourceName, sourceURL: candidate.sourceURL,
+		matchMethod: "adminOverride", matchConfidence: "admin", matchRuleId: "admin-candidate-assignment", matchExplanation: "Administrator assigned the excluded candidate to an exact beach",
+		sourceFacts: candidate.sourceFacts, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+	};
+	await env.BEACH_DATA.put(`${EVENT_PREFIX}${eventId}`, JSON.stringify(event));
+	await env.BEACH_DATA.put(key, JSON.stringify({ ...candidate, suggestedBeachId: beachId, decision: "admin", lastSeenAt: now.toISOString() }), { expirationTtl: 90 * 24 * 60 * 60 });
+	await audit(env, identity, "assign_excluded_candidate", id, { beachId, eventId }, now);
+	await saveSnapshot(env, now);
+	return respond({ event }, 201);
 }
 
 export async function handleBeachEventSuggest(request: Request): Promise<Response> {

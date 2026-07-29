@@ -6,6 +6,8 @@ export const CONTROL_IDS = [
 	"providers.orangeBeachFlags",
 	"providers.gulfShoresEvents",
 	"providers.orangeBeachEvents",
+	"providers.gulfStateParkEvents",
+	"providers.orangeBeachCoastalEvents",
 ] as const;
 
 export type ControlId = typeof CONTROL_IDS[number];
@@ -56,7 +58,7 @@ export interface OperationalControlAudit {
 }
 
 export type FlagProvider = "gulfShoresFlags" | "orangeBeachFlags";
-export type BeachEventProvider = "gulfShoresEvents" | "orangeBeachEvents";
+export type BeachEventProvider = "gulfShoresEvents" | "orangeBeachEvents" | "gulfStateParkEvents" | "orangeBeachCoastalEvents";
 export type AvailabilityReason = "temporarily_disabled" | "stale" | "provider_unavailable" | "validation_failed";
 
 export interface EffectiveControl {

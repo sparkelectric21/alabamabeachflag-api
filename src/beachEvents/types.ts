@@ -47,6 +47,8 @@ export interface BeachEvent {
 	sourceURL: string;
 	matchMethod: MatchMethod;
 	matchConfidence: "exact" | "admin";
+	matchRuleId?: string;
+	matchExplanation?: string;
 	internalNotes?: string;
 	sourceFacts: SourceFacts;
 	createdAt: string;
@@ -68,6 +70,7 @@ export interface DecisionRule {
 	action: "disregard" | "autoApprove" | "suggest";
 	providerId: string;
 	venue?: string;
+	address?: string;
 	titlePattern?: string;
 	beachId?: string;
 	eventType?: BeachEventType;
@@ -77,6 +80,27 @@ export interface DecisionRule {
 	createdBy: string;
 }
 
+export interface ExcludedEventCandidate {
+	id: string;
+	providerId: string;
+	title: string;
+	venue: string;
+	address?: string;
+	startAt: string;
+	endAt: string;
+	sourceName: string;
+	sourceURL: string;
+	reason: "inlandVenue" | "citywideOrBroadLocation" | "nearbyNotAtBeach" | "unsupportedVenue" | "unsupportedBeach" | "unknownVenue" | "ambiguousLocation" | "providerDisabled" | "providerMonitorOnly" | "disregardRule" | "duplicate" | "expiredBeforeDiscovery" | "invalidSourceRecord" | "nonBeachEventType" | "exactBeachNotRepresented";
+	reasonDetail: string;
+	suggestedBeachId?: string;
+	matchConfidence: "none" | "possible";
+	ruleId: string;
+	decision: "automatic" | "admin";
+	sourceFacts: SourceFacts;
+	firstSeenAt: string;
+	lastSeenAt: string;
+}
+
 export interface BeachEventProviderRefresh {
 	providerId: string;
 	status: "ok" | "failed" | "disabled" | "monitored";
@@ -84,7 +108,13 @@ export interface BeachEventProviderRefresh {
 	matched: number;
 	excluded: number;
 	pendingReview: number;
+	published: number;
 	ruleSuppressed: number;
+	unsupportedOrAmbiguous: number;
+	freshness: "fresh" | "stale" | "never";
+	lastAttempt: string;
+	lastSuccess?: string;
+	lastFailure?: string;
 	error?: string;
 }
 

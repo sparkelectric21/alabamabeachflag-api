@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { exactBeachMatch } from "../src/beachEvents/matching";
+import { exactBeachMatch, explainBeachMatch } from "../src/beachEvents/matching";
 import { parseICalendar } from "../src/beachEvents/ical";
 import { applyImportedEvents, buildSnapshot, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
 import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
@@ -36,6 +36,18 @@ describe("exact beach event matching", () => {
 
 	it("rejects citywide, excluded, nearby, and unsupported Flora-Bama locations", () => {
 		for (const venue of ["Gulf Shores", "Meyer Park", "The Wharf", "Flora-Bama", "Orange Beach Waterfront Park"]) expect(exactBeachMatch({ providerId: "x", venue })).toBeNull();
+	});
+
+	it("matches Tier One exact locations and explains strict exclusions", () => {
+		expect(exactBeachMatch({ providerId: "gulfStatePark", venue: "Beach Pavilion" })).toEqual({ beachId: "gulf-state-park-pavilion", method: "exactVenue" });
+		expect(explainBeachMatch({ providerId: "gulfStatePark", venue: "Gulf State Park Nature Center" })).toMatchObject({ exclusionReason: "inlandVenue" });
+		expect(exactBeachMatch({ providerId: "alabamaAudubon", venue: "Dauphin Island Middle Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "sourceAlias" });
+		expect(explainBeachMatch({ providerId: "alabamaAudubon", venue: "Dauphin Island" })).toMatchObject({ exclusionReason: "citywideOrBroadLocation" });
+		expect(explainBeachMatch({ providerId: "dauphinIslandSeaLab", venue: "Dauphin Island Sea Lab" })).toMatchObject({ exclusionReason: "inlandVenue" });
+		expect(explainBeachMatch({ providerId: "alabamaAudubon", venue: "Fort Morgan State Historic Site" })).toMatchObject({ exclusionReason: "inlandVenue" });
+		expect(exactBeachMatch({ providerId: "alabamaCoastalCleanup", venue: "Fort Morgan Public Beach Cleanup Zone" })).toEqual({ beachId: "fort-morgan-public-beach", method: "sourceAlias" });
+		expect(exactBeachMatch({ providerId: "orangeBeachCoastalResources", venue: "Alabama Point" })).toEqual({ beachId: "alabama-point", method: "sourceAlias" });
+		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ exclusionReason: "exactBeachNotRepresented" });
 	});
 });
 
@@ -108,16 +120,16 @@ describe("event refresh observability", () => {
 		expect(JSON.parse(zero.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 0, matched: 0, excluded: 0 }, lastAttempt: "2026-07-28T12:00:00.000Z" });
 		const excluded = memoryEnv();
 		await refreshBeachEvents(excluded.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(inlandFeed)) as unknown as typeof fetch);
-		expect(JSON.parse(excluded.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 2, matched: 0, excluded: 2, unsupportedOrAmbiguous: 2 } });
+		expect(JSON.parse(excluded.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 4, matched: 0, excluded: 4, unsupportedOrAmbiguous: 4 } });
 	});
 
 	it("records pending review, success timestamps, failure, and partial failure", async () => {
 		const healthy = memoryEnv();
 		await refreshBeachEvents(healthy.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response(beachFeed)) as unknown as typeof fetch);
-		expect(JSON.parse(healthy.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 2, matched: 2, pendingReview: 1 }, lastSuccess: expect.any(String) });
+		expect(JSON.parse(healthy.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "healthy", counts: { raw: 4, matched: 4, pendingReview: 1, excluded: 3 }, lastSuccess: expect.any(String) });
 		const failed = memoryEnv();
 		await refreshBeachEvents(failed.env, new Date("2026-07-28T12:00:00Z"), vi.fn(() => response("down", 503)) as unknown as typeof fetch);
-		expect(JSON.parse(failed.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "failed", lastFailure: expect.any(String), providers: [{ status: "failed" }, { status: "failed" }] });
+		expect(JSON.parse(failed.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "failed", lastFailure: expect.any(String), providers: expect.arrayContaining([expect.objectContaining({ providerId: "gulfStatePark", status: "failed" }), expect.objectContaining({ providerId: "orangeBeachCoastalResources", status: "failed" })]) });
 		const partial = memoryEnv();
 		const fetcher = vi.fn((url: RequestInfo | URL) => String(url).includes("gulfshores") ? response(beachFeed) : response("down", 503));
 		await refreshBeachEvents(partial.env, new Date("2026-07-28T12:00:00Z"), fetcher as unknown as typeof fetch);

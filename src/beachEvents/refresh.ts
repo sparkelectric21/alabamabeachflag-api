@@ -61,36 +61,51 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 
 	const observations = [], providerResults: BeachEventProviderRefresh[] = [];
 	for (const provider of BEACH_EVENT_PROVIDERS) {
-		if (provider.mode !== "enabled") continue;
+		const priorProvider = prior?.providers.find((item) => item.providerId === provider.id);
+		if (provider.mode === "disabled" || provider.mode === "manualOnly") {
+			providerResults.push({
+				providerId: provider.id, status: "disabled", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, published: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: 0,
+				freshness: priorProvider?.lastSuccess ? "stale" : "never", lastAttempt: priorProvider?.lastAttempt ?? "",
+				...(priorProvider?.lastSuccess ? { lastSuccess: priorProvider.lastSuccess } : {}),
+			});
+			continue;
+		}
 		const providerControl = evaluateBeachEventsControl(
 			await readOperationalControl(env, now), now,
-			provider.id === "gulfShoresCity" ? "gulfShoresEvents" : "orangeBeachEvents",
+			provider.controlId,
 		);
 		if (providerControl.state === "disabled") {
-			providerResults.push({ providerId: provider.id, status: "disabled", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, ruleSuppressed: 0 });
+			providerResults.push({ providerId: provider.id, status: "disabled", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, published: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: 0, freshness: priorProvider?.lastSuccess ? "stale" : "never", lastAttempt: now.toISOString(), ...(priorProvider?.lastSuccess ? { lastSuccess: priorProvider.lastSuccess } : {}) });
 			continue;
 		}
 		try {
 			const response = await fetcher(provider.feedURL, { headers: { Accept: "text/calendar, text/plain;q=0.8", "User-Agent": "AlabamaBeachFlag/1.0 beach-events" } });
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			const facts = parseICalendar(await response.text(), provider);
-			const monitored = operational.state === "monitorOnly" || providerControl.state === "monitorOnly";
+			const allFacts = parseICalendar(await response.text(), provider);
+			const facts = allFacts.filter((fact) => Date.parse(fact.endAt) > now.getTime() - 24 * 60 * 60 * 1000 && Date.parse(fact.startAt) < now.getTime() + 400 * 24 * 60 * 60 * 1000);
+			const monitored = provider.mode === "monitorOnly" || operational.state === "monitorOnly" || providerControl.state === "monitorOnly";
 			const result = monitored
-				? { discovered: 0, matched: facts.filter((fact) => normalizedEvent(fact, now)).length, pendingReview: 0, ruleSuppressed: 0 }
+				? { discovered: 0, matched: facts.filter((fact) => normalizedEvent(fact, now)).length, excluded: facts.filter((fact) => !normalizedEvent(fact, now)).length, pendingReview: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: facts.filter((fact) => !normalizedEvent(fact, now)).length }
 				: await applyImportedEvents(env, facts, now);
+			const providerEvents = (await listEvents(env)).filter((event) => event.sourceFacts.providerId === provider.id);
 			providerResults.push({
 				providerId: provider.id,
 				status: monitored ? "monitored" : "ok",
 				fetched: facts.length,
 				matched: result.matched,
-				excluded: Math.max(0, facts.length - result.matched),
+				excluded: result.excluded,
 				pendingReview: result.pendingReview,
+				published: providerEvents.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime()).length,
 				ruleSuppressed: result.ruleSuppressed,
+				unsupportedOrAmbiguous: result.unsupportedOrAmbiguous,
+				freshness: "fresh",
+				lastAttempt: now.toISOString(),
+				lastSuccess: now.toISOString(),
 			});
 			observations.push({ provider: provider.id, domain: "beach_events", affectedBeachCount: 0, expectedBeachCount: 1 });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "provider_failure";
-			providerResults.push({ providerId: provider.id, status: "failed", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, ruleSuppressed: 0, error: message });
+			providerResults.push({ providerId: provider.id, status: "failed", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, published: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: 0, freshness: priorProvider?.lastSuccess ? "stale" : "never", lastAttempt: now.toISOString(), ...(priorProvider?.lastSuccess ? { lastSuccess: priorProvider.lastSuccess } : {}), lastFailure: now.toISOString(), error: message });
 			observations.push({ provider: provider.id, domain: "beach_events", affectedBeachCount: 1, expectedBeachCount: 1, errorReason: message });
 		}
 	}
@@ -104,10 +119,11 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		pendingReview: total.pendingReview + provider.pendingReview,
 		published: total.published,
 		ruleSuppressed: total.ruleSuppressed + provider.ruleSuppressed,
-		unsupportedOrAmbiguous: total.unsupportedOrAmbiguous + provider.excluded,
+		unsupportedOrAmbiguous: total.unsupportedOrAmbiguous + provider.unsupportedOrAmbiguous,
 	}), { ...emptyCounts(), published: events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime()).length });
 	const failures = providerResults.filter((item) => item.status === "failed");
-	const status = operational.state === "monitorOnly" ? "monitorOnly" : failures.length === providerResults.length ? "failed" : failures.length ? "warning" : "healthy";
+	const attempted = providerResults.filter((item) => item.status !== "disabled");
+	const status = operational.state === "monitorOnly" ? "monitorOnly" : attempted.length > 0 && failures.length === attempted.length ? "failed" : failures.length ? "warning" : "healthy";
 	const completedAt = new Date().toISOString();
 	const refresh: BeachEventRefreshStatus = {
 		...running, status, completedAt, providers: providerResults, counts,

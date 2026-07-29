@@ -41,7 +41,10 @@ export function parseOperationalControl(value: unknown): OperationalControlDocum
 	if (doc.schemaVersion !== 1 || typeof doc.revision !== "string" || !doc.revision || !isTimestamp(doc.updatedAt) || typeof doc.updatedBy !== "string") return null;
 	if (!doc.controls || typeof doc.controls !== "object" || Array.isArray(doc.controls)) return null;
 	const controls = doc.controls as Record<string, unknown>;
-	if (Object.keys(controls).length !== CONTROL_IDS.length || CONTROL_IDS.some((id) => !validControl(controls[id]))) return null;
+	if (Object.keys(controls).some((id) => !CONTROL_IDS.includes(id as ControlId))) return null;
+	const legacyRequired = CONTROL_IDS.filter((id) => id !== "providers.gulfStateParkEvents" && id !== "providers.orangeBeachCoastalEvents");
+	if (legacyRequired.some((id) => !validControl(controls[id]))) return null;
+	for (const id of CONTROL_IDS) if (controls[id] === undefined) controls[id] = { state: "enabled" };
 	const policy = doc.versionPolicy as Record<string, unknown> | null;
 	if (!policy || typeof policy !== "object" || !["none", "recommended", "required"].includes(String(policy.mode))) return null;
 	return doc as unknown as OperationalControlDocument;
@@ -85,7 +88,7 @@ function evaluateControls(doc: OperationalControlDocument, ids: ControlId[], now
 
 export function evaluateBeachEventsControl(doc: OperationalControlDocument, now = new Date(), provider?: BeachEventProvider): EffectiveControl {
 	const ids: ControlId[] = ["global.liveData", "domains.beachEvents"];
-	if (provider) ids.push(provider === "gulfShoresEvents" ? "providers.gulfShoresEvents" : "providers.orangeBeachEvents");
+	if (provider) ids.push(`providers.${provider}` as ControlId);
 	return evaluateControls(doc, ids, now);
 }
 

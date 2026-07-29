@@ -21,7 +21,7 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
-import { handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "./routes/beachEvents";
+import { handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 
@@ -174,6 +174,13 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "POST") return methodNotAllowed("POST");
 			return await handleBeachEventSuggest(request);
+		}
+		if (pathname.startsWith("/admin/beach-events/exclusions/")) {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			const id = decodeURIComponent(pathname.slice("/admin/beach-events/exclusions/".length));
+			if (request.method === "POST") return await handleExcludedEventAssign(request, env, identity, id);
+			return methodNotAllowed("POST");
 		}
 		if (pathname.startsWith("/admin/beach-events/")) {
 			const identity = await authenticateAdminRequest(request, env);
