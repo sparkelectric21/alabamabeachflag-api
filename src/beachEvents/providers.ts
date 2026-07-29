@@ -4,7 +4,7 @@ export interface BeachEventProvider {
 	id: string;
 	name: string;
 	feedURL: string;
-	feedType: "iCalendar" | "Google iCalendar" | "RSS" | "JSON" | "Web page" | "Manual";
+	feedType: "iCalendar" | "Google iCalendar" | "RSS" | "JSON" | "Web page" | "PDF Newsletter" | "Manual";
 	mode: BeachEventProviderMode;
 	controlId?: "gulfShoresEvents" | "orangeBeachEvents" | "gulfStateParkEvents" | "orangeBeachCoastalEvents";
 	authority: string;
@@ -100,20 +100,20 @@ export const BEACH_EVENT_PROVIDERS: BeachEventProvider[] = [
 	{
 		id: "dauphinIslandTown",
 		name: "Town of Dauphin Island Events",
-		feedURL: "https://www.townofdauphinisland.org/calendar-of-events",
-		feedType: "Web page",
-		mode: "disabled",
+		feedURL: "https://www.townofdauphinisland.org/newsletters",
+		feedType: "PDF Newsletter",
+		mode: "enabled",
 		authority: "Official Town of Dauphin Island",
 		authorityLevel: "official",
 		publicFeed: true,
-		automatedRetrieval: "unclear",
-		attribution: "For manually created records, display Town of Dauphin Island and link to the official Town calendar or event URL.",
-		cadence: "Not automated",
-		caching: "No automated caching; manual factual records only.",
-		legalStatus: "permission-required",
+		automatedRetrieval: "intended",
+		attribution: "Display the Town Crier issue month, the official newsletter PDF link, and the newsletter source note.",
+		cadence: "Daily at 7:00 AM Central",
+		caching: "Normalized factual event records only; last successful extraction remains available after a later PDF-processing failure.",
+		legalStatus: "clear",
 		coverage: ["Dauphin Island"],
 		supportedBeachIds: ["dauphin-island-public-beach", "dauphin-island-east-end"],
-		notes: "The official Town Wix page directly embeds Events Calendar project proj_Uup5Kfrh1ITrNrHIMFrvw and its public JSON endpoint, but the calendar vendor's terms prohibit automated access and systematic retrieval without written permission. Keep disabled; use manual creation and exact beach assignment. Island-wide events must never imply a beach match.",
+		notes: "The official monthly Town Crier archive is the sole active source. Discover the newest linked PDF and extract conservative factual candidates. The embedded Events Calendar integration remains deferred in code and documentation until written access approval; never request it. Island-wide events never imply a beach match.",
 	},
 	{
 		id: "alabamaCoastalCleanup",

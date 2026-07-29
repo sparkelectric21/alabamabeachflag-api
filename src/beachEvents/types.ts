@@ -19,8 +19,12 @@ export interface SourceFacts {
 	recurring: boolean;
 	sourceName: string;
 	sourceURL: string;
+	sourceNote?: string;
 	officialURL?: string;
 	description?: string;
+	sourceNewsletterMonth?: string;
+	contactInformation?: string;
+	endTimeUnavailable?: boolean;
 }
 
 export interface BeachEvent {
@@ -45,6 +49,11 @@ export interface BeachEvent {
 	status: BeachEventStatus;
 	sourceName: string;
 	sourceURL: string;
+	sourceNote?: string;
+	eventDescription?: string;
+	contactInformation?: string;
+	sourceNewsletterMonth?: string;
+	endTimeUnavailable?: boolean;
 	matchMethod: MatchMethod;
 	matchConfidence: "exact" | "admin";
 	matchRuleId?: string;

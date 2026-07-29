@@ -31,6 +31,9 @@
 			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
 		}
 	],
+	"ai": {
+		"binding": "AI"
+	},
 	"send_email": [
 		{
 			"name": "VERIFICATION_ALERT_EMAIL",

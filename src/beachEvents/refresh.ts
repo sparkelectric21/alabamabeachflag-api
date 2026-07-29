@@ -8,6 +8,7 @@ import { BEACH_EVENT_SCHEDULE_DESCRIPTION, nextBeachEventRefresh } from "./sched
 import { applyImportedEvents, audit, listEvents, normalizedEvent, saveSnapshot } from "./store";
 import type { BeachEventProviderRefresh, BeachEventRefreshStatus } from "./types";
 import { evaluateBeachActivityNotifications } from "./notifications";
+import { fetchTownCrierFacts } from "./townCrier";
 
 export const REFRESH_STATUS_KEY = "beach-events:v1:refresh-status";
 const RUN_LOCK_MS = 10 * 60 * 1000;
@@ -81,9 +82,13 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 			continue;
 		}
 		try {
-			const response = await fetcher(provider.feedURL, { headers: { Accept: "text/calendar, text/plain;q=0.8", "User-Agent": "AlabamaBeachFlag/1.0 beach-events" } });
-			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			const allFacts = parseICalendar(await response.text(), provider);
+			const allFacts = provider.feedType === "PDF Newsletter"
+				? await fetchTownCrierFacts(env, provider, now, fetcher)
+				: await (async () => {
+					const response = await fetcher(provider.feedURL, { headers: { Accept: "text/calendar, text/plain;q=0.8", "User-Agent": "AlabamaBeachFlag/1.0 beach-events" } });
+					if (!response.ok) throw new Error(`HTTP ${response.status}`);
+					return parseICalendar(await response.text(), provider);
+				})();
 			const facts = allFacts.filter((fact) => Date.parse(fact.endAt) > now.getTime() - 24 * 60 * 60 * 1000 && Date.parse(fact.startAt) < now.getTime() + 400 * 24 * 60 * 60 * 1000);
 			const monitored = provider.mode === "monitorOnly" || operational.state === "monitorOnly" || providerControl.state === "monitorOnly";
 			const result = monitored
