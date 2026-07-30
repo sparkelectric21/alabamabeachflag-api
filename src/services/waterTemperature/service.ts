@@ -10,6 +10,7 @@ import {
 	sourceFreshnessThresholds,
 } from "./freshness";
 import { logInfo, logWarn } from "../../utils/logger";
+import { UpstreamError } from "../../utils/http";
 
 type WaterTemperatureSource = NonNullable<
 	BeachDefinition["waterTemperature"]
@@ -96,6 +97,13 @@ function providerFailureCondition(source: WaterTemperatureSource, error: unknown
 	const message = error instanceof Error ? error.message : "";
 	if (/timed out/i.test(message)) return `${source.provider}_timeout`;
 	if (/(?:\bHTTP\s*|\bstatus\s*|\()\d{3}\b/i.test(message)) return `${source.provider}_http_failure`;
+	if (error instanceof UpstreamError) {
+		if (error.code === "unsafe_upstream_url" || error.code === "unsafe_redirect" || error.code === "redirect_limit_exceeded") {
+			return `${source.provider}_url_validation_rejection`;
+		}
+		if (error.code === "unexpected_content_type") return `${source.provider}_content_type_rejection`;
+		if (error.code === "upstream_response_too_large") return `${source.provider}_response_size_rejection`;
+	}
 	if (source.provider === "ndbc" && /WTMP column not found/i.test(message)) return "ndbc_missing_water_temperature";
 	if (source.provider === "ndbc" && /observation timestamp is invalid/i.test(message)) return "ndbc_invalid_timestamp";
 	if (source.provider === "ndbc" && /Invalid water temperature/i.test(message)) return "ndbc_invalid_water_temperature";

@@ -10,8 +10,8 @@ export const UPSTREAM_LIMITS = {
 	// NOAA's nationwide beach dataset is larger than per-location forecasts.
 	noaaJsonBytes: 4 * 1024 * 1024,
 	nwsJsonBytes: 2 * 1024 * 1024,
-	// Observed NDBC station text is about 100 KiB.
-	ndbcTextBytes: 512 * 1024,
+	// NDBC realtime station histories vary by reporting cadence; 42012 exceeded 645 KiB in July 2026.
+	ndbcTextBytes: 1 * 1024 * 1024,
 	// CO-OPS latest observations and Open-Meteo current UV are small JSON documents.
 	coopsJsonBytes: 256 * 1024,
 	openMeteoJsonBytes: 128 * 1024,

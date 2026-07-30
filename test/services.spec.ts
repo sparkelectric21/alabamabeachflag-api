@@ -59,6 +59,42 @@ describe("NDBC water temperatures", () => {
 		expect(result.temperature).toBe(83);
 		expect(result.observedAt).toBe("2026-07-06T14:30:00.000Z");
 	});
+
+	it("accepts a valid WTMP when unrelated fields are missing", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+			"#YY MM DD hh mm WDIR WSPD GST WTMP DEWP\n"
+				+ "#yr mo dy hr mn degT m/s m/s degC degC\n"
+				+ "2026 07 30 21 00 MM 2.6 MM 29.6 MM\n",
+			{ status: 200, headers: { "Content-Type": "text/plain" } },
+		)));
+
+		await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
+			temperature: 85,
+			observedAt: "2026-07-30T21:00:00.000Z",
+		});
+	});
+
+	it("bypasses shared upstream caching and accepts a current 645 KiB station history", async () => {
+		const header = "#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 30 23 20 29.6\n";
+		const body = header + "\n".repeat(660_820 - header.length);
+		const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
+			status: 200,
+			headers: {
+				"Content-Type": "text/plain; charset=ISO-8859-1",
+				"Content-Length": String(body.length),
+			},
+		}));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(fetchNDBCWaterTemperature("42012")).resolves.toMatchObject({
+			temperature: 85,
+			observedAt: "2026-07-30T23:20:00.000Z",
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			expect.any(URL),
+			expect.objectContaining({ cache: "no-store", redirect: "manual" }),
+		);
+	});
 });
 
 describe("beach-flag parsing", () => {

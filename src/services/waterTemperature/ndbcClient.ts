@@ -45,6 +45,7 @@ export async function fetchNDBCWaterTemperature(
 		`${NDBC_BASE_URL}/${stationId}.txt`,
 		{
 			validateUrl: validateNdbcUrl,
+			cache: "no-store",
 			headers: {
 				"User-Agent": "Alabama Beach Flag",
 			},
