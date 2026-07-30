@@ -35,6 +35,13 @@ export interface WaterTemperature {
 	ageMinutes?: number;
 	staleAfterMinutes?: number;
 	unavailableAfterMinutes?: number;
+	ingestedAt?: string;
+	sourceName?: string;
+	sourceType?: "observation";
+	environment?: "inlet" | "nearshore" | "offshore" | "bay_entrance" | "coastal_station";
+	sensorDepthM?: number;
+	isModeled?: false;
+	selectionReason?: string;
 }
 
 export interface BeachForecast {

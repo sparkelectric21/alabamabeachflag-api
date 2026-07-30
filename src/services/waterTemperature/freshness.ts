@@ -10,6 +10,7 @@ export interface SourceFreshnessThresholds {
 }
 
 const SOURCE_THRESHOLDS: Record<string, SourceFreshnessThresholds> = {
+	"coops:8735180": { freshAfterMinutes: 30, unavailableAfterMinutes: 90 },
 	"ndbc:42012": { freshAfterMinutes: 60, unavailableAfterMinutes: 180 },
 	"ndbc:PPTA1": { freshAfterMinutes: 90, unavailableAfterMinutes: 180 },
 	"ndbc:DPHA1": { freshAfterMinutes: 90, unavailableAfterMinutes: 180 },

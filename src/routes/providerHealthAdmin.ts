@@ -5,6 +5,7 @@ import { loadProviderCatalog, loadProviderCatalogAudit } from "../providerHealth
 import type { Env } from "../types";
 import { evaluateJobHealth, JOB_HEALTH_CONFIG, jobHealthKey, type JobHeartbeat, type MonitoredJob } from "../monitoring/jobHealth";
 import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, RIP_CURRENT_OUTLOOK_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../services/cache/kv";
+import { PROVIDER_HEALTH_DELIVERY_PREFIX } from "../providerHealth/notifications";
 
 const text = (value: unknown, max = 240): string | null => typeof value === "string" && value.length > 0 ? value.slice(0, max) : null;
 const iso = (value: unknown): string | null => { const parsed = text(value, 64); return parsed && !Number.isNaN(Date.parse(parsed)) ? new Date(parsed).toISOString() : null; };
@@ -54,6 +55,15 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 	const recentAlerts = (await Promise.all(keys.keys.map((item) => env.BEACH_DATA.get<unknown>(item.name, "json"))))
 		.map(sanitizeEvent).filter((value): value is NonNullable<typeof value> => Boolean(value))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 25);
+	const deliveries = await Promise.all(recentAlerts.map((event) => event.id
+		? env.BEACH_DATA.get<{ outcome?: string; sentAt?: string }>(`${PROVIDER_HEALTH_DELIVERY_PREFIX}${encodeURIComponent(event.id)}`, "json")
+		: Promise.resolve(null)));
+	recentAlerts.forEach((event, index) => {
+		if (deliveries[index]?.outcome === "sent") {
+			event.deliveryState = "sent";
+			event.capturedOnly = false;
+		}
+	});
 	const activeIncidents = providers.filter((provider) => provider.activeIncidentId).map((provider) => ({
 		...provider, severity: provider.incidentKind === "quality_gate" ? "critical" : "warning",
 		qualityGateTriggered: provider.incidentKind === "quality_gate",
@@ -65,7 +75,7 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 	}));
 	const emailPreviews = recentAlerts.slice(0, 10).map((event) => {
 		const preview = formatProviderAlertEmail({ ...event, id: event.id ?? "", incidentId: event.incidentId ?? "", errorReason: event.reason ?? undefined } as ProviderAlertEvent);
-		return { eventType: event.type, createdAt: event.createdAt, subject: preview.subject, body: preview.text, capturedOnly: true };
+		return { eventType: event.type, createdAt: event.createdAt, subject: preview.subject, body: preview.text, capturedOnly: event.capturedOnly };
 	});
 	const degradedProviderCount = providers.filter((provider) => provider.status !== "healthy").length;
 	const expectedBeachCount = providers.reduce((maximum, provider) => Math.max(maximum, provider.expectedBeachCount), 0);

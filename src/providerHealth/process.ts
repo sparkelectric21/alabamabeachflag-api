@@ -1,5 +1,6 @@
 import type { Env } from "../types";
-import { consoleProviderAlertTransport, formatProviderAlertEmail, type ProviderAlertTransport } from "./delivery";
+import { formatProviderAlertEmail, type ProviderAlertTransport } from "./delivery";
+import { providerHealthAlertTransport } from "./notifications";
 import { evaluateProviderHealth, evaluateQualityGateRejection } from "./state";
 import type { ProviderAlertEvent, ProviderHealthObservation, ProviderHealthOptions, ProviderHealthState } from "./types";
 
@@ -36,12 +37,13 @@ async function persist(store: ProviderHealthStore, state: ProviderHealthState, a
 }
 
 export async function processProviderHealthObservations(
-	env: Pick<Env, "BEACH_DATA">,
+	env: Env,
 	observations: ProviderHealthObservation[],
 	now: string,
-	transport: ProviderAlertTransport = consoleProviderAlertTransport,
+	transport?: ProviderAlertTransport,
 	options: ProviderHealthOptions = {},
 ): Promise<ProviderAlertEvent[]> {
+	const delivery = transport ?? providerHealthAlertTransport(env);
 	const events: ProviderAlertEvent[] = [];
 	const priorIndex = await env.BEACH_DATA.get<unknown>(PROVIDER_HEALTH_STATES_KEY, "json");
 	const indexedStates = new Map<string, ProviderHealthState>();
@@ -58,7 +60,7 @@ export async function processProviderHealthObservations(
 		indexedStates.set(stateKey, decision.state);
 		if (decision.event) {
 			events.push(decision.event);
-			await transport.send(decision.event, formatProviderAlertEmail(decision.event));
+			await delivery.send(decision.event, formatProviderAlertEmail(decision.event));
 		}
 	}
 	if (observations.length > 0) await env.BEACH_DATA.put(PROVIDER_HEALTH_STATES_KEY, JSON.stringify({ version: 1, updatedAt: now, states: [...indexedStates.values()] }));
@@ -66,19 +68,20 @@ export async function processProviderHealthObservations(
 }
 
 export async function processQualityGateRejection(
-	env: Pick<Env, "BEACH_DATA">,
+	env: Env,
 	now: string,
 	reason: string,
 	expectedBeachCount: number,
 	affectedBeachCount: number,
-	transport: ProviderAlertTransport = consoleProviderAlertTransport,
+	transport?: ProviderAlertTransport,
 ): Promise<ProviderAlertEvent | undefined> {
+	const delivery = transport ?? providerHealthAlertTransport(env);
 	const provider = "publication_quality_gate";
 	const domain = "beach_conditions";
 	const stateKey = key(provider, domain);
 	const stored = safeState(await env.BEACH_DATA.get<unknown>(stateKey, "json"), provider, domain);
 	const decision = evaluateQualityGateRejection(stored, now, reason, expectedBeachCount, affectedBeachCount);
 	await persist(env.BEACH_DATA, decision.state, decision.event);
-	if (decision.event) await transport.send(decision.event, formatProviderAlertEmail(decision.event));
+	if (decision.event) await delivery.send(decision.event, formatProviderAlertEmail(decision.event));
 	return decision.event;
 }

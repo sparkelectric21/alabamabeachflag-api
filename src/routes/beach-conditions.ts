@@ -3,6 +3,7 @@ import {
 	readCache,
 } from "../services/cache/kv";
 import type { Env } from "../types";
+import { evaluateVibrioAwarenessControl, readOperationalControl } from "../operationalControl/store";
 import {
 	classifyDirectObservation,
 	directObservationAgeMs,
@@ -47,6 +48,20 @@ export function withCurrentWaterTemperatureFreshness(payload: unknown, now = new
 	};
 }
 
+export function enforceVibrioAwarenessControl(payload: unknown, enabled: boolean): unknown {
+	if (enabled || !payload || typeof payload !== "object") return payload;
+	const record = payload as Record<string, unknown>;
+	if (!Array.isArray(record.beachConditions)) return payload;
+	return {
+		...record,
+		beachConditions: record.beachConditions.map((item) => {
+			if (!item || typeof item !== "object") return item;
+			const { vibrioConditions: _vibrioConditions, ...beach } = item as Record<string, unknown>;
+			return beach;
+		}),
+	};
+}
+
 export async function handleBeachConditionsRequest(env: Env): Promise<Response> {
 	if (!env.BEACH_DATA) {
 		return Response.json(
@@ -64,7 +79,13 @@ export async function handleBeachConditionsRequest(env: Env): Promise<Response> 
 	);
 
 	if (cachedBeachConditions) {
-		return Response.json(withCurrentWaterTemperatureFreshness(cachedBeachConditions), { headers: { "Cache-Control": "public, max-age=300" } });
+		const now = new Date();
+		const control = evaluateVibrioAwarenessControl(await readOperationalControl(env, now), now);
+		const controlled = enforceVibrioAwarenessControl(
+			cachedBeachConditions,
+			env.VIBRIO_CONDITIONS_ENABLED === "true" && control.state === "enabled",
+		);
+		return Response.json(withCurrentWaterTemperatureFreshness(controlled, now), { headers: { "Cache-Control": "public, max-age=300" } });
 	}
 
 	return Response.json(

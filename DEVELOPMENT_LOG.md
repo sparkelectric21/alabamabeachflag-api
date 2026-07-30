@@ -1,5 +1,19 @@
 # Development Log
 
+## July 30, 2026 — Main-card water-temperature fallback policy
+
+- Aligned the four regional cards with explicit ordinary observation chains: Gulf Shores and Orange Beach use `PPTA1 → 42012 → 42357`; Fort Morgan uses `DPHA1 → 42357 → 42012`; Dauphin Island uses `8735180 → 42357 → DPHA1`.
+- Preserved ordered first-current selection, station-specific stale and unavailable thresholds, direct-observation provenance, and unavailable behavior when all approved sources fail.
+- Updated Provider Health, API/iOS tests, user-facing source context, operational documentation, and the Obsidian decision record.
+- Vibrio eligibility, source arrays, freshness, calculations, limitations, and presentation were intentionally unchanged and are protected by an exact full-configuration regression test.
+
+## July 30, 2026 — Seasonal Vibrio awareness approval
+
+- Recorded the product-owner decision to release the feature as seasonal CDC safety awareness, not a bacterial or infection-risk model.
+- Enabled the production deployment flag while preserving direct observations, source-specific freshness, deterministic fallback, exact CDC wording, and fail-closed output.
+- Added the isolated `domains.vibrioAwareness` runtime kill switch to the existing authenticated, revision-checked, audited Operational Control system.
+- Kept Gulf State Park Pavilion and Little Lagoon Pass excluded. External scientific review remains required for a predictive rainfall/salinity model or coverage expansion.
+
 ## July 22, 2026 — Phase 2 production rollout
 
 - Deployed independent Gulf Shores and Orange Beach factual verification, multi-verifier history/admin reporting, cron heartbeats, and freshness diagnostics.

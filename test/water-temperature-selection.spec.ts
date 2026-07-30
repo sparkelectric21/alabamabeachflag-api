@@ -99,15 +99,22 @@ describe("water-temperature source selection", () => {
 		log.mockRestore();
 	});
 
-	it.each([
-		["ndbc", "DPHA1"],
-		["coops", "8735180"],
-	] as const)("uses the same stale window for %s:%s", async (provider, stationId) => {
+	it("uses the configured NDBC stale window", async () => {
+		const provider = "ndbc" as const;
+		const stationId = "DPHA1";
 		const observedAt = "2026-07-17T15:59:59.999Z";
 		const loadSource = async () => observation(provider, stationId, observedAt);
 
 		await expect(fetchLatestWaterTemperature(sources([provider, stationId]), new Map(), { now, loadSource }))
 			.resolves.toEqual(classified(provider, stationId, observedAt, "stale"));
+	});
+
+	it("uses the tighter six-minute CO-OPS freshness window", async () => {
+		const observedAt = "2026-07-17T17:00:00.000Z";
+		const loadSource = async () => observation("coops", "8735180", observedAt);
+
+		await expect(fetchLatestWaterTemperature(sources(["coops", "8735180"]), new Map(), { now, loadSource }))
+			.resolves.toEqual(classified("coops", "8735180", observedAt, "stale"));
 	});
 
 	it.each([
@@ -116,7 +123,9 @@ describe("water-temperature source selection", () => {
 		["Fort Morgan", "ndbc", "DPHA1"],
 		["Dauphin Island", "coops", "8735180"],
 	] as const)("uses %s's configured primary station", async (_beachName, provider, stationId) => {
-		const expected = observation(provider, stationId, "2026-07-17T17:00:00.000Z");
+		const expected = observation(provider, stationId, provider === "coops"
+			? "2026-07-17T17:45:00.000Z"
+			: "2026-07-17T17:00:00.000Z");
 		const loadSource = loader({ [`${provider}:${stationId}`]: expected });
 
 		await expect(fetchLatestWaterTemperature(sources([provider, stationId]), new Map(), { now, loadSource }))
@@ -273,17 +282,47 @@ describe("water-temperature source selection", () => {
 
 	it("configures each beach with its approved observation hierarchy", () => {
 		const expected = new Map([
-			["gulf-shores-public-beach", ["ndbc:42012", "ndbc:PPTA1"]],
-			["cotton-bayou", ["ndbc:PPTA1", "ndbc:42012"]],
-			["gulf-state-park-pavilion", ["ndbc:42012", "ndbc:PPTA1"]],
-			["fort-morgan-public-beach", ["ndbc:42357", "ndbc:DPHA1", "ndbc:42012"]],
-			["dauphin-island-public-beach", ["coops:8735180"]],
+			["gulf-shores-public-beach", ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"]],
+			["cotton-bayou", ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"]],
+			["fort-morgan-public-beach", ["ndbc:DPHA1", "ndbc:42357", "ndbc:42012"]],
+			["dauphin-island-public-beach", ["coops:8735180", "ndbc:42357", "ndbc:DPHA1"]],
 		]);
 
 		for (const [beachId, sourceKeys] of expected) {
 			const configured = beaches.find((candidate) => candidate.id === beachId)?.waterTemperature?.sources
 				.map(({ provider, stationId }) => `${provider}:${stationId}`);
 			expect(configured).toEqual(sourceKeys);
+		}
+	});
+
+	it("moves through every approved main-card fallback in configured order", async () => {
+		const mainCards = [
+			["gulf-shores-public-beach", ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"]],
+			["cotton-bayou", ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"]],
+			["fort-morgan-public-beach", ["ndbc:DPHA1", "ndbc:42357", "ndbc:42012"]],
+			["dauphin-island-public-beach", ["coops:8735180", "ndbc:42357", "ndbc:DPHA1"]],
+		] as const;
+
+		for (const [beachId, sourceKeys] of mainCards) {
+			const configured = beaches.find((candidate) => candidate.id === beachId)?.waterTemperature;
+			if (!configured) throw new Error(`Missing water-temperature configuration for ${beachId}`);
+
+			for (const [selectedIndex, selectedKey] of sourceKeys.entries()) {
+				const attempted: string[] = [];
+				const selected = await fetchLatestWaterTemperature(configured, new Map(), {
+					now,
+					loadSource: async (source) => {
+						const key = `${source.provider}:${source.stationId}`;
+						attempted.push(key);
+						if (attempted.length <= selectedIndex) throw new Error("simulated provider failure");
+						return observation(source.provider, source.stationId, source.provider === "coops"
+							? "2026-07-17T17:45:00.000Z"
+							: "2026-07-17T17:00:00.000Z");
+					},
+				});
+				expect(attempted).toEqual(sourceKeys.slice(0, selectedIndex + 1));
+				expect(`${selected.provider}:${selected.stationId}`).toBe(selectedKey);
+			}
 		}
 	});
 

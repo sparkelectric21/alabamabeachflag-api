@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
-import { defaultOperationalControl, evaluateFlagControl, parseOperationalControl } from "../src/operationalControl/store";
+import { defaultOperationalControl, evaluateFlagControl, evaluateVibrioAwarenessControl, parseOperationalControl } from "../src/operationalControl/store";
+import { enforceVibrioAwarenessControl } from "../src/routes/beach-conditions";
 import { enforceBeachFlagPayload, parseClientIdentification } from "../src/routes/beachflags";
 import type { Env } from "../src/types";
 
@@ -41,6 +42,15 @@ describe("operational control schema and precedence", () => {
 		doc.controls["providers.gulfShoresFlags"].onExpiry = "enable";
 		expect(evaluateFlagControl(doc, "gulfShoresFlags", new Date("2026-07-21T20:00:00.000Z")).state).toBe("enabled");
 	});
+
+	it("gives Vibrio awareness a dedicated fail-closed runtime control", () => {
+		const doc = defaultOperationalControl();
+		doc.controls["domains.vibrioAwareness"] = { state: "disabled", expiresAt: "2026-07-21T21:00:00.000Z", onExpiry: "require_review" };
+		expect(evaluateVibrioAwarenessControl(doc, new Date("2026-07-21T20:00:00.000Z"))).toMatchObject({
+			state: "disabled",
+			controlId: "domains.vibrioAwareness",
+		});
+	});
 });
 
 describe("operational control routes", () => {
@@ -73,6 +83,15 @@ describe("operational control routes", () => {
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 		expect(text).not.toContain("private@example.com"); expect(text).not.toContain("private details");
 	});
+
+	it("publishes only the Vibrio control state, not its private reason", async () => {
+		const doc = defaultOperationalControl();
+		doc.controls["domains.vibrioAwareness"] = { state: "disabled", operatorReason: "private medical-review detail" };
+		const response = await worker.fetch(new Request("https://example.com/v1/app-configuration"), memoryEnv(doc).env);
+		const payload = await response.json() as { domains: { vibrioAwareness: string } };
+		expect(payload.domains.vibrioAwareness).toBe("disabled");
+		expect(JSON.stringify(payload)).not.toContain("private medical-review detail");
+	});
 });
 
 describe("availability and client compatibility", () => {
@@ -99,5 +118,23 @@ describe("availability and client compatibility", () => {
 		const request = new Request("https://example.com", { headers: { "X-ABF-App-Version": "1.3.0", "X-ABF-App-Build": "8", "X-ABF-Client": "ios", "X-ABF-Capabilities": "operational-config-v1, flag-availability-v2" } });
 		expect(parseClientIdentification(request)).toMatchObject({ version: "1.3.0", build: 8, client: "ios" });
 		expect(parseClientIdentification(request).capabilities.has("flag-availability-v2")).toBe(true);
+	});
+
+	it("removes only Vibrio awareness when its kill switch is off", () => {
+		const conditions = {
+			status: "ok",
+			beachConditions: [
+				{ beachId: "alabama-point", temperature: 85, vibrioConditions: { status: "seasonalAwareness" } },
+				{ beachId: "little-lagoon-pass", temperature: 84 },
+			],
+		};
+		expect(enforceVibrioAwarenessControl(conditions, false)).toEqual({
+			status: "ok",
+			beachConditions: [
+				{ beachId: "alabama-point", temperature: 85 },
+				{ beachId: "little-lagoon-pass", temperature: 84 },
+			],
+		});
+		expect(enforceVibrioAwarenessControl(conditions, true)).toBe(conditions);
 	});
 });

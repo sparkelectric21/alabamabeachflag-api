@@ -25,6 +25,7 @@ import { handleBeachActivityNotificationPreferences, handleBeachActivityNotifica
 import { refreshBeachEvents } from "./beachEvents/refresh";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
+import { readProviderHealthNotificationConfig, readProviderHealthNotificationState, sendProviderHealthNotificationTest, updateProviderHealthNotificationConfig } from "./providerHealth/notifications";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -144,6 +145,23 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
+		}
+		if (pathname === "/admin/provider-health/notifications") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method === "GET") return jsonResponse({
+				configuration: await readProviderHealthNotificationConfig(env),
+				state: await readProviderHealthNotificationState(env),
+				bindingReady: Boolean(env.VERIFICATION_ALERT_EMAIL),
+			}, { headers: { "Cache-Control": "no-store" } });
+			if (request.method === "PATCH") return await updateProviderHealthNotificationConfig(request, env, identity);
+			return methodNotAllowed("GET, PATCH");
+		}
+		if (pathname === "/admin/provider-health/notifications/test") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			return await sendProviderHealthNotificationTest(env, identity);
 		}
 		if (pathname === "/admin/verification") {
 			const identity = await authenticateAdminRequest(request, env);

@@ -5,7 +5,7 @@ export interface WaterTemperatureSourceConfiguration {
 		provider: "coops" | "ndbc";
 		stationId: string;
 		sourceName?: string;
-		environment?: "inlet" | "nearshore" | "offshore" | "bay_entrance";
+		environment?: "inlet" | "nearshore" | "offshore" | "bay_entrance" | "coastal_station";
 		sensorDepthM?: number;
 	}>;
 }
@@ -115,7 +115,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			] },
 			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
 		},
@@ -158,6 +157,7 @@ export const beaches: BeachDefinition[] = [
 			sources: [
 				{ provider: "ndbc", stationId: "PPTA1", sourceName: "NOAA NDBC Perdido Pass (PPTA1)", environment: "inlet" },
 				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
+				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
 			],
 		},
 		tide: { stationId: "8730667", stationName: "Alabama Point, AL", stationType: "harmonic" },
@@ -205,8 +205,9 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
 				{ provider: "ndbc", stationId: "PPTA1", sourceName: "NOAA NDBC Perdido Pass (PPTA1)", environment: "inlet" },
+				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
+				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
 			],
 		},
 		tide: { stationId: "8731439", stationName: "Gulf Shores, ICWW, AL", stationType: "harmonic" },
@@ -364,7 +365,6 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "PPTA1" },
-				{ provider: "coops", stationId: "8735180" },
 			] },
 			limitation: "Perdido Pass observations are nearby proxies, not measurements at this beach.",
 		},
@@ -415,8 +415,8 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
 				{ provider: "ndbc", stationId: "DPHA1", sourceName: "NOAA NDBC Dauphin Island (DPHA1)", environment: "bay_entrance" },
+				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
 				{ provider: "ndbc", stationId: "42012", sourceName: "NOAA NDBC Buoy 42012", environment: "offshore", sensorDepthM: 0.6 },
 			],
 		},
@@ -424,9 +424,11 @@ export const beaches: BeachDefinition[] = [
 		vibrioConditions: {
 			eligible: true,
 			waterTemperature: { sources: [
+				{ provider: "ndbc", stationId: "42357" },
 				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "coops", stationId: "8735180" },
 			] },
-			limitation: "Dauphin Island/Mobile Bay entrance observations are proxies, not Fort Morgan beach measurements.",
+			limitation: "The Gulf-facing 42357 observation and Dauphin Island/Mobile Bay entrance observations are proxies, not Fort Morgan beach measurements.",
 		},
 		beachForecast: {
 			siteId: "alz266",
@@ -465,7 +467,9 @@ export const beaches: BeachDefinition[] = [
 		},
 		waterTemperature: {
 			sources: [
-				{ provider: "coops", stationId: "8735180" },
+				{ provider: "coops", stationId: "8735180", sourceName: "NOAA CO-OPS Dauphin Island (8735180)", environment: "coastal_station" },
+				{ provider: "ndbc", stationId: "42357", sourceName: "DISL/NDBC Sofar Spotter 42357", environment: "nearshore" },
+				{ provider: "ndbc", stationId: "DPHA1", sourceName: "NOAA NDBC Dauphin Island (DPHA1)", environment: "bay_entrance" },
 			],
 		},
 		tide: { stationId: "8735180", stationName: "Dauphin Island, AL", stationType: "harmonic" },
@@ -473,8 +477,10 @@ export const beaches: BeachDefinition[] = [
 			eligible: true,
 			waterTemperature: { sources: [
 				{ provider: "coops", stationId: "8735180" },
+				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "ndbc", stationId: "42357" },
 			] },
-			limitation: "East-end Dauphin Island observations are proxies for the public beach farther west.",
+			limitation: "East-end observations and the lower-priority Gulf-facing 42357 observation are proxies for the public beach farther west.",
 		},
 		beachForecast: {
 			siteId: "alz265",
@@ -523,8 +529,9 @@ export const beaches: BeachDefinition[] = [
 			waterTemperature: { sources: [
 				{ provider: "ndbc", stationId: "DPHA1" },
 				{ provider: "coops", stationId: "8735180" },
+				{ provider: "ndbc", stationId: "42357" },
 			] },
-			limitation: "These east-end Dauphin Island stations are a strong spatial match but remain point observations.",
+			limitation: "The east-end stations are the strongest spatial match; lower-priority 42357 is Gulf-facing, but all remain point observations.",
 		},
 		beachForecast: {
 			siteId: "alz265",

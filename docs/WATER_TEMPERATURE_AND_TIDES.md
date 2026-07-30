@@ -6,9 +6,12 @@ The public beach-condition refresh evaluates approved sources in beach priority 
 
 Active hierarchy:
 
-- Gulf Shores and Gulf State Park Pavilion: NOAA NDBC 42012, then PPTA1.
-- Orange Beach: PPTA1, then NOAA NDBC 42012.
-- Fort Morgan: DISL/NDBC Sofar 42357, then DPHA1, then NOAA NDBC 42012.
+- Gulf Shores card (`gulf-shores-public-beach`): PPTA1, then NOAA NDBC 42012, then DISL/NDBC Sofar 42357.
+- Orange Beach card (`cotton-bayou`): PPTA1, then NOAA NDBC 42012, then DISL/NDBC Sofar 42357.
+- Fort Morgan card (`fort-morgan-public-beach`): DPHA1, then DISL/NDBC Sofar 42357, then NOAA NDBC 42012.
+- Dauphin Island card (`dauphin-island-public-beach`): NOAA CO-OPS 8735180, then DISL/NDBC Sofar 42357, then DPHA1.
+
+Other beach records retain their existing source hierarchies.
 
 Gulf State Park Pier hydrographic data is standby/disabled until a current machine-readable `WTMP` feed is confirmed. West End CP is disabled until its feed returns and is stable. NOAA station 8734383 has no water-temperature sensor and is prohibited. Upper-Mobile-Bay PORTS stations are not eligible substitutes.
 
@@ -24,6 +27,7 @@ Fresh/current and hard-unavailable thresholds:
 | PPTA1 | 90 min | 180 min |
 | DPHA1 | 90 min | 180 min |
 | 42357 | 120 min | 240 min |
+| 8735180 | 30 min | 90 min |
 
 The selected API value includes station identity, environment, observation age, thresholds, ingestion time, observed/model status, and a selection reason. Provider Health retains the aggregate selection domain; source failures and skip reasons are emitted as structured provider diagnostics.
 

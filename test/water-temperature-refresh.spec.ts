@@ -47,7 +47,7 @@ describe("configured water-temperature refresh", () => {
 		vi.setSystemTime(new Date("2026-07-20T20:15:00.000Z"));
 
 		const results = await refreshWaterTemperatures();
-		const expected = {
+		const pavilionExpected = {
 			temperature: 85,
 			temperatureUnit: "F",
 			observedAt,
@@ -59,16 +59,20 @@ describe("configured water-temperature refresh", () => {
 			unavailableAfterMinutes: 180,
 		};
 
-		expect(results["gulf-shores-public-beach"]).toMatchObject(expected);
-		expect(results["cotton-bayou"]).toMatchObject({ ...expected, stationId: "PPTA1", staleAfterMinutes: 90 });
-		expect(results["gulf-state-park-pavilion"]).toMatchObject(expected);
+		expect(results["gulf-shores-public-beach"]).toMatchObject({
+			...pavilionExpected, stationId: "PPTA1", staleAfterMinutes: 90,
+		});
+		expect(results["cotton-bayou"]).toMatchObject({
+			...pavilionExpected, stationId: "PPTA1", staleAfterMinutes: 90,
+		});
+		expect(results["gulf-state-park-pavilion"]).toMatchObject(pavilionExpected);
 		expect(results["fort-morgan-public-beach"]).toMatchObject({
-			provider: "ndbc", stationId: "42357", freshnessStatus: "stale",
-			staleAfterMinutes: 120, unavailableAfterMinutes: 240,
+			provider: "ndbc", stationId: "DPHA1", freshnessStatus: "stale",
+			staleAfterMinutes: 90, unavailableAfterMinutes: 180,
 		});
 		expect(results["dauphin-island-public-beach"]).toMatchObject({
-			provider: "coops", stationId: "8735180", freshnessStatus: "stale",
-			staleAfterMinutes: 120, unavailableAfterMinutes: 360,
+			provider: "ndbc", stationId: "42357", freshnessStatus: "stale",
+			staleAfterMinutes: 120, unavailableAfterMinutes: 240,
 		});
 		expect(results["little-lagoon-pass"]).toBeUndefined();
 	});
@@ -81,15 +85,54 @@ describe("configured water-temperature refresh", () => {
 
 		expect(configured).toEqual({
 			"alabama-point": ["ndbc:PPTA1", "coops:8735180"],
-			"cotton-bayou": ["ndbc:PPTA1", "ndbc:42012"],
-			"gulf-shores-public-beach": ["ndbc:42012", "ndbc:PPTA1"],
+			"cotton-bayou": ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"],
+			"gulf-shores-public-beach": ["ndbc:PPTA1", "ndbc:42012", "ndbc:42357"],
 			"gulf-state-park-pavilion": ["ndbc:42012", "ndbc:PPTA1"],
 			"little-lagoon-pass": undefined,
 			"florida-point": ["ndbc:PPTA1", "coops:8735180"],
-			"fort-morgan-public-beach": ["ndbc:42357", "ndbc:DPHA1", "ndbc:42012"],
-			"dauphin-island-public-beach": ["coops:8735180"],
+			"fort-morgan-public-beach": ["ndbc:DPHA1", "ndbc:42357", "ndbc:42012"],
+			"dauphin-island-public-beach": ["coops:8735180", "ndbc:42357", "ndbc:DPHA1"],
 			"dauphin-island-east-end": ["ndbc:DPHA1", "coops:8735180"],
 		});
 		expect(beaches.find(({ id }) => id === "little-lagoon-pass")?.supports.waterTemperature).toBe(false);
+	});
+
+	it("publishes selected source context for every main card", async () => {
+		const results = await refreshWaterTemperatures();
+		expect(Object.fromEntries([
+			"gulf-shores-public-beach",
+			"cotton-bayou",
+			"fort-morgan-public-beach",
+			"dauphin-island-public-beach",
+		].map((beachId) => {
+			const selected = results[beachId];
+			return [beachId, selected && {
+				provider: selected.provider,
+				stationId: selected.stationId,
+				observedAt: selected.observedAt,
+				freshnessStatus: selected.freshnessStatus,
+				sourceName: selected.sourceName,
+				sourceType: selected.sourceType,
+				environment: selected.environment,
+				isModeled: selected.isModeled,
+			}];
+		}))).toEqual({
+			"gulf-shores-public-beach": {
+				provider: "ndbc", stationId: "PPTA1", observedAt, freshnessStatus: "current",
+				sourceName: "NOAA NDBC Perdido Pass (PPTA1)", sourceType: "observation", environment: "inlet", isModeled: false,
+			},
+			"cotton-bayou": {
+				provider: "ndbc", stationId: "PPTA1", observedAt, freshnessStatus: "current",
+				sourceName: "NOAA NDBC Perdido Pass (PPTA1)", sourceType: "observation", environment: "inlet", isModeled: false,
+			},
+			"fort-morgan-public-beach": {
+				provider: "ndbc", stationId: "DPHA1", observedAt, freshnessStatus: "current",
+				sourceName: "NOAA NDBC Dauphin Island (DPHA1)", sourceType: "observation", environment: "bay_entrance", isModeled: false,
+			},
+			"dauphin-island-public-beach": {
+				provider: "coops", stationId: "8735180", observedAt, freshnessStatus: "current",
+				sourceName: "NOAA CO-OPS Dauphin Island (8735180)", sourceType: "observation", environment: "coastal_station", isModeled: false,
+			},
+		});
 	});
 });

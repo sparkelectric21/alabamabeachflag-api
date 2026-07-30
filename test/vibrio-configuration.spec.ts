@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { featureFieldAbsentFixture } from "./fixtures/vibrioConditions";
 
 describe("Vibrio deployment guardrails", () => {
-	it("keeps the production Worker vars free of the feature flag", () => {
+	it("enables the reviewed seasonal-awareness feature in production", () => {
 		const config = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 		const productionVars = config.match(/"vars"\s*:\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
-		expect(productionVars).not.toMatch(/"VIBRIO_CONDITIONS_ENABLED"\s*:/);
+		expect(productionVars).toMatch(/"VIBRIO_CONDITIONS_ENABLED"\s*:\s*"true"/);
 	});
 
 	it("represents the disabled contract by omitting the field", () => {

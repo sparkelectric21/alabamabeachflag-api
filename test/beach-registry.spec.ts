@@ -84,8 +84,8 @@ describe("coordinate correction behavioral safeguards", () => {
 			uv: { region: "fortMorgan", latitude: 30.2285, longitude: -88.0243 },
 			tide: { stationId: "8734635" },
 			waterTemperature: { sources: [
-				{ provider: "ndbc", stationId: "42357" },
 				{ provider: "ndbc", stationId: "DPHA1" },
+				{ provider: "ndbc", stationId: "42357" },
 				{ provider: "ndbc", stationId: "42012" },
 			] },
 			supports: { beachFlags: "future", waterQuality: true },
@@ -100,7 +100,35 @@ describe("coordinate correction behavioral safeguards", () => {
 		const catalog = await loadProviderCatalog({
 			BEACH_DATA: { get: async () => null } as unknown as KVNamespace,
 		});
-		expect(catalog).toHaveLength(27);
+		expect(catalog).toHaveLength(28);
 		expect(catalog.every(({ role }) => PROVIDER_CATALOG_ROLES.includes(role))).toBe(true);
+	});
+
+	it("keeps provider-health ordinary usage aligned with the main-card registry", async () => {
+		const catalog = await loadProviderCatalog({
+			BEACH_DATA: { get: async () => null } as unknown as KVNamespace,
+		});
+		const waterSource = (stationId: string) => catalog.find(({ domain }) => domain === `water_temperature:${stationId}`);
+
+		expect(waterSource("PPTA1")).toMatchObject({
+			role: "Primary",
+			usedFor: ["Gulf Shores water temperature", "Orange Beach water temperature"],
+		});
+		expect(waterSource("42012")).toMatchObject({
+			role: "Automatic Fallback",
+			usedFor: ["Gulf Shores fallback", "Orange Beach fallback", "Fort Morgan final fallback"],
+		});
+		expect(waterSource("42357")).toMatchObject({
+			role: "Automatic Fallback",
+			usedFor: ["Gulf Shores final fallback", "Orange Beach final fallback", "Fort Morgan first fallback", "Dauphin Island first fallback"],
+		});
+		expect(waterSource("DPHA1")).toMatchObject({
+			role: "Primary",
+			usedFor: ["Fort Morgan water temperature", "Dauphin Island final fallback"],
+		});
+		expect(waterSource("8735180")).toMatchObject({
+			role: "Primary",
+			usedFor: ["Dauphin Island water temperature"],
+		});
 	});
 });

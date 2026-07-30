@@ -4,7 +4,9 @@ Phase 1 protects beach-flag publication without creating a general feature-flag 
 
 ## Controls and precedence
 
-The only enforced controls are `global.liveData`, `domains.beachFlags`, `providers.gulfShoresFlags`, and `providers.orangeBeachFlags`. Evaluation order is global, domain, provider, automatic validation/freshness, then the normal payload. The most restrictive applicable state wins. Fort Morgan inherits Gulf Shores. Dauphin Island remains unavailable because it has no official feed.
+Enforced controls include `global.liveData`, the beach-flag domain and providers, beach events and providers, Beach Activity notifications, and `domains.vibrioAwareness`. Evaluation order is global, domain, provider where applicable, automatic validation/freshness, then the normal payload. The most restrictive applicable state wins.
+
+`domains.vibrioAwareness` is isolated to the optional `vibrioConditions` member of Beach Conditions. Disabled or monitor-only state omits that member on every public response without changing flags, water quality, weather, tides, or ordinary water temperature. The deployment-level `VIBRIO_CONDITIONS_ENABLED` flag remains the master fallback. Restoration requires a fresh Beach Conditions refresh before recovery is declared.
 
 States are `enabled`, `disabled`, and `monitorOnly`. An expired control defaults to `require_review`, which remains disabled until an operator restores it. `onExpiry: enable` is the only automatic-enable policy.
 

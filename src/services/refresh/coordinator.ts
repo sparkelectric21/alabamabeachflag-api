@@ -10,7 +10,7 @@ import type { RefreshJob, RefreshRunRequest, RefreshRunResult } from "./types";
 import { processProviderHealthObservations, processQualityGateRejection } from "../../providerHealth/process";
 import type { ProviderHealthObservation } from "../../providerHealth/types";
 import { enforceBeachFlagPayload } from "../../routes/beachflags";
-import { readOperationalControl } from "../../operationalControl/store";
+import { evaluateVibrioAwarenessControl, readOperationalControl } from "../../operationalControl/store";
 
 interface ActiveRun {
 	generation: number;
@@ -122,7 +122,13 @@ export const REFRESH_JOB_CONFIG: Record<RefreshJob, {
 
 function productionRunners(env: Env): RefreshRunners { return {
 	"beach-flags": buildBeachFlagsPayload,
-	"beach-conditions": () => buildBeachConditionsPayload({ vibrioConditionsEnabled: env.VIBRIO_CONDITIONS_ENABLED === "true" }),
+	"beach-conditions": async () => {
+		const now = new Date();
+		const control = evaluateVibrioAwarenessControl(await readOperationalControl(env, now), now);
+		return buildBeachConditionsPayload({
+			vibrioConditionsEnabled: env.VIBRIO_CONDITIONS_ENABLED === "true" && control.state === "enabled",
+		});
+	},
 	"water-quality": buildWaterQualityPayload,
 	"rip-current-outlook": () => buildRipCurrentOutlookPayload(env),
 }; }
