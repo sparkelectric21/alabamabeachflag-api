@@ -35,6 +35,13 @@ export function sanitizeEventURL(value: unknown, baseURL?: string): string | und
 	try {
 		const url = new URL(decodeHTMLEntities(value.trim()), baseURL);
 		if (url.protocol !== "https:") return undefined;
+		if (/^(?:www\.)?google\.com$/i.test(url.hostname) && url.pathname === "/url") {
+			const destination = url.searchParams.get("url") ?? url.searchParams.get("q");
+			if (!destination) return undefined;
+			const unwrapped = new URL(destination);
+			if (/^(?:www\.)?google\.com$/i.test(unwrapped.hostname) && unwrapped.pathname === "/url") return undefined;
+			return sanitizeEventURL(unwrapped.toString());
+		}
 		if (/^(?:localhost|127(?:\.\d+){3}|\[?::1\]?)$/i.test(url.hostname) || /\.(?:ics|ical)(?:$|\?)/i.test(url.pathname) || /(?:webcal|subscribe|calendar-feed|\/api\/)/i.test(url.hostname + url.pathname) || /\/common\/modules\/iCalendar\//i.test(url.pathname)) return undefined;
 		for (const key of [...url.searchParams.keys()]) {
 			if (/^(?:utm_.+|fbclid|gclid|mc_(?:cid|eid)|_hsenc|_hsmi)$/i.test(key)) url.searchParams.delete(key);
@@ -80,6 +87,7 @@ function plainTextFromHTML(input: string, baseURL?: string): { text: string; url
 
 function cleanLines(value: string, knownURLs: string[]): string {
 	let text = value.replace(/\r\n?/g, "\n").replace(/[\t\f\v ]+/g, " ");
+	text = text.replace(/\b(Registration|Location|Parking|Contact)\s*:\s*\1(\s*:)?\s*/gi, (_match, label: string, repeatedColon: string | undefined) => `${label}${repeatedColon ? ":" : ""} `);
 	for (const url of knownURLs) text = text.split(url).join("");
 	text = text.replace(/https?:\/\/\S+/gi, "");
 	const seen = new Set<string>();

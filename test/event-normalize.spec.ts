@@ -34,6 +34,31 @@ describe("event public normalization", () => {
 		expect(resolveOfficialEventURL({ officialURL: "https://park.gov/events/pier-walk" })).toBe("https://park.gov/events/pier-walk");
 	});
 
+	it("unwraps safe Google redirect destinations without losing registration parameters", () => {
+		expect(sanitizeEventURL("https://www.google.com/url?q=https://reserve.alapark.com/register/guided-pier-walk-GSP%3Fsession%3D42%26group%3Dfamily&sa=D"))
+			.toBe("https://reserve.alapark.com/register/guided-pier-walk-GSP?session=42&group=family");
+		expect(sanitizeEventURL("https://www.google.com/url?url=https%3A%2F%2Freserve.alapark.com%2Fregister%2Fguided-pier-walk%3Fid%3D7"))
+			.toBe("https://reserve.alapark.com/register/guided-pier-walk?id=7");
+		expect(sanitizeEventURL("https://www.google.com/url?q=http%3A%2F%2Funsafe.test%2Fregister")).toBeUndefined();
+		expect(sanitizeEventURL("https://www.google.com/url?sa=D")).toBeUndefined();
+		expect(sanitizeEventURL("https://www.google.com/url?q=https%3A%2F%2Fpark.gov%2Fevents.ics")).toBeUndefined();
+		expect(sanitizeEventURL("https://www.google.com/url?q=https%3A%2F%2Fwww.google.com%2Furl%3Fq%3Dhttps%253A%252F%252Fpark.gov%252Fevent")).toBeUndefined();
+	});
+
+	it("removes only narrowly repeated summary labels", () => {
+		const result = normalizeDescription("Registration: Registration is preferred but not required.\nLocation: Location: Gulf State Park Pier.\nParking: Parking: Use the pier lot.\nContact: Contact: Call the park office.");
+		expect(result.fullDescription).toBe("Registration is preferred but not required.\nLocation: Gulf State Park Pier.\nParking: Use the pier lot.\nContact: Call the park office.");
+		expect(result.summary).toContain("Registration is preferred but not required.");
+	});
+
+	it("uses the verified Orange Beach organizer fallback without exposing its calendar feeds", () => {
+		for (const providerId of ["orangeBeachParks", "orangeBeachCoastalResources"]) {
+			const event = normalizedEvent({ ...facts("Official city event."), providerId }, new Date("2026-07-30T12:00:00Z"), { beachId: "alabama-point", ruleId: "test", explanation: "test" })!;
+			expect(event.organizerWebsiteURL).toBe("https://www.orangebeachal.gov/");
+			expect(event.officialEventsPageURL).toBeUndefined();
+		}
+	});
+
 	it("publishes sanitized fields without raw source or review data", () => {
 		const event = normalizedEvent(facts("<p>A guided naturalist walk along the pier.</p>"), new Date("2026-07-30T12:00:00Z"), { beachId: "gulf-state-park-pavilion", ruleId: "test", explanation: "test" })!;
 		const snapshot = buildSnapshot([{ ...event, status: "published", internalNotes: "private" }], new Date("2026-07-30T12:00:00Z"));
