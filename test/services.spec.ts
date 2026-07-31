@@ -118,7 +118,15 @@ describe("NDBC water temperatures", () => {
 		});
 		expect(fetchMock).toHaveBeenCalledWith(
 			expect.any(URL),
-			expect.objectContaining({ cache: "no-store", redirect: "manual" }),
+			expect.objectContaining({
+				cache: "no-store",
+				redirect: "manual",
+			}),
+		);
+		const requestHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+		expect(requestHeaders.get("Accept")).toBe("text/plain");
+		expect(requestHeaders.get("User-Agent")).toBe(
+			"AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",
 		);
 	});
 });

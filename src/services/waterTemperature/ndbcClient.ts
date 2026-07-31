@@ -47,7 +47,8 @@ export async function fetchNDBCWaterTemperature(
 			validateUrl: validateNdbcUrl,
 			cache: "no-store",
 			headers: {
-				"User-Agent": "Alabama Beach Flag",
+				"Accept": "text/plain",
+				"User-Agent": "AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",
 			},
 		},
 	);
