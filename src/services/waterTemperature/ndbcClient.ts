@@ -4,95 +4,66 @@ import type { WaterTemperatureObservation } from "./client";
 import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNdbcUrl } from "../../config/upstreamSecurity";
 import { fetchWithRetry, readResponseText } from "../../utils/http";
 
-const NDBC_LATEST_OBSERVATIONS_URL = "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt";
+const NDBC_THREDDS_BASE_URL = "https://dods.ndbc.noaa.gov/thredds/dodsC/data/stdmet";
+const NDBC_REQUEST_HEADERS = {
+	"Accept": "text/plain",
+	"User-Agent": "AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",
+};
 
-function parseNDBCTimestamp(headers: string[], values: string[]): string {
-	const valueFor = (...names: string[]): string | undefined => {
-		const index = names.map((name) => headers.indexOf(name)).find((index) => index >= 0);
-		return index === undefined ? undefined : values[index];
-	};
-	const yearText = valueFor("#YY", "YY", "YYYY");
-	const month = Number(valueFor("MM"));
-	const day = Number(valueFor("DD"));
-	const hour = Number(valueFor("hh"));
-	const minute = Number(valueFor("mm") ?? "0");
-	const year = Number(yearText);
-
-	if (
-		!yearText ||
-		[year, month, day, hour, minute].some(Number.isNaN) ||
-		year < 2000 ||
-		year > 2100 ||
-		month < 1 ||
-		month > 12 ||
-		day < 1 ||
-		day > 31 ||
-		hour < 0 ||
-		hour > 23 ||
-		minute < 0 ||
-		minute > 59
-	) {
-		throw new Error("NDBC observation timestamp is invalid");
+async function fetchNDBCText(url: string, stationId: string): Promise<string> {
+	const response = await fetchWithRetry(url, {
+		validateUrl: validateNdbcUrl,
+		cache: "no-store",
+		headers: NDBC_REQUEST_HEADERS,
+	});
+	if (!response.ok) {
+		throw new Error(`Failed to fetch NDBC station ${stationId} (${response.status})`);
 	}
-
-	return new Date(Date.UTC(year, month - 1, day, hour, minute)).toISOString();
+	return readResponseText(response, {
+		maxBytes: UPSTREAM_LIMITS.ndbcTextBytes,
+		contentTypes: CONTENT_TYPES.ndbcText,
+	});
 }
 
 export async function fetchNDBCWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
-	const response = await fetchWithRetry(
-		NDBC_LATEST_OBSERVATIONS_URL,
-		{
-			validateUrl: validateNdbcUrl,
-			cache: "no-store",
-			headers: {
-				"Accept": "text/plain",
-				"User-Agent": "AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",
-			},
-		},
+	if (!/^[A-Za-z0-9_-]+$/.test(stationId)) {
+		throw new Error("Invalid NDBC station identifier");
+	}
+	const normalizedStationId = stationId.toLowerCase();
+	const datasetUrl = `${NDBC_THREDDS_BASE_URL}/${normalizedStationId}/${normalizedStationId}h9999.nc`;
+	const schema = await fetchNDBCText(`${datasetUrl}.dds`, stationId);
+	const dimensionMatch = schema.match(/\bInt32 time\[time = (\d+)\];/);
+	const dimension = Number(dimensionMatch?.[1]);
+	if (!Number.isSafeInteger(dimension) || dimension < 1 || dimension > 1_000_000) {
+		throw new Error(`Unexpected NDBC schema for station ${stationId}`);
+	}
+
+	const lastIndex = dimension - 1;
+	const query = `time[${lastIndex}:1:${lastIndex}],sea_surface_temperature[${lastIndex}:1:${lastIndex}][0:1:0][0:1:0]`;
+	const observation = await fetchNDBCText(`${datasetUrl}.ascii?${query}`, stationId);
+	const temperatureMatch = observation.match(
+		/sea_surface_temperature\.sea_surface_temperature\[1\]\[1\]\[1\]\s*\n\[0\]\[0\],\s*(-?\d+(?:\.\d+)?)/,
 	);
-
-	if (!response.ok) {
-		throw new Error(
-			`Failed to fetch NDBC station ${stationId} (${response.status})`,
-		);
+	const timeMatch = observation.match(/(?:^|\n)time\[1\]\s*\n(\d+)(?:\n|$)/);
+	const waterTempC = Number(temperatureMatch?.[1]);
+	const observedEpochSeconds = Number(timeMatch?.[1]);
+	if (
+		!Number.isFinite(waterTempC)
+		|| waterTempC < -5
+		|| waterTempC > 45
+		|| !Number.isSafeInteger(observedEpochSeconds)
+		|| observedEpochSeconds < 946684800
+	) {
+		throw new Error(`No valid water temperature for station ${stationId}`);
 	}
 
-	const text = await readResponseText(response, {
-		maxBytes: UPSTREAM_LIMITS.ndbcTextBytes,
-		contentTypes: CONTENT_TYPES.ndbcText,
-	});
-	const lines = text.trim().split("\n");
-
-	if (lines.length < 3) {
-		throw new Error(`Unexpected NDBC response for station ${stationId}`);
-	}
-
-	const headers = lines[0].trim().split(/\s+/);
-	const stationIndex = headers.indexOf("#STN");
-	const wtIndex = headers.indexOf("WTMP");
-
-	if (stationIndex === -1 || wtIndex === -1) {
-		throw new Error(`Required columns not found for station ${stationId}`);
-	}
-
-	let selected: { values: string[]; waterTempC: number } | undefined;
-	for (const line of lines.slice(2)) {
-		const values = line.trim().split(/\s+/);
-		if (values[stationIndex]?.toUpperCase() !== stationId.toUpperCase()) continue;
-		const waterTempC = Number(values[wtIndex]);
-		if (values.length < headers.length || !Number.isFinite(waterTempC) || waterTempC < -5 || waterTempC > 45) continue;
-		selected = { values, waterTempC };
-		break;
-	}
-	if (!selected) throw new Error(`No valid water temperature for station ${stationId}`);
-
-	const waterTempF = Math.round((selected.waterTempC * 9) / 5 + 32);
+	const waterTempF = Math.round((waterTempC * 9) / 5 + 32);
 
 	return {
 		temperature: waterTempF,
 		temperatureUnit: "F",
-		observedAt: parseNDBCTimestamp(headers, selected.values),
+		observedAt: new Date(observedEpochSeconds * 1000).toISOString(),
 	};
 }

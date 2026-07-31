@@ -10,7 +10,7 @@ export const UPSTREAM_LIMITS = {
 	// NOAA's nationwide beach dataset is larger than per-location forecasts.
 	noaaJsonBytes: 4 * 1024 * 1024,
 	nwsJsonBytes: 2 * 1024 * 1024,
-	// NDBC realtime station histories vary by reporting cadence; 42012 exceeded 645 KiB in July 2026.
+	// NDBC THREDDS schema and one-value ASCII responses are small; retain headroom for metadata.
 	ndbcTextBytes: 1 * 1024 * 1024,
 	// CO-OPS latest observations and Open-Meteo current UV are small JSON documents.
 	coopsJsonBytes: 256 * 1024,
@@ -35,7 +35,10 @@ export const validateNwsUrl = policy(["api.weather.gov"], /^\/(?:points|gridpoin
 export const validateNoaaMapUrl = policy(["mapservices.weather.noaa.gov"], /^\/vector\/rest\/services\/outlooks\/marine_beachforecast_summary\/MapServer\/0\/query$/);
 export const validateOpenMeteoUrl = policy(["api.open-meteo.com"], /^\/v1\/forecast$/);
 export const validateCoopsUrl = policy(["api.tidesandcurrents.noaa.gov"], /^\/api\/prod\/datagetter$/);
-export const validateNdbcUrl = policy(["www.ndbc.noaa.gov"], /^\/data\/latest_obs\/latest_obs\.txt$/);
+export const validateNdbcUrl = policy(
+	["dods.ndbc.noaa.gov"],
+	/^\/thredds\/dodsC\/data\/stdmet\/[a-z0-9_-]+\/[a-z0-9_-]+h9999\.nc\.(?:dds|ascii)$/,
+);
 export const validateWeatherKitUrl = policy(["weatherkit.apple.com"], /^\/api\/v1\/weather\/en\/-?\d+(?:\.\d+)?\/-?\d+(?:\.\d+)?$/);
 
 export const CONTENT_TYPES = {
@@ -44,7 +47,6 @@ export const CONTENT_TYPES = {
 	nwsJson: ["application/geo+json", "application/ld+json", "application/json"],
 	html: ["text/html", "application/xhtml+xml"],
 	text: ["text/plain"],
-	// NDBC's allowlisted .txt endpoint can label station text as HTML or binary on some egress paths.
-	ndbcText: ["text/plain", "text/html", "application/octet-stream"],
+	ndbcText: ["text/plain"],
 	excel: ["application/vnd.ms-excel", "application/octet-stream"],
 } as const;

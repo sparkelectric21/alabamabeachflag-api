@@ -27,11 +27,18 @@ describe("weather-condition normalization", () => {
 });
 
 describe("NDBC water temperatures", () => {
+	const dds = (dimension = 10) => `Dataset {\n Int32 time[time = ${dimension}];\n} station;`;
+	const ascii = (temperature: string, epochSeconds = 1785448800) =>
+		"sea_surface_temperature.sea_surface_temperature[1][1][1]\n"
+		+ `[0][0], ${temperature}\n\n`
+		+ `time[1]\n${epochSeconds}\n`;
+	const response = (body: string, contentType = "text/plain") =>
+		new Response(body, { status: 200, headers: { "Content-Type": contentType } });
+
 	it("uses the observation timestamp", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 14 30 28.5\n",
-			{ status: 200, headers: { "Content-Type": "text/plain" } },
-		)));
+		vi.stubGlobal("fetch", vi.fn()
+			.mockResolvedValueOnce(response(dds()))
+			.mockResolvedValueOnce(response(ascii("28.5", 1783348200))));
 
 		const result = await fetchNDBCWaterTemperature("TEST");
 
@@ -40,112 +47,73 @@ describe("NDBC water temperatures", () => {
 	});
 
 	it("rejects NDBC missing-value sentinels", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 14 30 999.0\n",
-			{ status: 200, headers: { "Content-Type": "text/plain" } },
-		)));
+		vi.stubGlobal("fetch", vi.fn()
+			.mockResolvedValueOnce(response(dds()))
+			.mockResolvedValueOnce(response(ascii("999.0"))));
 
 		await expect(fetchNDBCWaterTemperature("TEST")).rejects.toThrow(
 			"No valid water temperature",
 		);
 	});
 
-	it("scans past newer missing WTMP rows to the newest valid temperature row", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 15 00 MM\nTEST 2026 07 06 14 30 28.5\n",
-			{ status: 200, headers: { "Content-Type": "text/plain" } },
-		)));
-		const result = await fetchNDBCWaterTemperature("TEST");
-		expect(result.temperature).toBe(83);
-		expect(result.observedAt).toBe("2026-07-06T14:30:00.000Z");
-	});
-
-	it("accepts a valid WTMP when unrelated fields are missing", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#STN YYYY MM DD hh mm WDIR WSPD GST WTMP DEWP\n"
-				+ "#text yr mo dy hr mn degT m/s m/s degC degC\n"
-				+ "PPTA1 2026 07 30 21 00 MM 2.6 MM 29.6 MM\n",
-			{ status: 200, headers: { "Content-Type": "text/plain" } },
-		)));
-
-		await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
-			temperature: 85,
-			observedAt: "2026-07-30T21:00:00.000Z",
-		});
-	});
-
-	it("selects only the requested station from NDBC's latest-observation list", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#STN LAT LON YYYY MM DD hh mm WTMP\n"
-				+ "#text deg deg yr mo dy hr mn degC\n"
-				+ "42012 30.061 -87.547 2026 07 31 00 10 29.6\n"
-				+ "PPTA1 30.279 -87.556 2026 07 30 22 00 30.1\n",
-			{ status: 200, headers: { "Content-Type": "text/plain" } },
-		)));
-
-		await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
-			temperature: 86,
-			observedAt: "2026-07-30T22:00:00.000Z",
-		});
-	});
-
-	it.each(["text/html; charset=ISO-8859-1", "application/octet-stream"])(
-		"parses strict station text when NDBC labels it %s",
-		async (contentType) => {
-			vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-				"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nPPTA1 2026 07 30 21 00 29.6\n",
-				{ status: 200, headers: { "Content-Type": contentType } },
-			)));
-
-			await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
-				temperature: 85,
-				observedAt: "2026-07-30T21:00:00.000Z",
-			});
-		},
-	);
-
-	it("rejects an HTML document even when the allowlisted NDBC endpoint mislabels it as station text", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"<html><body>upstream error</body></html>",
-			{ status: 200, headers: { "Content-Type": "text/html" } },
-		)));
+	it("rejects malformed or excessive THREDDS dimensions before requesting data", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(response(dds(1_000_001)));
+		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(fetchNDBCWaterTemperature("PPTA1")).rejects.toThrow(
-			"Unexpected NDBC response",
+			"Unexpected NDBC schema",
 		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("bypasses shared upstream caching and accepts a current 645 KiB station history", async () => {
-		const header = "#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\n42012 2026 07 30 23 20 29.6\n";
-		const body = header + "\n".repeat(660_820 - header.length);
-		const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
-			status: 200,
-			headers: {
-				"Content-Type": "text/plain; charset=ISO-8859-1",
-				"Content-Length": String(body.length),
-			},
-		}));
+	it("uses a bounded last-value query and bypasses shared upstream caching", async () => {
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(response(dds(8459)))
+			.mockResolvedValueOnce(response(ascii("29.6", 1785456600)));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(fetchNDBCWaterTemperature("42012")).resolves.toMatchObject({
 			temperature: 85,
-			observedAt: "2026-07-30T23:20:00.000Z",
+			observedAt: "2026-07-31T00:10:00.000Z",
 		});
-		expect(fetchMock).toHaveBeenCalledWith(
-			expect.any(URL),
-			expect.objectContaining({
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		for (const call of fetchMock.mock.calls) {
+			expect(call[1]).toEqual(expect.objectContaining({
 				cache: "no-store",
 				redirect: "manual",
-			}),
-		);
+			}));
+		}
 		const requestHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
 		expect((fetchMock.mock.calls[0]?.[0] as URL).href).toBe(
-			"https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt",
+			"https://dods.ndbc.noaa.gov/thredds/dodsC/data/stdmet/42012/42012h9999.nc.dds",
+		);
+		expect(decodeURIComponent((fetchMock.mock.calls[1]?.[0] as URL).href)).toBe(
+			"https://dods.ndbc.noaa.gov/thredds/dodsC/data/stdmet/42012/42012h9999.nc.ascii"
+			+ "?time[8458:1:8458],sea_surface_temperature[8458:1:8458][0:1:0][0:1:0]",
 		);
 		expect(requestHeaders.get("Accept")).toBe("text/plain");
 		expect(requestHeaders.get("User-Agent")).toBe(
 			"AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",
 		);
+	});
+
+	it("rejects HTML denial responses instead of parsing them", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(
+			"<html><body>upstream error</body></html>",
+			"text/html",
+		)));
+		await expect(fetchNDBCWaterTemperature("PPTA1")).rejects.toThrow(
+			"unexpected_content_type",
+		);
+	});
+
+	it("rejects unsafe station identifiers before fetching", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(fetchNDBCWaterTemperature("../PPTA1")).rejects.toThrow(
+			"Invalid NDBC station identifier",
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
 
