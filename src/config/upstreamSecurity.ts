@@ -35,7 +35,7 @@ export const validateNwsUrl = policy(["api.weather.gov"], /^\/(?:points|gridpoin
 export const validateNoaaMapUrl = policy(["mapservices.weather.noaa.gov"], /^\/vector\/rest\/services\/outlooks\/marine_beachforecast_summary\/MapServer\/0\/query$/);
 export const validateOpenMeteoUrl = policy(["api.open-meteo.com"], /^\/v1\/forecast$/);
 export const validateCoopsUrl = policy(["api.tidesandcurrents.noaa.gov"], /^\/api\/prod\/datagetter$/);
-export const validateNdbcUrl = policy(["www.ndbc.noaa.gov"], /^\/data\/realtime2\/[A-Za-z0-9_-]+\.txt$/);
+export const validateNdbcUrl = policy(["www.ndbc.noaa.gov"], /^\/data\/5day2\/[A-Za-z0-9_-]+_5day\.txt$/);
 export const validateWeatherKitUrl = policy(["weatherkit.apple.com"], /^\/api\/v1\/weather\/en\/-?\d+(?:\.\d+)?\/-?\d+(?:\.\d+)?$/);
 
 export const CONTENT_TYPES = {

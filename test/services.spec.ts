@@ -124,6 +124,9 @@ describe("NDBC water temperatures", () => {
 			}),
 		);
 		const requestHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+		expect((fetchMock.mock.calls[0]?.[0] as URL).href).toBe(
+			"https://www.ndbc.noaa.gov/data/5day2/42012_5day.txt",
+		);
 		expect(requestHeaders.get("Accept")).toBe("text/plain");
 		expect(requestHeaders.get("User-Agent")).toBe(
 			"AlabamaBeachFlagAPI/1.0 (operations@alabamabeachflag.com)",

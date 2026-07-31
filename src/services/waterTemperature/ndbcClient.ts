@@ -4,7 +4,7 @@ import type { WaterTemperatureObservation } from "./client";
 import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNdbcUrl } from "../../config/upstreamSecurity";
 import { fetchWithRetry, readResponseText } from "../../utils/http";
 
-const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/realtime2";
+const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/5day2";
 
 function parseNDBCTimestamp(headers: string[], values: string[]): string {
 	const valueFor = (...names: string[]): string | undefined => {
@@ -42,7 +42,7 @@ export async function fetchNDBCWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
 	const response = await fetchWithRetry(
-		`${NDBC_BASE_URL}/${stationId}.txt`,
+		`${NDBC_BASE_URL}/${stationId}_5day.txt`,
 		{
 			validateUrl: validateNdbcUrl,
 			cache: "no-store",
