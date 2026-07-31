@@ -60,7 +60,7 @@ export async function fetchNDBCWaterTemperature(
 
 	const text = await readResponseText(response, {
 		maxBytes: UPSTREAM_LIMITS.ndbcTextBytes,
-		contentTypes: CONTENT_TYPES.text,
+		contentTypes: CONTENT_TYPES.ndbcText,
 	});
 	const lines = text.trim().split("\n");
 

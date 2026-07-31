@@ -44,5 +44,7 @@ export const CONTENT_TYPES = {
 	nwsJson: ["application/geo+json", "application/ld+json", "application/json"],
 	html: ["text/html", "application/xhtml+xml"],
 	text: ["text/plain"],
+	// NDBC's allowlisted .txt endpoint can label station text as HTML or binary on some egress paths.
+	ndbcText: ["text/plain", "text/html", "application/octet-stream"],
 	excel: ["application/vnd.ms-excel", "application/octet-stream"],
 } as const;

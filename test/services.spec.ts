@@ -74,6 +74,32 @@ describe("NDBC water temperatures", () => {
 		});
 	});
 
+	it.each(["text/html; charset=ISO-8859-1", "application/octet-stream"])(
+		"parses strict station text when NDBC labels it %s",
+		async (contentType) => {
+			vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+				"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 30 21 00 29.6\n",
+				{ status: 200, headers: { "Content-Type": contentType } },
+			)));
+
+			await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
+				temperature: 85,
+				observedAt: "2026-07-30T21:00:00.000Z",
+			});
+		},
+	);
+
+	it("rejects an HTML document even when the allowlisted NDBC endpoint mislabels it as station text", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+			"<html><body>upstream error</body></html>",
+			{ status: 200, headers: { "Content-Type": "text/html" } },
+		)));
+
+		await expect(fetchNDBCWaterTemperature("PPTA1")).rejects.toThrow(
+			"Unexpected NDBC response",
+		);
+	});
+
 	it("bypasses shared upstream caching and accepts a current 645 KiB station history", async () => {
 		const header = "#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 30 23 20 29.6\n";
 		const body = header + "\n".repeat(660_820 - header.length);
