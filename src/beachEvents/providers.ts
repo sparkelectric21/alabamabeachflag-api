@@ -4,6 +4,8 @@ export interface BeachEventProvider {
 	id: string;
 	name: string;
 	feedURL: string;
+	officialEventsPageURL?: string;
+	organizerWebsiteURL?: string;
 	feedType: "iCalendar" | "Google iCalendar" | "RSS" | "JSON" | "Web page" | "PDF Newsletter" | "Manual";
 	mode: BeachEventProviderMode;
 	controlId?: "gulfShoresEvents" | "orangeBeachEvents" | "gulfStateParkEvents" | "orangeBeachCoastalEvents";
@@ -82,6 +84,8 @@ export const BEACH_EVENT_PROVIDERS: BeachEventProvider[] = [
 		id: "gulfStatePark",
 		name: "Gulf State Park Events",
 		feedURL: "https://calendar.google.com/calendar/ical/2ehkep97u1rsqsgd2cipa7r3ag%40group.calendar.google.com/public/basic.ics",
+		officialEventsPageURL: "https://www.alapark.com/parks/gulf-state-park/activities-calendar",
+		organizerWebsiteURL: "https://www.alapark.com/parks/gulf-state-park",
 		feedType: "Google iCalendar",
 		mode: "enabled",
 		controlId: "gulfStateParkEvents",

@@ -21,7 +21,7 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
-import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
+import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
@@ -187,6 +187,11 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "PATCH") return methodNotAllowed("PATCH");
 			return await handleBeachActivityNotificationPreferences(request, env, identity);
+		}
+		if (pathname === "/admin/beach-events/normalize" && request.method === "POST") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			return await handleBeachEventsAdminNormalize(request, env, identity);
 		}
 		if (pathname === "/admin/beach-events/notifications/send") {
 			const identity = await authenticateAdminRequest(request, env);

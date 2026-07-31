@@ -21,6 +21,9 @@ export interface SourceFacts {
 	sourceURL: string;
 	sourceNote?: string;
 	officialURL?: string;
+	registrationURL?: string;
+	organizerWebsiteURL?: string;
+	officialEventsPageURL?: string;
 	description?: string;
 	sourceNewsletterMonth?: string;
 	contactInformation?: string;
@@ -51,6 +54,15 @@ export interface BeachEvent {
 	sourceURL: string;
 	sourceNote?: string;
 	eventDescription?: string;
+	summary?: string;
+	fullDescription?: string;
+	officialEventURL?: string;
+	registrationURL?: string;
+	officialEventsPageURL?: string;
+	organizerWebsiteURL?: string;
+	sourceCalendarURL?: string;
+	sourceProvider?: string;
+	normalizationWarnings?: string[];
 	contactInformation?: string;
 	sourceNewsletterMonth?: string;
 	endTimeUnavailable?: boolean;

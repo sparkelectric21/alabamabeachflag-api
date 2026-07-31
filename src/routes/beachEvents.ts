@@ -2,13 +2,14 @@ import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
 import { evaluateBeachEventsControl, readOperationalControl } from "../operationalControl/store";
 import { BEACH_EVENT_PROVIDERS } from "../beachEvents/providers";
-import { AUDIT_PREFIX, EVENT_PREFIX, EXCLUSION_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, isEventVisibleNow, listEvents, listExcludedCandidates, listRules, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
+import { AUDIT_PREFIX, EVENT_PREFIX, EXCLUSION_PREFIX, RULE_PREFIX, SNAPSHOT_KEY, audit, isEventVisibleNow, listEvents, listExcludedCandidates, listRules, renormalizeExistingEvents, saveSnapshot, suggestPresentation, validateManualEvent } from "../beachEvents/store";
 import type { BeachEvent, BeachEventsSnapshot, DecisionRule, ExcludedEventCandidate } from "../beachEvents/types";
 import { beaches } from "../config/BeachRegistry";
 import { readBeachEventRefreshStatus } from "../beachEvents/refresh";
 import { nextBeachEventRefresh } from "../beachEvents/schedule";
 import { beachReferences } from "../beachEvents/beachReference";
 import { evaluateBeachActivityNotifications, readBeachActivityNotificationConfig, readBeachActivityNotificationState, updateBeachActivityNotificationConfig } from "../beachEvents/notifications";
+import { normalizeDescription, sanitizeEventURL } from "../beachEvents/normalize";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
@@ -24,11 +25,10 @@ async function notifyQueueChange(env: Env, now: Date, identity: AdminIdentity): 
 function visibleSnapshot(snapshot: BeachEventsSnapshot, now: Date): BeachEventsSnapshot {
 	const beaches = Object.fromEntries(
 		Object.entries(snapshot.beaches)
-			.map(([beachId, events]) => [beachId, events.filter((event) => isEventVisibleNow(event, now))] as const)
+			.map(([beachId, events]) => [beachId, events.filter((event) => isEventVisibleNow({ ...event, status: "published" }, now))] as const)
 			.filter(([, events]) => events.length),
 	);
-	const providerIds = new Set(Object.values(beaches).flat().map((event) => event.sourceFacts.providerId));
-	return { ...snapshot, beaches, attribution: snapshot.attribution.filter((source) => providerIds.has(source.providerId)) };
+	return { ...snapshot, beaches };
 }
 
 function visibleRevision(revision: string, snapshot: BeachEventsSnapshot): string {
@@ -139,6 +139,13 @@ export async function handleBeachEventsAdminCreate(request: Request, env: Env, i
 		status: input.status as BeachEvent["status"],
 		sourceName: String(input.sourceName).trim(),
 		sourceURL: String(input.sourceURL),
+		...(typeof input.summary === "string" && input.summary.trim() ? { summary: normalizeDescription(input.summary, [String(input.title), String(input.venue)]).fullDescription } : {}),
+		...(typeof input.fullDescription === "string" && input.fullDescription.trim() ? { fullDescription: normalizeDescription(input.fullDescription, [String(input.title), String(input.venue)]).fullDescription, eventDescription: normalizeDescription(input.fullDescription).fullDescription } : {}),
+		...(sanitizeEventURL(input.officialEventURL) ? { officialEventURL: sanitizeEventURL(input.officialEventURL) } : {}),
+		...(sanitizeEventURL(input.registrationURL) ? { registrationURL: sanitizeEventURL(input.registrationURL) } : {}),
+		...(sanitizeEventURL(input.officialEventsPageURL) ? { officialEventsPageURL: sanitizeEventURL(input.officialEventsPageURL) } : {}),
+		...(sanitizeEventURL(input.organizerWebsiteURL) ? { organizerWebsiteURL: sanitizeEventURL(input.organizerWebsiteURL) } : {}),
+		...(typeof input.sourceCalendarURL === "string" ? { sourceCalendarURL: input.sourceCalendarURL } : {}),
 		matchMethod: "adminOverride",
 		matchConfidence: "admin",
 		...(typeof input.internalNotes === "string" && input.internalNotes.trim() ? { internalNotes: input.internalNotes.trim().slice(0, 2000) } : {}),
@@ -164,13 +171,16 @@ export async function handleBeachEventsAdminCreate(request: Request, env: Env, i
 	return respond({ event }, 201);
 }
 
-const EDITABLE = new Set(["beachId", "title", "venue", "address", "startAt", "endAt", "allDay", "eventType", "impactLevel", "bannerTitle", "bannerMessage", "parkingImpact", "trafficImpact", "accessImpact", "showCompareNearbyBeaches", "displayFrom", "status", "internalNotes", "sourceName", "sourceURL"]);
+const EDITABLE = new Set(["beachId", "title", "venue", "address", "startAt", "endAt", "allDay", "eventType", "impactLevel", "summary", "fullDescription", "officialEventURL", "registrationURL", "officialEventsPageURL", "organizerWebsiteURL", "sourceCalendarURL", "bannerTitle", "bannerMessage", "parkingImpact", "trafficImpact", "accessImpact", "showCompareNearbyBeaches", "displayFrom", "status", "internalNotes", "sourceName", "sourceURL"]);
 
 export async function handleBeachEventsAdminUpdate(request: Request, env: Env, identity: AdminIdentity, id: string, now = new Date()): Promise<Response> {
 	const current = await env.BEACH_DATA.get<BeachEvent>(`${EVENT_PREFIX}${id}`, "json");
 	if (!current) return respond({ error: "not_found" }, 404);
 	let changes: Record<string, unknown>; try { changes = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
 	if (!changes || Object.keys(changes).some((key) => !EDITABLE.has(key))) return respond({ error: "invalid_changes" }, 400);
+	if (typeof changes.summary === "string") changes.summary = normalizeDescription(changes.summary, [String(changes.title ?? current.title), String(changes.venue ?? current.venue)]).fullDescription;
+	if (typeof changes.fullDescription === "string") { changes.fullDescription = normalizeDescription(changes.fullDescription).fullDescription; changes.eventDescription = changes.fullDescription; }
+	for (const key of ["officialEventURL", "registrationURL", "officialEventsPageURL", "organizerWebsiteURL"] as const) if (key in changes && changes[key]) changes[key] = sanitizeEventURL(changes[key]);
 	const candidate = { ...current, ...changes, id: current.id, createdAt: current.createdAt, sourceFacts: current.sourceFacts };
 	const errors = validateManualEvent(candidate, now);
 	if (errors.length) return respond({ error: "invalid_event", fields: errors }, 400);
@@ -193,6 +203,17 @@ export async function handleBeachEventsAdminDelete(env: Env, identity: AdminIden
 	await saveSnapshot(env, now);
 	await notifyQueueChange(env, now, identity);
 	return respond({ status: "deleted" });
+}
+
+export async function handleBeachEventsAdminNormalize(request: Request, env: Env, identity: AdminIdentity, now = new Date()): Promise<Response> {
+	const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
+	const result = await renormalizeExistingEvents(env, now, dryRun);
+	if (dryRun) return respond({ ...result, dryRun: true, publicSnapshotChanged: false });
+	if (result.failed) return respond({ ...result, error: "partial_normalization_failure", publicSnapshotChanged: false }, 500);
+	if (!result.changed) return respond({ ...result, dryRun: false, publicSnapshotChanged: false });
+	await audit(env, identity, "renormalize_events", "all", result, now);
+	const snapshot = await saveSnapshot(env, now);
+	return respond({ ...result, dryRun: false, newRevision: snapshot.revision, publicSnapshotChanged: true });
 }
 
 export async function handleBeachEventRuleCreate(request: Request, env: Env, identity: AdminIdentity, now = new Date()): Promise<Response> {

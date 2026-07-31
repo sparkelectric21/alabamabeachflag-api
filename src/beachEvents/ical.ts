@@ -1,4 +1,5 @@
 import type { SourceFacts } from "./types";
+import { normalizeDescription, sanitizeEventURL } from "./normalize";
 
 function unfold(input: string): string[] {
 	return input.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "").split(/\r?\n/);
@@ -40,6 +41,9 @@ export function parseICalendar(input: string, provider: { id: string; name: stri
 			const start = fields.DTSTART && parseDate(fields.DTSTART.value, fields.DTSTART.params, 60 * 60 * 1000);
 			const end = fields.DTEND && parseDate(fields.DTEND.value, fields.DTEND.params, 60 * 60 * 1000);
 			if (start && fields.SUMMARY?.value && fields.UID?.value) {
+				const description = fields.DESCRIPTION?.value ? unescape(fields.DESCRIPTION.value) : undefined;
+				const extracted = normalizeDescription(description, [], provider.feedURL).extractedURLs;
+				const registrationURL = extracted.find((url) => /register|registration|ticket|reserve|booking/i.test(url));
 				events.push({
 					providerId: provider.id,
 					externalId: unescape(fields.UID.value),
@@ -51,8 +55,9 @@ export function parseICalendar(input: string, provider: { id: string; name: stri
 					recurring: Boolean(fields.RRULE),
 					sourceName: provider.name,
 					sourceURL: provider.feedURL,
-					officialURL: fields.URL?.value ? unescape(fields.URL.value) : undefined,
-					description: fields.DESCRIPTION?.value ? unescape(fields.DESCRIPTION.value) : undefined,
+					officialURL: fields.URL?.value ? sanitizeEventURL(unescape(fields.URL.value), provider.feedURL) : extracted.find((url) => url !== registrationURL),
+					...(registrationURL ? { registrationURL } : {}),
+					description,
 				});
 			}
 			fields = null; continue;
