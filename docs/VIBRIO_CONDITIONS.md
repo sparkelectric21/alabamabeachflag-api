@@ -1,20 +1,20 @@
-# Vibrio Conditions prototype
+# Vibrio seasonal awareness
 
 ## Architecture
 
-`estimateVibrioConditions` is a pure function behind the deployment-level `VIBRIO_CONDITIONS_ENABLED` flag and the audited runtime control `domains.vibrioAwareness`. Production and staging explicitly enable the deployment-level flag. The runtime control can suppress only the seasonal awareness field without changing beach flags, water quality, weather, tides, or ordinary water temperature. When both controls are enabled, the existing 15-minute Beach Conditions refresh selects from a dedicated per-beach Vibrio allowlist and passes the normalized direct NOAA water-temperature observation into the estimator. The optional `vibrioConditions` member is omitted while either control is not enabled or when a beach is excluded by coverage policy.
+`estimateVibrioConditions` is a pure seasonal-awareness function behind the deployment-level `VIBRIO_CONDITIONS_ENABLED` flag and the audited runtime control `domains.vibrioAwareness`. Production and staging explicitly enable the deployment-level flag. The runtime control can suppress only the seasonal awareness field without changing beach flags, water quality, weather, tides, or ordinary water temperature. The optional `vibrioConditions` member is omitted while either control is not enabled or when a beach is excluded by coverage policy.
 
-The only Phase 1 statuses are `seasonalAwareness` and `unavailable`. May–October is educational CDC seasonal context, not an estimated bacterial level. Inputs older than the source-specific current-observation limit, more than ten minutes in the future, outside physical bounds (28–104 °F; 0–45 PSU), or missing produce `unavailable`. There is no climatology fallback. The response carries both observation and generation timestamps. Public HTTP caching is limited to five minutes; the upstream payload refreshes every 15 minutes and expires from KV after two hours.
+The only Phase 1 statuses are `seasonalAwareness` and `unavailable`. May–October is educational CDC seasonal context, not an estimated bacterial level. **This feature provides seasonal public-health awareness only. It is intentionally independent of real-time environmental modeling.** During the configured season, an eligible beach receives `seasonalAwareness` whether its supplemental water temperature is fresh, stale, malformed, or unavailable. Outside the season it receives `unavailable`. Public HTTP caching is limited to five minutes; the upstream payload refreshes every 15 minutes and expires from KV after two hours.
 
-The prototype reuses the current provider boundary (`coops`/`ndbc`). A dedicated live Vibrio provider should remain protocol-based if future inputs differ. `docs/VibrioConditionsPrototype.swift` is a dependency-free SwiftUI integration reference because this repository contains the Worker API, not the Alabama Beach Flag Xcode project.
+When the ordinary water-temperature pipeline has a valid selected observation, the response may include it as supplemental `waterTemperature`, `dataTimestamp`, and `source` fields. Those optional fields retain their existing meaning and do not affect awareness eligibility.
 
-### Direct-observation selection
+### Separation from a future environmental model
 
-General temperature and Vibrio have separate ordered `BeachRegistry` allowlists. Selection walks the relevant list and returns the first successfully parsed direct NOAA observation within the same two-hour freshness window used by Vibrio. Thus, when multiple approved observations are fresh, configured geographic preference wins deterministically. A stale or unparseable candidate does not stop fallback. If every approved candidate is stale or unavailable, the general temperature tile retains the first successfully parsed observation for compatibility, while Vibrio independently fails closed with `unavailable`. A shared provider/station request cache prevents duplicate NOAA requests across both policies.
+`estimateVibrioEnvironmentalConditions` preserves the disabled observation-validation boundary for a possible 2.0 model. It is not called by seasonal awareness. Any future model requires separate scientific review and may consider water temperature, salinity, rainfall, freshwater discharge, tides, wind, and additional validated environmental inputs. It must not be enabled by reinterpreting the current seasonal status.
 
 ## Data sources and geographic mapping
 
-All values currently used are direct observations, never forecasts or model guidance.
+Water-temperature values remain direct observations, never forecasts or model guidance. They are supplemental and are not used to decide whether seasonal awareness appears.
 
 Audit findings implemented and re-reviewed **July 30, 2026** using the official NDBC station pages, NDBC realtime text feeds, and NOAA CO-OPS Data API. The iOS copy follows the current CDC wound, seafood, emergency-care, and higher-risk wording. This implementation does not claim endorsement by CDC, ADPH, NOAA, or Dauphin Island Sea Lab.
 
@@ -52,7 +52,7 @@ CO-OPS 8735180 was removed from the eastern-beach Vibrio lists: at roughly 23–
 
 - NDBC: stable machine-readable `https://www.ndbc.noaa.gov/data/realtime2/{station}.txt`; standard meteorological records are generally hourly. Station availability and sensor reporting can change without a versioned schema guarantee.
 - NOAA CO-OPS: supported Data API `datagetter`, `product=water_temperature`, `date=latest`, JSON. NOAA defines `latest` as the most recent point within 18 minutes and meteorological observations default to six-minute intervals. The current station is 8735180 (Dauphin Island). This is a measured observation.
-- Freshness policy is station-specific and cadence-based as listed above, with ten minutes of future clock-skew tolerance. The Vibrio selector accepts only `current`, never `stale`, observations. Keep the visible `dataTimestamp`; a missing current value is `unavailable`.
+- Freshness policy remains station-specific for the ordinary water-temperature display. Seasonal awareness does not use provider, station, observation time, or freshness as an eligibility input. Keep visible source and observation-time context when a temperature is present; show temperature as temporarily unavailable when it is absent.
 - Salinity: omitted. Although CO-OPS supports salinity as a product, no currently configured source has been established as a reliable, geographically representative salinity observation for every supported beach. Do not infer it from waterbody, temperature, a distant bay station, or climatology.
 - Endpoint stability: CO-OPS Data API is the preferred documented service. NDBC realtime text is already in production use but is a flat-file format, so parsers must continue to fail closed on header/schema changes.
 
@@ -60,7 +60,7 @@ Official references: [NOAA CO-OPS Data API](https://api.tidesandcurrents.noaa.go
 
 ## Product limitations
 
-The name is “Vibrio Conditions.” It does not test water, establish that Vibrio is present or absent, predict infection or personal medical risk, or say whether swimming is safe. Temperature is displayed only as provenance-bearing environmental context. Official closures, advisories, beach flags, rip-current warnings, and weather alerts must remain above this secondary card.
+The name is “Vibrio Awareness.” Vibrio naturally occurs in warm coastal waters, and risk is generally greater during warmer months. This feature does not test water, establish current bacteria levels, predict infection or personal medical risk, provide a numerical score, or say whether swimming is safe. Temperature is optional provenance-bearing context only. Official closures, advisories, beach flags, rip-current warnings, and weather alerts must remain above this secondary card.
 
 The NOAA Northern Gulf oyster-harvest *V. parahaemolyticus* forecast and Chesapeake Bay *V. vulnificus* probability model are explicitly excluded: neither is validated here for Alabama recreational-water or wound-infection use. A temperature threshold or “low/moderate/high” level would also be misleading and is out of scope.
 
@@ -76,7 +76,7 @@ The NOAA Northern Gulf oyster-harvest *V. parahaemolyticus* forecast and Chesape
 
 ## Production-readiness decision (July 30, 2026)
 
-The product owner approved production enablement as a **seasonal safety-awareness feature**, not a Vibrio prediction model. The decision accepts the documented contextual-station limitations for the eligible beaches while keeping Gulf State Park Pavilion and Little Lagoon Pass excluded. Exact CDC wording, direct observations, source-specific freshness, deterministic fallback, and fail-closed behavior remain mandatory. Any future rainfall/salinity-based risk model or expansion of excluded locations still requires qualified external scientific review.
+The product owner approved production enablement as a **seasonal safety-awareness feature**, not a Vibrio prediction model. The eligible beaches show awareness consistently throughout May–October regardless of buoy timing. Gulf State Park Pavilion and Little Lagoon Pass remain excluded. Any future environmental model or expansion of excluded locations still requires qualified external scientific review.
 
 Production has two independent safeguards:
 

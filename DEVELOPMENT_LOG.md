@@ -5,7 +5,7 @@
 - Aligned the four regional cards with explicit ordinary observation chains: Gulf Shores and Orange Beach use `PPTA1 → 42012 → 42357`; Fort Morgan uses `DPHA1 → 42357 → 42012`; Dauphin Island uses `8735180 → 42357 → DPHA1`.
 - Preserved ordered first-current selection, station-specific stale and unavailable thresholds, direct-observation provenance, and unavailable behavior when all approved sources fail.
 - Updated Provider Health, API/iOS tests, user-facing source context, operational documentation, and the Obsidian decision record.
-- Vibrio eligibility, source arrays, freshness, calculations, limitations, and presentation were intentionally unchanged and are protected by an exact full-configuration regression test.
+- Historical note: this entry predates the July 30, 2026 seasonal-awareness policy. Vibrio banner eligibility is now intentionally independent of source arrays, observation freshness, and environmental calculations; those configurations remain for ordinary temperature and possible future-model use.
 
 ## July 30, 2026 — Seasonal Vibrio awareness approval
 

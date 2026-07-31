@@ -19,6 +19,10 @@ export interface TidePredictionConfiguration {
 export type VibrioCoveragePolicy =
 	| {
 		eligible: true;
+		/**
+		 * Reserved for supplemental context and the disabled future environmental
+		 * model. Seasonal-awareness eligibility does not depend on these sources.
+		 */
 		waterTemperature: WaterTemperatureSourceConfiguration;
 		limitation: string;
 	}

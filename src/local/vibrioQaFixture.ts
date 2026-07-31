@@ -35,7 +35,7 @@ export function buildLocalVibrioQaFixture(
 				stationId: "LOCAL-QA",
 			},
 		})
-		: estimateVibrioConditions({ enabled: true, now, observation: null });
+		: estimateVibrioConditions({ enabled: false, now, observation: null });
 
 	const { diagnosticCode: _diagnosticCode, ...publicResult } = result;
 	return publicResult;

@@ -74,6 +74,51 @@ function dependencies(failingWeatherKeys: Set<string>) {
 }
 
 describe("beach conditions refresh provider isolation", () => {
+	it("publishes seasonal awareness for all four app beaches without temperature data", async () => {
+		const testDependencies = dependencies(new Set());
+		testDependencies.refreshWaterTemperatureSelections.mockResolvedValue({ general: {}, vibrio: {} });
+		const payload = await buildBeachConditionsPayload({
+			now: NOW,
+			vibrioConditionsEnabled: true,
+			dependencies: testDependencies,
+		});
+
+		for (const beachId of [
+			"gulf-shores-public-beach",
+			"cotton-bayou",
+			"fort-morgan-public-beach",
+			"dauphin-island-public-beach",
+		]) {
+			expect(payload.beachConditions.find((beach) => beach.beachId === beachId)).toMatchObject({
+				waterTemperature: null,
+				vibrioConditions: { status: "seasonalAwareness" },
+			});
+		}
+	});
+
+	it("keeps supplemental stale temperature while seasonal awareness remains visible", async () => {
+		const testDependencies = dependencies(new Set());
+		const stale = waterTemperatures();
+		for (const temperature of Object.values(stale)) {
+			temperature.freshnessStatus = "stale";
+			temperature.ageMinutes = 135;
+		}
+		testDependencies.refreshWaterTemperatureSelections.mockResolvedValue({ general: stale, vibrio: {} });
+		const payload = await buildBeachConditionsPayload({
+			now: NOW,
+			vibrioConditionsEnabled: true,
+			dependencies: testDependencies,
+		});
+
+		expect(payload.beachConditions.find((beach) => beach.beachId === "gulf-shores-public-beach")).toMatchObject({
+			waterTemperature: { freshnessStatus: "stale", ageMinutes: 135 },
+			vibrioConditions: {
+				status: "seasonalAwareness",
+				waterTemperature: { value: 84, unit: "F" },
+			},
+		});
+	});
+
 	it("publishes tide, water temperature, and identity for every beach during a total NWS outage", async () => {
 		const allWeatherKeys = new Set(beaches.map((beach) => `${beach.weather.latitude},${beach.weather.longitude}`));
 		const payload = await buildBeachConditionsPayload({ now: NOW, dependencies: dependencies(allWeatherKeys) });

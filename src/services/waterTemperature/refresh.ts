@@ -73,7 +73,9 @@ export async function refreshWaterTemperatureSelections(): Promise<WaterTemperat
 	logInfo("Water Temperature", "Starting refresh");
 	const requestCache = new Map<string, Promise<WaterTemperatureObservationWithSource>>();
 	const general = await refreshConfiguredWaterTemperatures(requestCache, "general_temperature");
-	const vibrio = await refreshConfiguredWaterTemperatures(requestCache, "vibrio_conditions");
+	// Retain the response member for internal compatibility. Seasonal awareness
+	// no longer performs or consumes a dedicated station-freshness selection.
+	const vibrio: WaterTemperatureResults = {};
 
 	logInfo("Water Temperature", "Finished refresh", {
 		durationMs: elapsedMs(startedAt),

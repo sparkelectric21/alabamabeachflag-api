@@ -180,7 +180,6 @@ export async function buildBeachConditionsPayload(options: BeachConditionsRefres
 		dependencies.getTidePredictions(generatedAt),
 	]);
 	const waterTemperatures = waterTemperatureSelections.general;
-	const vibrioWaterTemperatures = waterTemperatureSelections.vibrio;
 	const weatherRequests = new Map<string, Promise<NWSForecastResponse | undefined>>();
 	let nwsFailureCount = 0;
 
@@ -230,12 +229,14 @@ export async function buildBeachConditionsPayload(options: BeachConditionsRefres
 			? estimateVibrioConditions({
 				enabled: true,
 				now: generatedAt,
-				observation: vibrioWaterTemperatures[beach.id] ? {
-					waterTemperature: vibrioWaterTemperatures[beach.id].temperature,
+				// The ordinary water-temperature selection is supplemental context.
+				// It never determines seasonal-awareness eligibility.
+				observation: waterTemperatures[beach.id] ? {
+					waterTemperature: waterTemperatures[beach.id].temperature,
 					waterTemperatureUnit: "F",
-					observedAt: vibrioWaterTemperatures[beach.id].observedAt,
-					provider: vibrioWaterTemperatures[beach.id].provider,
-					stationId: vibrioWaterTemperatures[beach.id].stationId,
+					observedAt: waterTemperatures[beach.id].observedAt,
+					provider: waterTemperatures[beach.id].provider,
+					stationId: waterTemperatures[beach.id].stationId,
 				} : null,
 			})
 			: undefined;
@@ -243,8 +244,8 @@ export async function buildBeachConditionsPayload(options: BeachConditionsRefres
 			logWarn("Vibrio Conditions", "Observation unavailable", {
 				beachId: beach.id,
 				condition: vibrioConditions.diagnosticCode,
-				provider: vibrioWaterTemperatures[beach.id]?.provider,
-				stationId: vibrioWaterTemperatures[beach.id]?.stationId,
+				provider: waterTemperatures[beach.id]?.provider,
+				stationId: waterTemperatures[beach.id]?.stationId,
 			});
 		}
 		const publicVibrioConditions = vibrioConditions

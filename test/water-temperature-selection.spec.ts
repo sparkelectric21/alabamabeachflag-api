@@ -326,7 +326,7 @@ describe("water-temperature source selection", () => {
 		}
 	});
 
-	it("allows seasonal awareness only for the selected fresh direct observation", async () => {
+	it("keeps water-temperature source selection separate from seasonal awareness", async () => {
 		const loadSource = loader({
 			"ndbc:PPTA1": observation("ndbc", "PPTA1", "2026-07-17T15:00:00.000Z"),
 			"coops:8735180": observation("coops", "8735180", "2026-07-17T17:50:00.000Z"),
@@ -341,6 +341,7 @@ describe("water-temperature source selection", () => {
 		});
 
 		expect(estimateVibrioConditions({ enabled: true, now, observation: estimatorObservation(selected) }).status).toBe("seasonalAwareness");
+		expect(estimateVibrioConditions({ enabled: true, now, observation: null }).status).toBe("seasonalAwareness");
 
 		await expect(fetchLatestWaterTemperature(sources(["ndbc", "PPTA1"]), new Map(), { now, loadSource, diagnosticScope: "vibrio_conditions" }))
 			.rejects.toThrow("No approved usable water temperature source");

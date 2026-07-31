@@ -282,6 +282,13 @@ WeatherKit should be added after shared HTTP handling and logging are improved.
 
 ## Future Environmental Features
 
+The current Vibrio feature provides seasonal public-health awareness only. It is
+intentionally independent of real-time environmental modeling. A future Vibrio
+conditions model must remain separately disabled until it has validated inputs,
+scientific review, and its own API semantics. Candidate inputs include water
+temperature, salinity, rainfall, freshwater discharge, tides, wind, and other
+validated environmental observations.
+
 Future backend-supported data sources may include:
 
 - Vibrio risk

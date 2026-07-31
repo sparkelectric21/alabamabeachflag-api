@@ -8,6 +8,8 @@ Enforced controls include `global.liveData`, the beach-flag domain and providers
 
 `domains.vibrioAwareness` is isolated to the optional `vibrioConditions` member of Beach Conditions. Disabled or monitor-only state omits that member on every public response without changing flags, water quality, weather, tides, or ordinary water temperature. The deployment-level `VIBRIO_CONDITIONS_ENABLED` flag remains the master fallback. Restoration requires a fresh Beach Conditions refresh before recovery is declared.
 
+When enabled, this feature provides seasonal public-health awareness only. It is intentionally independent of real-time environmental modeling, including provider, station, observation timestamp, and water-temperature freshness. Operational Control and per-beach coverage remain authoritative.
+
 States are `enabled`, `disabled`, and `monitorOnly`. An expired control defaults to `require_review`, which remains disabled until an operator restores it. `onExpiry: enable` is the only automatic-enable policy.
 
 ## Storage and audit

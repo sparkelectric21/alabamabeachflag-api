@@ -77,6 +77,55 @@ export function estimateVibrioConditions(
 	if (month < 5 || month > 10) {
 		return unavailable(now, "Outside the May–October CDC seasonal-awareness period.");
 	}
+
+	const supplementalObservation = validSupplementalObservation(observation);
+	return {
+		status: "seasonalAwareness",
+		...(supplementalObservation ? {
+			waterTemperature: {
+				value: supplementalObservation.waterTemperature,
+				unit: "F" as const,
+			},
+			dataTimestamp: new Date(supplementalObservation.observedAt).toISOString(),
+			source: {
+				name: supplementalObservation.provider === "fixture" ? "Prototype fixture" : "NOAA",
+				provider: supplementalObservation.provider,
+				stationId: supplementalObservation.stationId,
+				kind: "observation" as const,
+			},
+		} : {
+			source: { name: "CDC", kind: "education" as const },
+		}),
+		generatedAt: now.toISOString(),
+		provenance: "Seasonal public-health awareness for May–October. Any displayed water temperature is supplemental and does not determine banner eligibility.",
+		limitations: LIMITATIONS,
+	};
+}
+
+function validSupplementalObservation(
+	observation: VibrioConditionsObservation | null | undefined,
+): VibrioConditionsObservation | undefined {
+	if (!observation || typeof observation !== "object") return undefined;
+	if (observation.waterTemperatureUnit !== "F") return undefined;
+	if (!(["coops", "ndbc", "fixture"] as const).includes(observation.provider)) return undefined;
+	if (typeof observation.stationId !== "string" || observation.stationId.length === 0) return undefined;
+	if (typeof observation.observedAt !== "string" || !Number.isFinite(new Date(observation.observedAt).getTime())) return undefined;
+	if (!Number.isFinite(observation.waterTemperature) || observation.waterTemperature < 28 || observation.waterTemperature > 104) return undefined;
+	return observation;
+}
+
+/**
+ * Disabled future-model boundary. Seasonal awareness intentionally does not call
+ * this function. It preserves observation validation for a separately reviewed
+ * environmental model that may later add salinity, rainfall, freshwater
+ * discharge, tides, wind, and other validated inputs.
+ */
+export function estimateVibrioEnvironmentalConditions(
+	options: VibrioConditionsEstimatorOptions,
+): VibrioConditionsResult {
+	const { enabled, now, observation } = options;
+	if (!enabled) return unavailable(now, "Future environmental model disabled.");
+	if (!Number.isFinite(now.getTime())) return unavailable(new Date(0), "Generation time is invalid.");
 	if (!observation || typeof observation !== "object") {
 		return unavailable(now, "A current direct observation is unavailable; no climatology fallback was used.", "missing_observation");
 	}
@@ -121,7 +170,7 @@ export function estimateVibrioConditions(
 			stationId: observation.stationId,
 			kind: "observation",
 		},
-		provenance: "CDC May–October seasonal education paired with a direct water-temperature observation. Temperature does not estimate Vibrio concentration.",
+		provenance: "Disabled environmental-model prototype; this output is not used by seasonal awareness.",
 		limitations: LIMITATIONS,
 	};
 }
