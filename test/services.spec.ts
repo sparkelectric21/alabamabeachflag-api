@@ -29,7 +29,7 @@ describe("weather-condition normalization", () => {
 describe("NDBC water temperatures", () => {
 	it("uses the observation timestamp", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 14 30 28.5\n",
+			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 14 30 28.5\n",
 			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 
@@ -41,7 +41,7 @@ describe("NDBC water temperatures", () => {
 
 	it("rejects NDBC missing-value sentinels", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 14 30 999.0\n",
+			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 14 30 999.0\n",
 			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 
@@ -52,7 +52,7 @@ describe("NDBC water temperatures", () => {
 
 	it("scans past newer missing WTMP rows to the newest valid temperature row", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 06 15 00 MM\n2026 07 06 14 30 28.5\n",
+			"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nTEST 2026 07 06 15 00 MM\nTEST 2026 07 06 14 30 28.5\n",
 			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 		const result = await fetchNDBCWaterTemperature("TEST");
@@ -62,9 +62,9 @@ describe("NDBC water temperatures", () => {
 
 	it("accepts a valid WTMP when unrelated fields are missing", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-			"#YY MM DD hh mm WDIR WSPD GST WTMP DEWP\n"
-				+ "#yr mo dy hr mn degT m/s m/s degC degC\n"
-				+ "2026 07 30 21 00 MM 2.6 MM 29.6 MM\n",
+			"#STN YYYY MM DD hh mm WDIR WSPD GST WTMP DEWP\n"
+				+ "#text yr mo dy hr mn degT m/s m/s degC degC\n"
+				+ "PPTA1 2026 07 30 21 00 MM 2.6 MM 29.6 MM\n",
 			{ status: 200, headers: { "Content-Type": "text/plain" } },
 		)));
 
@@ -74,11 +74,26 @@ describe("NDBC water temperatures", () => {
 		});
 	});
 
+	it("selects only the requested station from NDBC's latest-observation list", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+			"#STN LAT LON YYYY MM DD hh mm WTMP\n"
+				+ "#text deg deg yr mo dy hr mn degC\n"
+				+ "42012 30.061 -87.547 2026 07 31 00 10 29.6\n"
+				+ "PPTA1 30.279 -87.556 2026 07 30 22 00 30.1\n",
+			{ status: 200, headers: { "Content-Type": "text/plain" } },
+		)));
+
+		await expect(fetchNDBCWaterTemperature("PPTA1")).resolves.toMatchObject({
+			temperature: 86,
+			observedAt: "2026-07-30T22:00:00.000Z",
+		});
+	});
+
 	it.each(["text/html; charset=ISO-8859-1", "application/octet-stream"])(
 		"parses strict station text when NDBC labels it %s",
 		async (contentType) => {
 			vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-				"#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 30 21 00 29.6\n",
+				"#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\nPPTA1 2026 07 30 21 00 29.6\n",
 				{ status: 200, headers: { "Content-Type": contentType } },
 			)));
 
@@ -101,7 +116,7 @@ describe("NDBC water temperatures", () => {
 	});
 
 	it("bypasses shared upstream caching and accepts a current 645 KiB station history", async () => {
-		const header = "#YY MM DD hh mm WTMP\n#yr mo dy hr mn degC\n2026 07 30 23 20 29.6\n";
+		const header = "#STN YYYY MM DD hh mm WTMP\n#text yr mo dy hr mn degC\n42012 2026 07 30 23 20 29.6\n";
 		const body = header + "\n".repeat(660_820 - header.length);
 		const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
 			status: 200,
@@ -125,7 +140,7 @@ describe("NDBC water temperatures", () => {
 		);
 		const requestHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
 		expect((fetchMock.mock.calls[0]?.[0] as URL).href).toBe(
-			"https://www.ndbc.noaa.gov/data/5day2/42012_5day.txt",
+			"https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt",
 		);
 		expect(requestHeaders.get("Accept")).toBe("text/plain");
 		expect(requestHeaders.get("User-Agent")).toBe(

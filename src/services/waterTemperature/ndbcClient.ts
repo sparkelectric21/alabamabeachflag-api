@@ -4,7 +4,7 @@ import type { WaterTemperatureObservation } from "./client";
 import { CONTENT_TYPES, UPSTREAM_LIMITS, validateNdbcUrl } from "../../config/upstreamSecurity";
 import { fetchWithRetry, readResponseText } from "../../utils/http";
 
-const NDBC_BASE_URL = "https://www.ndbc.noaa.gov/data/5day2";
+const NDBC_LATEST_OBSERVATIONS_URL = "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt";
 
 function parseNDBCTimestamp(headers: string[], values: string[]): string {
 	const valueFor = (...names: string[]): string | undefined => {
@@ -42,7 +42,7 @@ export async function fetchNDBCWaterTemperature(
 	stationId: string,
 ): Promise<WaterTemperatureObservation> {
 	const response = await fetchWithRetry(
-		`${NDBC_BASE_URL}/${stationId}_5day.txt`,
+		NDBC_LATEST_OBSERVATIONS_URL,
 		{
 			validateUrl: validateNdbcUrl,
 			cache: "no-store",
@@ -70,15 +70,17 @@ export async function fetchNDBCWaterTemperature(
 	}
 
 	const headers = lines[0].trim().split(/\s+/);
+	const stationIndex = headers.indexOf("#STN");
 	const wtIndex = headers.indexOf("WTMP");
 
-	if (wtIndex === -1) {
-		throw new Error(`WTMP column not found for station ${stationId}`);
+	if (stationIndex === -1 || wtIndex === -1) {
+		throw new Error(`Required columns not found for station ${stationId}`);
 	}
 
 	let selected: { values: string[]; waterTempC: number } | undefined;
 	for (const line of lines.slice(2)) {
 		const values = line.trim().split(/\s+/);
+		if (values[stationIndex]?.toUpperCase() !== stationId.toUpperCase()) continue;
 		const waterTempC = Number(values[wtIndex]);
 		if (values.length < headers.length || !Number.isFinite(waterTempC) || waterTempC < -5 || waterTempC > 45) continue;
 		selected = { values, waterTempC };
