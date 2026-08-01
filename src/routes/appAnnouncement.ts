@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { APP_ANNOUNCEMENT_CACHE_KEY, deleteCache, readCache, writeCache } from "../services/cache/kv";
+import { ANNOUNCEMENT_ACTION_URL_ERROR, isApprovedAnnouncementActionUrl } from "../security/announcementActionUrl";
 
 export const ANNOUNCEMENT_SEVERITIES = ["information", "notice", "important", "critical"] as const;
 export type AppAnnouncementSeverity = typeof ANNOUNCEMENT_SEVERITIES[number];
@@ -88,12 +89,7 @@ function timestamp(value: unknown): string | null {
 	return date.toISOString() === canonicalInput ? date.toISOString() : null;
 }
 
-function allowedActionHosts(env: Env): Set<string> {
-	return new Set((env.APP_ANNOUNCEMENT_ACTION_HOSTS ?? "alabamabeachflag.com,www.alabamabeachflag.com")
-		.split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
-}
-
-export function validateAnnouncementInput(value: unknown, env: Env, now = new Date()): StoredAppAnnouncement | Response {
+export function validateAnnouncementInput(value: unknown, _env: Env, now = new Date()): StoredAppAnnouncement | Response {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return error("A JSON object is required.");
 	const input = value as Record<string, unknown>;
 	if (Object.keys(input).some((key) => !ALLOWED_FIELDS.has(key))) return error("Unexpected fields are not allowed.");
@@ -114,12 +110,7 @@ export function validateAnnouncementInput(value: unknown, env: Env, now = new Da
 	if (actionTitle !== null && !validPlainText(actionTitle, 40)) return error("actionTitle must be 1-40 plain-text characters.");
 	if (actionUrl !== null) {
 		if (typeof actionUrl !== "string" || actionUrl.length > 2048) return error("actionUrl is invalid.");
-		try {
-			const url = new URL(actionUrl);
-			if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash || !allowedActionHosts(env).has(url.hostname.toLowerCase())) {
-				return error("actionUrl must use HTTPS on an approved host.");
-			}
-		} catch { return error("actionUrl is invalid."); }
+		if (!isApprovedAnnouncementActionUrl(actionUrl)) return error(ANNOUNCEMENT_ACTION_URL_ERROR);
 	}
 
 	return {

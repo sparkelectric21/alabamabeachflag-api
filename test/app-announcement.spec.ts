@@ -142,6 +142,47 @@ describe("app announcement", () => {
 		expect(h.kv.put).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		"https://alabamabeachflag.com/resources/jellyfish-stings",
+		"https://www.alabamabeachflag.com/resources/jellyfish-stings",
+		"https://www.redcross.org/take-a-class/resources/learn-first-aid/jellyfish-stings",
+		"https://www.redcross.org/take-a-class/resources/learn-first-aid/another-topic?source=app",
+	])("stores and publicly serializes an approved action URL: %s", async (actionUrl) => {
+		const h = harness();
+		const published = await worker.fetch(admin("PUT", { ...valid, actionUrl }), h.env);
+		expect(published.status).toBe(200);
+		const publicResponse = await worker.fetch(new Request("https://example.com/v1/app-announcement"), h.env);
+		const body = await publicResponse.json() as { announcement: { actionTitle: string; actionUrl: string } };
+		expect(body.announcement.actionTitle).toBe(valid.actionTitle);
+		expect(body.announcement.actionUrl).toBe(actionUrl);
+	});
+
+	it.each([
+		"http://www.redcross.org/take-a-class/resources/learn-first-aid/jellyfish-stings",
+		"https://redcross.org.evil.example/example",
+		"https://evil.example/?next=https://www.redcross.org/",
+		"https://user:password@www.redcross.org/take-a-class/resources/learn-first-aid/jellyfish-stings",
+		"https://www.redcross.org:8443/take-a-class/resources/learn-first-aid/jellyfish-stings",
+		"https://www.redcross.org/take-a-class/resources/learn-first-aid/jellyfish-stings#section",
+		"https://support.redcross.org/example",
+		"https://www.redcross.org/donate/example",
+		"https://localhost/example",
+		"https://127.0.0.1/example",
+	])("rejects an unsafe or unapproved action URL: %s", async (actionUrl) => {
+		const h = harness();
+		const result = await worker.fetch(admin("PUT", { ...valid, actionUrl }), h.env);
+		expect(result.status).toBe(400);
+		expect(h.kv.put).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[{ ...valid, actionTitle: null, actionUrl: null }, 200],
+		[{ ...valid, actionTitle: "Learn", actionUrl: null }, 400],
+		[{ ...valid, actionTitle: null, actionUrl: valid.actionUrl }, 400],
+	])("enforces paired optional action fields", async (body, status) => {
+		expect((await worker.fetch(admin("PUT", body), harness().env)).status).toBe(status);
+	});
+
 	it("allows factual NWS data availability wording without allowing impersonation", async () => {
 		const h = harness();
 		const allowed = await worker.fetch(admin("PUT", { ...valid, message: "NWS data is temporarily unavailable." }), h.env);
