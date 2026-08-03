@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	BEACH_ACTIVITY_NOTIFICATION_CONFIG_KEY,
+	BEACH_ACTIVITY_NOTIFICATION_STATE_KEY,
 	buildReviewQueue,
 	defaultBeachActivityNotificationConfig,
 	evaluateBeachActivityNotifications,
@@ -8,9 +9,9 @@ import {
 	isBeachActivityReminderTime,
 	updateBeachActivityNotificationConfig,
 } from "../src/beachEvents/notifications";
-import { EVENT_PREFIX } from "../src/beachEvents/store";
+import { EVENT_PREFIX, EXCLUSION_PREFIX } from "../src/beachEvents/store";
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
-import type { BeachEvent } from "../src/beachEvents/types";
+import { BEACH_EVENT_REFRESH_STATUS_KEY, type BeachEvent } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
 
 function event(id: string, overrides: Partial<BeachEvent> = {}): BeachEvent {
@@ -48,6 +49,8 @@ function event(id: string, overrides: Partial<BeachEvent> = {}): BeachEvent {
 			sourceName: "Gulf State Park",
 			sourceURL: "https://example.gov/event",
 		},
+		sourceRevision: `revision-${id}`,
+		lastSeenAt: "2026-07-29T12:00:00.000Z",
 		createdAt: "2026-07-29T12:00:00.000Z",
 		updatedAt: "2026-07-29T12:00:00.000Z",
 		...overrides,
@@ -78,7 +81,14 @@ function harness(events: BeachEvent[] = []) {
 describe("beach activity review notifications", () => {
 	it("stays quiet for an empty queue", async () => {
 		const h = harness();
-		const result = await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:00:00Z"));
+		const result = await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" });
+		expect(result.outcome).toBe("empty");
+		expect(h.send).not.toHaveBeenCalled();
+	});
+
+	it("stays quiet when stored events are published and need no attention", async () => {
+		const h = harness([event("published", { status: "published" })]);
+		const result = await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" });
 		expect(result.outcome).toBe("empty");
 		expect(h.send).not.toHaveBeenCalled();
 	});
@@ -96,26 +106,49 @@ describe("beach activity review notifications", () => {
 		expect(message.html).toContain("Operational Control");
 	});
 
-	it("sends immediately for a changed queue and suppresses an identical queue", async () => {
+	it("does not send the daily summary outside the configured morning window", async () => {
 		const h = harness([event("one")]);
-		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:00:00Z"))).outcome).toBe("sent");
-		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:05:00Z"))).outcome).toBe("duplicate");
-		expect(h.send).toHaveBeenCalledTimes(1);
-		expect([...h.values.values()].some((value) => value.includes("notification_suppressed_duplicate"))).toBe(true);
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:00:00Z"), { kind: "reminder" })).outcome).toBeNull();
+		expect(h.send).not.toHaveBeenCalled();
 	});
 
-	it("sends again after a material event revision change", async () => {
+	it("sends at most once per Central morning even when the queue changes", async () => {
 		const h = harness([event("one")]);
-		await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:00:00Z"));
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("sent");
 		h.values.set(`${EVENT_PREFIX}one`, JSON.stringify(event("one", { updatedAt: "2026-07-29T12:10:00.000Z", venue: "Updated exact venue" })));
-		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"))).outcome).toBe("sent");
-		expect(h.send).toHaveBeenCalledTimes(2);
+		h.values.set(`${EVENT_PREFIX}two`, JSON.stringify(event("two")));
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:30Z"), { kind: "reminder" })).outcome).toBe("duplicate");
+		expect(h.send).toHaveBeenCalledTimes(1);
 	});
 
-	it("sends one morning reminder on the next Central day and suppresses a same-morning duplicate", async () => {
+	it("alerts for duplicate and provider-failure issues once until the issue meaning changes", async () => {
+		const h = harness();
+		h.values.set(`${EXCLUSION_PREFIX}candidate`, JSON.stringify({
+			id: "candidate", providerId: "orangeBeachParks", title: "Beach Program", venue: "Cotton Bayou Public Beach",
+			startAt: "2026-08-01T13:00:00.000Z", endAt: "2026-08-01T14:00:00.000Z", sourceName: "City of Orange Beach",
+			sourceURL: "https://example.gov/event", reason: "duplicate", reasonDetail: "Possible duplicate", matchConfidence: "possible",
+			possibleDuplicateOf: "existing", ruleId: "cross-provider-deduplication", decision: "automatic", sourceFacts: event("source").sourceFacts,
+			firstSeenAt: "2026-07-29T12:00:00.000Z", lastSeenAt: "2026-07-29T12:00:00.000Z",
+		}));
+		const refresh = (lastAttempt: string, error = "HTTP 503") => ({
+			schemaVersion: 1, status: "warning", trigger: "scheduled", lastAttempt, nextScheduledRefresh: lastAttempt,
+			scheduleDescription: "Daily", operationalState: "enabled", counts: { raw: 0, matched: 0, excluded: 0, pendingReview: 0, published: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: 0 },
+			providers: [{ providerId: "gulfStatePark", status: "failed", fetched: 0, matched: 0, excluded: 0, pendingReview: 0, published: 0, ruleSuppressed: 0, unsupportedOrAmbiguous: 0, freshness: "stale", lastAttempt, error }],
+		});
+		h.values.set(BEACH_EVENT_REFRESH_STATUS_KEY, JSON.stringify(refresh("2026-07-29T12:00:00.000Z")));
+		const first = await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" });
+		expect(first).toMatchObject({ outcome: "sent", queue: { pendingCount: 2, possibleDuplicateCount: 1, providerFailureCount: 1 } });
+		h.values.set(BEACH_EVENT_REFRESH_STATUS_KEY, JSON.stringify(refresh("2026-07-29T13:00:00.000Z")));
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:30Z"), { kind: "reminder" })).outcome).toBe("duplicate");
+		h.values.set(BEACH_EVENT_REFRESH_STATUS_KEY, JSON.stringify(refresh("2026-07-29T14:00:00.000Z", "HTTP 500")));
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:45Z"), { kind: "reminder" })).outcome).toBe("duplicate");
+		expect(h.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("deduplicates an unchanged actionable set and sends again on the next Central morning", async () => {
 		const h = harness([event("one")]);
-		await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:00:00Z"));
-		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("duplicate");
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("sent");
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:30Z"), { kind: "reminder" })).outcome).toBe("duplicate");
 		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-30T12:15:00Z"), { kind: "reminder" })).outcome).toBe("sent");
 		expect(h.send).toHaveBeenCalledTimes(2);
 	});
@@ -129,28 +162,37 @@ describe("beach activity review notifications", () => {
 	it("respects notification disabled, domain disabled, and monitor-only controls", async () => {
 		const disabled = harness([event("one")]);
 		disabled.values.set(BEACH_ACTIVITY_NOTIFICATION_CONFIG_KEY, JSON.stringify({ ...defaultBeachActivityNotificationConfig(disabled.env), enabled: false }));
-		expect((await evaluateBeachActivityNotifications(disabled.env)).outcome).toBe("disabled");
+		expect((await evaluateBeachActivityNotifications(disabled.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("disabled");
 		const domain = harness([event("one")]);
 		const domainControl = defaultOperationalControl();
 		domainControl.controls["domains.beachEvents"] = { state: "disabled" };
 		domain.values.set(CURRENT_KEY, JSON.stringify(domainControl));
-		expect((await evaluateBeachActivityNotifications(domain.env)).outcome).toBe("disabled");
+		expect((await evaluateBeachActivityNotifications(domain.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("disabled");
 		const monitored = harness([event("one")]);
 		const monitorControl = defaultOperationalControl();
 		monitorControl.controls["notifications.beachActivity"] = { state: "monitorOnly" };
 		monitored.values.set(CURRENT_KEY, JSON.stringify(monitorControl));
-		expect((await evaluateBeachActivityNotifications(monitored.env)).outcome).toBe("monitorOnly");
+		expect((await evaluateBeachActivityNotifications(monitored.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("monitorOnly");
 		expect(disabled.send).not.toHaveBeenCalled();
 		expect(domain.send).not.toHaveBeenCalled();
 		expect(monitored.send).not.toHaveBeenCalled();
 	});
 
-	it("supports authenticated manual and test sends without changing event status", async () => {
+	it("keeps explicit test sends isolated from events and reminder deduplication state", async () => {
+		const h = harness([event("one")]);
+		expect((await evaluateBeachActivityNotifications(h.env, new Date("2026-07-29T12:15:00Z"), { kind: "reminder" })).outcome).toBe("sent");
+		const priorState = h.values.get(BEACH_ACTIVITY_NOTIFICATION_STATE_KEY);
+		const priorEvent = h.values.get(`${EVENT_PREFIX}one`);
+		expect((await evaluateBeachActivityNotifications(h.env, new Date(), { kind: "test", identity: { method: "access", subject: "admin@example.com" } })).outcome).toBe("sent");
+		expect(h.values.get(BEACH_ACTIVITY_NOTIFICATION_STATE_KEY)).toBe(priorState);
+		expect(h.values.get(`${EVENT_PREFIX}one`)).toBe(priorEvent);
+		expect(h.send).toHaveBeenCalledTimes(2);
+	});
+
+	it("supports an authenticated explicit manual summary without changing event status", async () => {
 		const h = harness([event("one")]);
 		expect((await evaluateBeachActivityNotifications(h.env, new Date(), { kind: "manual", identity: { method: "access", subject: "admin@example.com" } })).outcome).toBe("sent");
-		expect((await evaluateBeachActivityNotifications(h.env, new Date(), { kind: "test", identity: { method: "access", subject: "admin@example.com" } })).outcome).toBe("sent");
 		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}one`)!)).toMatchObject({ status: "pendingReview" });
-		expect(h.send).toHaveBeenCalledTimes(2);
 	});
 
 	it("validates recipient configuration against the Worker allowlist", async () => {
@@ -164,12 +206,12 @@ describe("beach activity review notifications", () => {
 	it("retries once, records success, and records a terminal provider failure", async () => {
 		const recovered = harness([event("one")]);
 		recovered.send.mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce(undefined);
-		expect((await evaluateBeachActivityNotifications(recovered.env)).outcome).toBe("sent");
+		expect((await evaluateBeachActivityNotifications(recovered.env, new Date(), { kind: "manual" })).outcome).toBe("sent");
 		expect(recovered.send).toHaveBeenCalledTimes(2);
 		expect([...recovered.values.values()].some((value) => value.includes("notification_retry"))).toBe(true);
 		const failed = harness([event("one")]);
 		failed.send.mockRejectedValue(new Error("provider unavailable"));
-		const result = await evaluateBeachActivityNotifications(failed.env);
+		const result = await evaluateBeachActivityNotifications(failed.env, new Date(), { kind: "manual" });
 		expect(result.outcome).toBe("failed");
 		expect(result.state.lastProviderError).toBe("provider unavailable");
 		expect(failed.send).toHaveBeenCalledTimes(2);

@@ -3,8 +3,8 @@ import type { AdminIdentity } from "../services/admin/auth";
 import { beaches } from "../config/BeachRegistry";
 import { evaluateBeachActivityNotificationsControl, readOperationalControl } from "../operationalControl/store";
 import { processProviderHealthObservations } from "../providerHealth/process";
-import { AUDIT_PREFIX, listEvents } from "./store";
-import type { BeachEvent } from "./types";
+import { AUDIT_PREFIX, eventNeedsReview, listEvents, listExcludedCandidates } from "./store";
+import { BEACH_EVENT_REFRESH_STATUS_KEY, type BeachEvent, type BeachEventRefreshStatus, type ExcludedEventCandidate } from "./types";
 
 export const BEACH_ACTIVITY_NOTIFICATION_CONFIG_KEY = "beach-events:v1:notification-config";
 export const BEACH_ACTIVITY_NOTIFICATION_STATE_KEY = "beach-events:v1:notification-state";
@@ -15,7 +15,6 @@ export interface BeachActivityNotificationConfig {
 	schemaVersion: 1;
 	enabled: boolean;
 	dailyReminder: boolean;
-	immediateChangeNotification: boolean;
 	reminderTime: string;
 	recipients: string[];
 	updatedAt: string | null;
@@ -36,17 +35,32 @@ export interface BeachActivityNotificationState {
 	lastPendingCount: number;
 	lastPendingEventIds: string[];
 	lastOutcome: "sent" | "empty" | "duplicate" | "disabled" | "monitorOnly" | "failed" | null;
-	lastNotificationKind: "immediate" | "reminder" | "manual" | "test" | null;
+	lastNotificationKind: "reminder" | "manual" | "test" | null;
 }
 
 export interface ReviewQueue {
 	events: BeachEvent[];
+	issues: ReviewIssue[];
 	revision: string;
 	eventRevision: string | null;
 	pendingCount: number;
 	highImpactCount: number;
 	informationalCount: number;
+	newEventCount: number;
+	changedEventCount: number;
+	possibleDuplicateCount: number;
+	providerFailureCount: number;
+	cancelledOrRemovedCount: number;
+	approachingCount: number;
 	providers: Array<{ providerId: string; sourceName: string; count: number }>;
+}
+
+export interface ReviewIssue {
+	id: string;
+	kind: "possibleDuplicate" | "ambiguousMatch" | "providerFailure";
+	title: string;
+	detail: string;
+	providerId: string;
 }
 
 export interface BeachActivityEmail {
@@ -82,7 +96,6 @@ export function defaultBeachActivityNotificationConfig(env: Pick<Env, "BEACH_ACT
 		schemaVersion: 1,
 		enabled: env.BEACH_ACTIVITY_NOTIFICATIONS_ENABLED !== "false",
 		dailyReminder: true,
-		immediateChangeNotification: true,
 		reminderTime: "07:15",
 		recipients: csv(env.BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS),
 		updatedAt: null,
@@ -99,7 +112,6 @@ export async function readBeachActivityNotificationConfig(env: Pick<Env, "BEACH_
 		...defaults,
 		enabled: typeof stored.enabled === "boolean" ? stored.enabled : defaults.enabled,
 		dailyReminder: typeof stored.dailyReminder === "boolean" ? stored.dailyReminder : defaults.dailyReminder,
-		immediateChangeNotification: typeof stored.immediateChangeNotification === "boolean" ? stored.immediateChangeNotification : defaults.immediateChangeNotification,
 		reminderTime: typeof stored.reminderTime === "string" && reminderTime.test(stored.reminderTime) ? stored.reminderTime : defaults.reminderTime,
 		recipients,
 		updatedAt: typeof stored.updatedAt === "string" ? stored.updatedAt : null,
@@ -108,7 +120,13 @@ export async function readBeachActivityNotificationConfig(env: Pick<Env, "BEACH_
 }
 
 export async function readBeachActivityNotificationState(env: Pick<Env, "BEACH_DATA">): Promise<BeachActivityNotificationState> {
-	return { ...defaultState(), ...(await env.BEACH_DATA.get<BeachActivityNotificationState>(BEACH_ACTIVITY_NOTIFICATION_STATE_KEY, "json") ?? {}) };
+	const stored = await env.BEACH_DATA.get<BeachActivityNotificationState>(BEACH_ACTIVITY_NOTIFICATION_STATE_KEY, "json");
+	const kind = stored?.lastNotificationKind;
+	return {
+		...defaultState(),
+		...(stored ?? {}),
+		lastNotificationKind: kind === "reminder" || kind === "manual" || kind === "test" ? kind : null,
+	};
 }
 
 function stableHash(value: string): string {
@@ -117,12 +135,38 @@ function stableHash(value: string): string {
 	return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-export function buildReviewQueue(events: BeachEvent[]): ReviewQueue {
-	const pending = events.filter((event) => event.status === "pendingReview").sort((a, b) =>
+export function buildReviewQueue(events: BeachEvent[], options: { exclusions?: ExcludedEventCandidate[]; refresh?: BeachEventRefreshStatus | null; now?: Date } = {}): ReviewQueue {
+	const now = options.now ?? new Date();
+	const pending = events.filter((event) => eventNeedsReview(event) && event.status !== "disregarded" && event.status !== "expired").sort((a, b) =>
 		(["major", "high"].includes(b.impactLevel) ? 1 : 0) - (["major", "high"].includes(a.impactLevel) ? 1 : 0)
 		|| a.startAt.localeCompare(b.startAt)
 		|| a.id.localeCompare(b.id));
-	const identity = pending.map((event) => `${event.id}|${event.updatedAt}|${event.beachId}|${event.impactLevel}|${event.eventType}|${event.venue}|${event.startAt}|${event.endAt}`).join("\n");
+	const duplicateIssues: ReviewIssue[] = (options.exclusions ?? []).filter((candidate) => candidate.reason === "duplicate").map((candidate) => ({
+		id: `duplicate:${candidate.id}`,
+		kind: "possibleDuplicate",
+		title: candidate.title,
+		detail: candidate.possibleDuplicateOf ? `Possible duplicate of event ${candidate.possibleDuplicateOf}` : candidate.reasonDetail,
+		providerId: candidate.providerId,
+	}));
+	const ambiguousIssues: ReviewIssue[] = (options.exclusions ?? []).filter((candidate) => candidate.reason === "ambiguousLocation").map((candidate) => ({
+		id: `ambiguous:${candidate.id}`,
+		kind: "ambiguousMatch",
+		title: candidate.title,
+		detail: candidate.reasonDetail,
+		providerId: candidate.providerId,
+	}));
+	const failureIssues: ReviewIssue[] = (options.refresh?.providers ?? []).filter((provider) => provider.status === "failed").map((provider) => ({
+		id: `provider:${provider.providerId}`,
+		kind: "providerFailure",
+		title: `${provider.providerId} provider failed`,
+		detail: provider.error ?? "The latest event-provider refresh failed.",
+		providerId: provider.providerId,
+	}));
+	const issues = [...duplicateIssues, ...ambiguousIssues, ...failureIssues].sort((a, b) => a.id.localeCompare(b.id));
+	const identity = [
+		...pending.map((event) => `${event.id}|${event.sourceRevision ?? event.updatedAt}|${event.status}|${event.beachId}|${event.impactLevel}|${event.eventType}|${event.title}|${event.venue}|${event.startAt}|${event.endAt}|${[...(event.attentionFlags ?? [])].sort().join(",")}`),
+		...issues.map((issue) => `${issue.id}|${issue.kind}|${issue.title}|${issue.detail}`),
+	].join("\n");
 	const grouped = new Map<string, { providerId: string; sourceName: string; count: number }>();
 	for (const event of pending) {
 		const id = event.sourceFacts.providerId;
@@ -132,11 +176,18 @@ export function buildReviewQueue(events: BeachEvent[]): ReviewQueue {
 	}
 	return {
 		events: pending,
+		issues,
 		revision: stableHash(identity),
 		eventRevision: pending.map((event) => event.updatedAt).sort().at(-1) ?? null,
-		pendingCount: pending.length,
+		pendingCount: pending.length + issues.length,
 		highImpactCount: pending.filter((event) => ["major", "high"].includes(event.impactLevel)).length,
 		informationalCount: pending.filter((event) => event.impactLevel === "informational").length,
+		newEventCount: pending.filter((event) => event.status === "pendingReview" && !event.sourceChange && !(event.attentionFlags ?? []).some((flag) => flag !== "normalizationWarning")).length,
+		changedEventCount: pending.filter((event) => Boolean(event.sourceChange || event.attentionFlags?.includes("materialSourceChange") || event.attentionFlags?.includes("sourceRestored"))).length,
+		possibleDuplicateCount: duplicateIssues.length + pending.filter((event) => event.attentionFlags?.includes("possibleDuplicate")).length,
+		providerFailureCount: failureIssues.length,
+		cancelledOrRemovedCount: pending.filter((event) => event.status === "cancelled" || event.attentionFlags?.includes("sourceCancelled") || event.attentionFlags?.includes("sourceRemoved")).length,
+		approachingCount: pending.filter((event) => Date.parse(event.startAt) >= now.getTime() && Date.parse(event.startAt) <= now.getTime() + 72 * 60 * 60 * 1000).length,
 		providers: [...grouped.values()].sort((a, b) => a.sourceName.localeCompare(b.sourceName)),
 	};
 }
@@ -155,14 +206,14 @@ function beachName(id: string): string {
 }
 
 function confidence(event: BeachEvent): string {
-	return event.matchConfidence === "admin" ? "Administrator assigned" : event.matchMethod === "exactVenue" ? "Exact venue" : event.matchMethod === "exactAddress" ? "Exact address" : event.matchMethod === "sourceAlias" ? "Exact source alias" : "Exact match";
+	return event.matchConfidence === "ambiguous" ? "Ambiguous source location — review required" : event.matchConfidence === "admin" ? "Administrator assigned" : event.matchMethod === "exactVenue" ? "Exact venue" : event.matchMethod === "exactAddress" ? "Exact address" : event.matchMethod === "sourceAlias" ? "Exact source alias" : "Exact match";
 }
 
-export function formatBeachActivityReviewEmail(queue: ReviewQueue, kind: "immediate" | "reminder" | "manual" | "test"): BeachActivityEmail {
+export function formatBeachActivityReviewEmail(queue: ReviewQueue, kind: "reminder" | "manual" | "test"): BeachActivityEmail {
 	const subject = kind === "test"
 		? "Alabama Beach Flag: Beach activity notification test"
-		: kind === "immediate"
-			? "Alabama Beach Flag: Review queue updated"
+		: queue.issues.length
+			? `Alabama Beach Flag: ${queue.pendingCount} beach-event review item${queue.pendingCount === 1 ? "" : "s"}`
 			: `Alabama Beach Flag: ${queue.pendingCount} event${queue.pendingCount === 1 ? "" : "s"} awaiting review`;
 	const providers = queue.providers.length ? queue.providers.map((provider) => `${provider.sourceName}: ${provider.count}`).join("\n") : "No providers in the current queue.";
 	const lines = queue.events.map((event) => [
@@ -174,16 +225,19 @@ export function formatBeachActivityReviewEmail(queue: ReviewQueue, kind: "immedi
 		`Impact: ${event.impactLevel}`,
 		`Provider: ${event.sourceName}`,
 		`Confidence: ${confidence(event)}`,
+		`Attention: ${(event.attentionFlags ?? []).join(", ") || "New event review"}`,
 		`Source: ${event.sourceURL}`,
-		"Status: Pending Review",
+		`Status: ${event.status}`,
 	].join("\n")).join("\n\n");
-	const card = (event: BeachEvent) => `<article style="border:1px solid #d9e5e8;border-radius:14px;padding:16px;margin:12px 0;background:#fff"><h3 style="margin:0 0 10px;font-size:17px;color:#102f38">${escapeHtml(event.title)}</h3><table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;color:#31545d"><tr><td><strong>Beach</strong><br>${escapeHtml(beachName(event.beachId))}</td><td><strong>Date</strong><br>${escapeHtml(displayDate(event.startAt))}</td></tr><tr><td><strong>Venue</strong><br>${escapeHtml(event.venue)}</td><td><strong>Impact</strong><br>${escapeHtml(event.impactLevel)}</td></tr><tr><td><strong>Provider</strong><br>${escapeHtml(event.sourceName)}</td><td><strong>Confidence</strong><br>${escapeHtml(confidence(event))}</td></tr></table><p style="margin:12px 0 0"><a href="${escapeHtml(event.sourceURL)}" style="color:#08738a">Official source</a> · Pending Review</p></article>`;
+	const card = (event: BeachEvent) => `<article style="border:1px solid #d9e5e8;border-radius:14px;padding:16px;margin:12px 0;background:#fff"><h3 style="margin:0 0 10px;font-size:17px;color:#102f38">${escapeHtml(event.title)}</h3><table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;color:#31545d"><tr><td><strong>Beach</strong><br>${escapeHtml(beachName(event.beachId))}</td><td><strong>Date</strong><br>${escapeHtml(displayDate(event.startAt))}</td></tr><tr><td><strong>Venue</strong><br>${escapeHtml(event.venue)}</td><td><strong>Impact</strong><br>${escapeHtml(event.impactLevel)}</td></tr><tr><td><strong>Provider</strong><br>${escapeHtml(event.sourceName)}</td><td><strong>Match</strong><br>${escapeHtml(confidence(event))}</td></tr></table><p style="margin:10px 0 0"><strong>Attention:</strong> ${escapeHtml((event.attentionFlags ?? []).join(", ") || "New event review")}</p><p style="margin:8px 0 0"><a href="${escapeHtml(event.sourceURL)}" style="color:#08738a">Official source</a> · ${escapeHtml(event.status)}</p></article>`;
 	const high = queue.events.filter((event) => ["major", "high"].includes(event.impactLevel));
 	const standard = queue.events.filter((event) => !["major", "high"].includes(event.impactLevel));
-	const html = `<!doctype html><html><body style="margin:0;background:#f4f8f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#173a43"><main style="max-width:680px;margin:0 auto;padding:24px"><section style="background:#0b7186;color:#fff;border-radius:18px;padding:22px"><p style="margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.08em">Beach Activity &amp; Event Impact</p><h1 style="margin:0;font-size:25px">${queue.pendingCount} event${queue.pendingCount === 1 ? "" : "s"} awaiting review</h1><p style="margin:10px 0 0">${queue.highImpactCount} high priority · ${queue.informationalCount} informational</p></section>${high.length ? `<section style="margin-top:18px;border-left:5px solid #c24b35;padding-left:14px"><h2 style="font-size:19px;color:#9b3020">High-priority review needed</h2>${high.map(card).join("")}</section>` : ""}<section style="margin-top:18px"><h2 style="font-size:19px">Pending review</h2>${standard.map(card).join("") || (high.length ? "" : "<p>No events in this section.</p>")}</section><section style="margin-top:20px;padding:16px;background:#e8f2f4;border-radius:14px"><h2 style="font-size:17px;margin-top:0">Provider summary</h2>${queue.providers.map((provider) => `<p style="margin:5px 0">${escapeHtml(provider.sourceName)}: <strong>${provider.count}</strong></p>`).join("") || "<p>No providers in the current queue.</p>"}</section><nav style="margin-top:22px;text-align:center"><a href="${ADMIN_BASE}/events/" style="display:inline-block;margin:4px;padding:11px 14px;border-radius:9px;background:#0b7186;color:#fff;text-decoration:none">Review Events</a><a href="${ADMIN_BASE}/provider-health/" style="display:inline-block;margin:4px;padding:11px 14px;color:#0b7186">Provider Health</a><a href="${ADMIN_BASE}/operational-control/" style="display:inline-block;margin:4px;padding:11px 14px;color:#0b7186">Operational Control</a></nav></main></body></html>`;
+	const issueLines = queue.issues.map((issue) => `${issue.kind}: ${issue.title}\n${issue.detail}`).join("\n\n");
+	const issueCards = queue.issues.map((issue) => `<article style="border:1px solid #e4c785;border-radius:14px;padding:14px;margin:10px 0;background:#fffaf0"><strong>${escapeHtml(issue.title)}</strong><p style="margin:6px 0 0">${escapeHtml(issue.detail)}</p></article>`).join("");
+	const html = `<!doctype html><html><body style="margin:0;background:#f4f8f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#173a43"><main style="max-width:680px;margin:0 auto;padding:24px"><section style="background:#0b7186;color:#fff;border-radius:18px;padding:22px"><p style="margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.08em">Beach Activity &amp; Event Impact</p><h1 style="margin:0;font-size:25px">${queue.pendingCount} review item${queue.pendingCount === 1 ? "" : "s"}</h1><p style="margin:10px 0 0">${queue.newEventCount} new · ${queue.changedEventCount} changed · ${queue.approachingCount} approaching</p></section>${high.length ? `<section style="margin-top:18px;border-left:5px solid #c24b35;padding-left:14px"><h2 style="font-size:19px;color:#9b3020">High-priority review needed</h2>${high.map(card).join("")}</section>` : ""}<section style="margin-top:18px"><h2 style="font-size:19px">Event review</h2>${standard.map(card).join("") || (high.length ? "" : "<p>No event records in this section.</p>")}</section>${issueCards ? `<section style="margin-top:18px"><h2 style="font-size:19px">Coverage and duplicate issues</h2>${issueCards}</section>` : ""}<section style="margin-top:20px;padding:16px;background:#e8f2f4;border-radius:14px"><h2 style="font-size:17px;margin-top:0">Provider summary</h2>${queue.providers.map((provider) => `<p style="margin:5px 0">${escapeHtml(provider.sourceName)}: <strong>${provider.count}</strong></p>`).join("") || "<p>No event providers in the current queue.</p>"}</section><nav style="margin-top:22px;text-align:center"><a href="${ADMIN_BASE}/events/" style="display:inline-block;margin:4px;padding:11px 14px;border-radius:9px;background:#0b7186;color:#fff;text-decoration:none">Review Events</a><a href="${ADMIN_BASE}/provider-health/" style="display:inline-block;margin:4px;padding:11px 14px;color:#0b7186">Provider Health</a><a href="${ADMIN_BASE}/operational-control/" style="display:inline-block;margin:4px;padding:11px 14px;color:#0b7186">Operational Control</a></nav></main></body></html>`;
 	return {
 		subject,
-		text: ["Alabama Beach Flag — Beach Activity & Event Impact", "", `Pending review: ${queue.pendingCount}`, `High-impact: ${queue.highImpactCount}`, `Informational: ${queue.informationalCount}`, "", "Provider summary", providers, "", ...(lines ? ["Pending events", lines, ""] : []), `Review Events: ${ADMIN_BASE}/events/`, `Provider Health: ${ADMIN_BASE}/provider-health/`, `Operational Control: ${ADMIN_BASE}/operational-control/`].join("\n"),
+		text: ["Alabama Beach Flag — Beach Activity & Event Impact", "", `Action required: ${queue.pendingCount}`, `New events: ${queue.newEventCount}`, `Changed events: ${queue.changedEventCount}`, `Possible duplicates: ${queue.possibleDuplicateCount}`, `Provider failures: ${queue.providerFailureCount}`, `Cancelled or removed: ${queue.cancelledOrRemovedCount}`, `Approaching within 72 hours: ${queue.approachingCount}`, "", "Provider summary", providers, "", ...(lines ? ["Event records", lines, ""] : []), ...(issueLines ? ["Coverage and duplicate issues", issueLines, ""] : []), `Review Events: ${ADMIN_BASE}/events/`, `Provider Health: ${ADMIN_BASE}/provider-health/`, `Operational Control: ${ADMIN_BASE}/operational-control/`].join("\n"),
 		html,
 	};
 }
@@ -212,35 +266,65 @@ async function persistState(env: Pick<Env, "BEACH_DATA">, state: BeachActivityNo
 export async function evaluateBeachActivityNotifications(
 	env: Env,
 	now = new Date(),
-	options: { kind: "immediate" | "reminder" | "manual" | "test"; identity?: AdminIdentity } = { kind: "immediate" },
+	options: { kind: "reminder" | "manual" | "test"; identity?: AdminIdentity },
 ): Promise<{ outcome: BeachActivityNotificationState["lastOutcome"]; queue: ReviewQueue; state: BeachActivityNotificationState }> {
-	const [config, prior, events, controls] = await Promise.all([readBeachActivityNotificationConfig(env), readBeachActivityNotificationState(env), listEvents(env), readOperationalControl(env, now)]);
-	const queue = buildReviewQueue(events);
+	const [config, prior, events, controls, exclusions, refresh] = await Promise.all([
+		readBeachActivityNotificationConfig(env),
+		readBeachActivityNotificationState(env),
+		listEvents(env),
+		readOperationalControl(env, now),
+		listExcludedCandidates(env),
+		env.BEACH_DATA.get<BeachEventRefreshStatus>(BEACH_EVENT_REFRESH_STATUS_KEY, "json"),
+	]);
+	const queue = buildReviewQueue(events, { exclusions, refresh, now });
 	const actor = options.identity?.subject ?? "system-beach-events";
 	const method = options.identity?.method ?? "scheduled";
-	let state: BeachActivityNotificationState = { ...prior, lastQueueRevision: queue.revision, lastEventRevision: queue.eventRevision, lastPendingCount: queue.pendingCount, lastPendingEventIds: queue.events.map((event) => event.id) };
-	if (options.kind !== "test" && queue.pendingCount === 0) {
+	const control = evaluateBeachActivityNotificationsControl(controls, now);
+	const disabled = !config.enabled || control.state === "disabled";
+	const monitorOnly = control.state === "monitorOnly";
+	// Test delivery is intentionally isolated from review-queue deduplication,
+	// reminder state, event records, and provider-health state.
+	if (options.kind === "test") {
+		if (disabled || monitorOnly) {
+			await writeAudit(env, actor, method, monitorOnly ? "notification_monitor_only" : "notification_disabled", { kind: options.kind, controlId: control.controlId }, now);
+			return { outcome: monitorOnly ? "monitorOnly" : "disabled", queue, state: prior };
+		}
+		const message = formatBeachActivityReviewEmail({ ...queue, events: [], issues: [], pendingCount: 0, highImpactCount: 0, informationalCount: 0, newEventCount: 0, changedEventCount: 0, possibleDuplicateCount: 0, providerFailureCount: 0, cancelledOrRemovedCount: 0, approachingCount: 0, providers: [] }, "test");
+		let error: unknown;
+		for (let attempt = 1; attempt <= 2; attempt += 1) {
+			try {
+				await sendEmail(env, config, message);
+				await writeAudit(env, actor, method, "notification_test", { recipients: config.recipients, attempt }, now);
+				return { outcome: "sent", queue, state: prior };
+			} catch (caught) {
+				error = caught;
+				if (attempt === 1) await writeAudit(env, actor, method, "notification_retry", { kind: options.kind, attempt: 2 }, now);
+			}
+		}
+		const providerError = error instanceof Error ? error.message.slice(0, 300) : "notification_delivery_failed";
+		await writeAudit(env, actor, method, "notification_failure", { kind: options.kind, error: providerError }, now);
+		return { outcome: "failed", queue, state: prior };
+	}
+	let state: BeachActivityNotificationState = { ...prior, lastQueueRevision: queue.revision, lastEventRevision: queue.eventRevision, lastPendingCount: queue.pendingCount, lastPendingEventIds: [...queue.events.map((event) => event.id), ...queue.issues.map((issue) => issue.id)] };
+	if (queue.pendingCount === 0) {
 		state = { ...state, lastOutcome: "empty" };
 		await persistState(env, state);
 		return { outcome: "empty", queue, state };
 	}
-	const control = evaluateBeachActivityNotificationsControl(controls, now);
-	const disabled = !config.enabled || control.state === "disabled";
-	const monitorOnly = control.state === "monitorOnly";
 	if (disabled || monitorOnly) {
 		state = { ...state, lastOutcome: monitorOnly ? "monitorOnly" : "disabled" };
 		await persistState(env, state);
 		await writeAudit(env, actor, method, monitorOnly ? "notification_monitor_only" : "notification_disabled", { kind: options.kind, controlId: control.controlId, pendingCount: queue.pendingCount, revision: queue.revision }, now);
 		return { outcome: state.lastOutcome, queue, state };
 	}
-	if (options.kind === "immediate" && !config.immediateChangeNotification) {
-		state = { ...state, lastOutcome: "disabled" };
-		await persistState(env, state);
-		await writeAudit(env, actor, method, "notification_disabled", { kind: options.kind, reason: "immediate_notifications_disabled", pendingCount: queue.pendingCount }, now);
-		return { outcome: "disabled", queue, state };
-	}
 	if (options.kind === "reminder") {
 		if (!config.dailyReminder || !isBeachActivityReminderTime(now, config.reminderTime)) return { outcome: null, queue, state };
+		if (sameCentralDay(prior.lastReminderAt, now)) {
+			state = { ...state, suppressedDuplicateCount: prior.suppressedDuplicateCount + 1, lastOutcome: "duplicate" };
+			await persistState(env, state);
+			await writeAudit(env, actor, method, "notification_suppressed_duplicate", { kind: options.kind, reason: "morning_reminder_already_sent", pendingCount: queue.pendingCount, revision: queue.revision }, now);
+			return { outcome: "duplicate", queue, state };
+		}
 		if (sameCentralDay(prior.lastNotificationAt, now) && prior.lastNotificationRevision === queue.revision) {
 			state = { ...state, suppressedDuplicateCount: prior.suppressedDuplicateCount + 1, lastOutcome: "duplicate" };
 			await persistState(env, state);
@@ -248,13 +332,7 @@ export async function evaluateBeachActivityNotifications(
 			return { outcome: "duplicate", queue, state };
 		}
 	}
-	if (options.kind === "immediate" && prior.lastQueueRevision === queue.revision) {
-		state = { ...state, suppressedDuplicateCount: prior.suppressedDuplicateCount + 1, lastOutcome: "duplicate" };
-		await persistState(env, state);
-		await writeAudit(env, actor, method, "notification_suppressed_duplicate", { kind: options.kind, pendingCount: queue.pendingCount, revision: queue.revision }, now);
-		return { outcome: "duplicate", queue, state };
-	}
-	const message = options.kind === "test" ? formatBeachActivityReviewEmail({ ...queue, events: [], pendingCount: 0, highImpactCount: 0, informationalCount: 0, providers: [] }, "test") : formatBeachActivityReviewEmail(queue, options.kind);
+	const message = formatBeachActivityReviewEmail(queue, options.kind);
 	const intentRevision = `${options.kind}:${queue.revision}:${options.kind === "reminder" ? centralDate(now) : now.toISOString()}`;
 	state = { ...state, lastNotificationRevision: intentRevision, lastNotificationKind: options.kind };
 	await persistState(env, state);
@@ -265,7 +343,7 @@ export async function evaluateBeachActivityNotifications(
 			const sentAt = now.toISOString();
 			state = { ...state, lastNotificationAt: sentAt, lastSuccessAt: sentAt, lastFailureAt: null, lastProviderError: null, lastNotificationRevision: queue.revision, lastNotificationKind: options.kind, lastOutcome: "sent", ...(options.kind === "reminder" ? { lastReminderAt: sentAt } : {}) };
 			await persistState(env, state);
-			await writeAudit(env, actor, method, options.kind === "manual" ? "notification_manual_send" : options.kind === "test" ? "notification_test" : options.kind === "reminder" ? "notification_morning_reminder" : "notification_automatic", { pendingCount: queue.pendingCount, highImpactCount: queue.highImpactCount, revision: queue.revision, recipients: config.recipients, attempt }, now);
+			await writeAudit(env, actor, method, options.kind === "manual" ? "notification_manual_send" : "notification_morning_reminder", { pendingCount: queue.pendingCount, highImpactCount: queue.highImpactCount, revision: queue.revision, recipients: config.recipients, attempt }, now);
 			await recordHealth(env, now);
 			return { outcome: "sent", queue, state };
 		} catch (caught) {
@@ -291,7 +369,6 @@ export async function updateBeachActivityNotificationConfig(request: Request, en
 		...current,
 		enabled: typeof input.enabled === "boolean" ? input.enabled : current.enabled,
 		dailyReminder: typeof input.dailyReminder === "boolean" ? input.dailyReminder : current.dailyReminder,
-		immediateChangeNotification: typeof input.immediateChangeNotification === "boolean" ? input.immediateChangeNotification : current.immediateChangeNotification,
 		reminderTime: typeof input.reminderTime === "string" ? input.reminderTime : current.reminderTime,
 		recipients: [...new Set(recipients)],
 		updatedAt: now.toISOString(),

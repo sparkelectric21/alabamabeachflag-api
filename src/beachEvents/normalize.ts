@@ -55,7 +55,9 @@ function plainTextFromHTML(input: string, baseURL?: string): { text: string; url
 	input = decodeHTMLEntities(input);
 	let output = "", cursor = 0, hiddenDepth = 0, hadMarkup = false;
 	const hiddenTags: string[] = [];
-	const urls: string[] = [];
+	const urls: string[] = [...input.matchAll(/https:\/\/[^\s<>"']+/gi)]
+		.map((match) => sanitizeEventURL(match[0].replace(/[),.;]+$/, ""), baseURL))
+		.filter((value): value is string => Boolean(value));
 	while (cursor < input.length) {
 		const open = input.indexOf("<", cursor);
 		if (open < 0) { if (!hiddenDepth) output += input.slice(cursor); break; }

@@ -78,8 +78,8 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 	},
 	{
 		beachId: "dauphin-island-public-beach",
-		venues: ["Dauphin Island Public Beach", "Dauphin Island Middle Beach", "Middle Beach", "Bienville Beach"],
-		addresses: ["1501 Bienville Blvd, Dauphin Island, AL 36528", "1917 Bienville Boulevard, Dauphin Island, AL 36528", "1917 Bienville Blvd, Dauphin Island, AL 36528"],
+		venues: ["Dauphin Island Public Beach", "Dauphin Island Middle Beach", "Middle Beach", "Bienville Beach", "Dauphin Island West End Beach", "West End Beach"],
+		addresses: ["1501 Bienville Blvd, Dauphin Island, AL 36528", "1917 Bienville Boulevard, Dauphin Island, AL 36528", "1917 Bienville Blvd, Dauphin Island, AL 36528", "3000 Bienville Boulevard, Dauphin Island, AL 36528", "3000 Bienville Blvd, Dauphin Island, AL 36528"],
 		sourceAliases: { alabamaCoastalCleanup: ["Dauphin Island Public Beach Cleanup Zone"], alabamaAudubon: ["Dauphin Island Middle Beach"] },
 		excludes: ["Dauphin Island Sea Lab", "Alabama Aquarium", "Audubon Bird Sanctuary", "Fort Gaines", "Dauphin Island Town Hall", "Dauphin Island Community Center", "Dauphin Island Campground", "Dauphin Island Marina"],
 	},
@@ -91,10 +91,16 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 	},
 ];
 
-const normalize = (value = "") => value.normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+export const normalizeMatchText = (value = "") => value.normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/&(?:amp;)?/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+
+export const normalizeMatchAddress = (value = "") => normalizeMatchText(value)
+	.replace(/\b(east|west|north|south)\b/g, (word) => word[0])
+	.replace(/\b(boulevard|avenue|street|road|highway|drive|lane|parkway)\b/g, (word) => ({ boulevard: "blvd", avenue: "ave", street: "st", road: "rd", highway: "hwy", drive: "dr", lane: "ln", parkway: "pkwy" })[word]!)
+	.replace(/\balabama\b/g, "al")
+	.replace(/\s+/g, " ")
+	.trim();
 
 const broadLocations = ["gulf shores", "orange beach", "dauphin island", "fort morgan", "various locations", "citywide", "alabama coast", "gulf coast"];
-const unsupportedWestEnd = ["dauphin island west end beach", "west end beach"];
 const inlandOrUnsupported = [
 	"gulf state park nature center", "gulf state park learning campus", "gulf state park campground", "lake shelby picnic area", "lake shelby playground",
 	"fort morgan historic site", "fort morgan state historic site", "mobile bay ferry fort morgan", "fort morgan campground",
@@ -103,17 +109,20 @@ const inlandOrUnsupported = [
 ];
 
 export function explainBeachMatch(input: { providerId: string; venue?: string; address?: string }): MatchExplanation {
-	const venue = normalize(input.venue);
-	const address = normalize(input.address);
+	const venue = normalizeMatchText(input.venue);
+	const address = normalizeMatchAddress(input.address);
 	if (!venue && !address) return { confidence: "none", ruleId: "missing-location", reason: "No venue or address was supplied", exclusionReason: "unknownVenue" };
-	if (unsupportedWestEnd.includes(venue)) return { confidence: "none", ruleId: "unsupported-dauphin-west-end", reason: "Exact beach not represented in app", exclusionReason: "exactBeachNotRepresented" };
 	if (broadLocations.includes(venue)) return { confidence: "none", ruleId: "broad-location", reason: "City, island, or regional locations do not identify an exact beach", exclusionReason: "citywideOrBroadLocation" };
 	if (inlandOrUnsupported.includes(venue)) return { confidence: "none", ruleId: `excluded-${venue.replace(/ /g, "-")}`, reason: "Known inland or unsupported venue", exclusionReason: "inlandVenue" };
 	for (const mapping of VENUE_MAPPINGS) {
-		if (mapping.excludes?.some((item) => normalize(item) === venue)) return { confidence: "none", ruleId: `excluded-${mapping.beachId}`, reason: "Known inland or unsupported venue", exclusionReason: "inlandVenue" };
-		if (mapping.sourceAliases?.[input.providerId]?.some((item) => normalize(item) === venue)) return { beachId: mapping.beachId, method: "sourceAlias", confidence: "exact", ruleId: `${input.providerId}-${mapping.beachId}-venue-alias`, reason: "Exact source venue alias" };
-		if (mapping.venues.some((item) => normalize(item) === venue)) return { beachId: mapping.beachId, method: "exactVenue", confidence: "exact", ruleId: `${mapping.beachId}-exact-venue`, reason: "Exact approved venue" };
-		if (address && mapping.addresses.some((item) => normalize(item) === address)) return { beachId: mapping.beachId, method: "exactAddress", confidence: "exact", ruleId: `${mapping.beachId}-exact-address`, reason: "Exact approved address" };
+		if (mapping.excludes?.some((item) => normalizeMatchText(item) === venue)) return { confidence: "none", ruleId: `excluded-${mapping.beachId}`, reason: "Known inland or unsupported venue", exclusionReason: "inlandVenue" };
+		if (mapping.sourceAliases?.[input.providerId]?.some((item) => normalizeMatchText(item) === venue)) return { beachId: mapping.beachId, method: "sourceAlias", confidence: "exact", ruleId: `${input.providerId}-${mapping.beachId}-venue-alias`, reason: "Exact source venue alias" };
+		if (mapping.venues.some((item) => normalizeMatchText(item) === venue)) return { beachId: mapping.beachId, method: "exactVenue", confidence: "exact", ruleId: `${mapping.beachId}-exact-venue`, reason: "Exact approved venue" };
+	}
+	if (address) {
+		const matches = VENUE_MAPPINGS.filter((mapping) => mapping.addresses.some((item) => normalizeMatchAddress(item) === address));
+		if (matches.length > 1) return { confidence: "none", ruleId: "ambiguous-exact-address", reason: "Exact address maps to more than one configured beach", exclusionReason: "ambiguousLocation" };
+		if (matches[0]) return { beachId: matches[0].beachId, method: "exactAddress", confidence: "exact", ruleId: `${matches[0].beachId}-exact-address`, reason: "Exact approved address" };
 	}
 	return { confidence: "none", ruleId: "unknown-venue", reason: "Venue is not an approved exact beach alias", exclusionReason: "unknownVenue" };
 }
@@ -124,5 +133,17 @@ export function exactBeachMatch(input: { providerId: string; venue?: string; add
 }
 
 export function dedupeKey(event: { title: string; startAt: string; beachId: string }): string {
-	return `${normalize(event.title)}|${event.startAt.slice(0, 16)}|${event.beachId}`;
+	return `${normalizeMatchText(event.title)}|${event.startAt.slice(0, 16)}|${event.beachId}`;
+}
+
+export function possibleDuplicateOf<T extends { id: string; title: string; startAt: string; endAt: string; beachId: string; officialEventURL?: string }>(candidate: T, events: T[]): T | undefined {
+	const officialURL = candidate.officialEventURL?.replace(/[?#].*$/, "");
+	return events.find((event) => {
+		const overlaps = Date.parse(event.startAt) < Date.parse(candidate.endAt) && Date.parse(candidate.startAt) < Date.parse(event.endAt);
+		return event.id !== candidate.id && event.beachId === candidate.beachId && (
+			dedupeKey(event) === dedupeKey(candidate)
+			|| (officialURL && overlaps && event.officialEventURL?.replace(/[?#].*$/, "") === officialURL)
+			|| (overlaps && normalizeMatchText(event.title) === normalizeMatchText(candidate.title))
+		);
+	});
 }

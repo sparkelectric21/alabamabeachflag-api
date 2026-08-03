@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { exactBeachMatch, explainBeachMatch } from "../src/beachEvents/matching";
 import { parseICalendar } from "../src/beachEvents/ical";
+import { BEACH_ACTIVITY_NOTIFICATION_STATE_KEY } from "../src/beachEvents/notifications";
 import { BEACH_EVENT_PROVIDERS } from "../src/beachEvents/providers";
-import { applyImportedEvents, buildSnapshot, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
+import { EVENT_PREFIX, applyImportedEvents, buildSnapshot, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
 import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
 import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEvents/schedule";
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
-import type { BeachEvent, SourceFacts } from "../src/beachEvents/types";
+import type { BeachEvent, BeachEventsSnapshot, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
 import { handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
 
@@ -21,7 +22,7 @@ function memoryEnv() {
 		delete: vi.fn(async (key: string) => { values.delete(key); }),
 		list: vi.fn(async ({ prefix }: { prefix: string }) => ({ keys: [...values.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name })), list_complete: true })),
 	};
-	return { env: { BEACH_DATA: kv, AI: { toMarkdown: vi.fn(async () => ({ format: "markdown", data: "No dated events in this issue." })) } } as unknown as Env, values, kv };
+	return { env: { BEACH_DATA: kv, AI: { toMarkdown: vi.fn(async () => ({ format: "markdown", data: "No dated events in this issue." })) }, BEACH_ACTIVITY_NOTIFICATIONS_ENABLED: "false", BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS: "operations@alabamabeachflag.com" } as unknown as Env, values, kv };
 }
 
 const facts = (overrides: Partial<SourceFacts> = {}): SourceFacts => ({
@@ -31,12 +32,12 @@ const facts = (overrides: Partial<SourceFacts> = {}): SourceFacts => ({
 });
 
 describe("exact beach event matching", () => {
-	it("uses the official Town Crier as the sole active Town source", () => {
+	it("keeps Dauphin Island automation disabled pending written permission", () => {
 		expect(BEACH_EVENT_PROVIDERS.find((provider) => provider.id === "dauphinIslandTown")).toMatchObject({
-			mode: "enabled",
-			feedType: "PDF Newsletter",
-			feedURL: "https://www.townofdauphinisland.org/newsletters",
-			legalStatus: "clear",
+			mode: "disabled",
+			feedType: "Web page",
+			feedURL: "https://www.townofdauphinisland.org/calendar-of-events",
+			legalStatus: "permission-required",
 			publicFeed: true,
 			supportedBeachIds: ["dauphin-island-public-beach", "dauphin-island-east-end"],
 		});
@@ -48,7 +49,9 @@ describe("exact beach event matching", () => {
 		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "East End Beach" })).toEqual({ beachId: "dauphin-island-east-end", method: "exactVenue" });
 		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "Middle Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactVenue" });
 		expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue: "Bienville Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactVenue" });
+		expect(exactBeachMatch({ providerId: "manual", venue: "West End Beach" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactVenue" });
 		expect(exactBeachMatch({ providerId: "dauphinIslandTown", address: "1917 Bienville Boulevard, Dauphin Island, AL 36528" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactAddress" });
+		expect(exactBeachMatch({ providerId: "manual", address: "3000 Bienville Blvd, Dauphin Island, AL 36528" })).toEqual({ beachId: "dauphin-island-public-beach", method: "exactAddress" });
 	});
 
 	it("rejects citywide, excluded, nearby, and unsupported Flora-Bama locations", () => {
@@ -66,7 +69,7 @@ describe("exact beach event matching", () => {
 		expect(explainBeachMatch({ providerId: "alabamaAudubon", venue: "Fort Morgan State Historic Site" })).toMatchObject({ exclusionReason: "inlandVenue" });
 		expect(exactBeachMatch({ providerId: "alabamaCoastalCleanup", venue: "Fort Morgan Public Beach Cleanup Zone" })).toEqual({ beachId: "fort-morgan-public-beach", method: "sourceAlias" });
 		expect(exactBeachMatch({ providerId: "orangeBeachCoastalResources", venue: "Alabama Point" })).toEqual({ beachId: "alabama-point", method: "sourceAlias" });
-		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ reason: "Exact beach not represented in app", exclusionReason: "exactBeachNotRepresented" });
+		expect(explainBeachMatch({ providerId: "dauphinIslandTown", venue: "West End Beach" })).toMatchObject({ beachId: "dauphin-island-public-beach", method: "exactVenue", confidence: "exact" });
 		for (const venue of ["Dauphin Island", "Dauphin Island Town Hall", "Dauphin Island Community Center", "Dauphin Island Sea Lab", "Alabama Aquarium", "Fort Gaines", "Audubon Bird Sanctuary", "Dauphin Island Campground", "Dauphin Island Marina"]) {
 			expect(exactBeachMatch({ providerId: "dauphinIslandTown", venue })).toBeNull();
 		}
@@ -158,9 +161,18 @@ describe("event lifecycle", () => {
 		);
 		expect(response.status).toBe(200);
 		const updated = (await response.json() as { event: BeachEvent }).event;
-		expect(updated).toMatchObject({ id: original.id, title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end", status: "pendingReview", sourceFacts: original.sourceFacts, createdAt: original.createdAt });
+		expect(updated).toMatchObject({ id: original.id, title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end", status: "pendingReview", sourceFacts: original.sourceFacts, createdAt: original.createdAt, matchMethod: "adminOverride", matchConfidence: "admin", manualOverrideFields: expect.arrayContaining(["beachId", "title"]) });
 		const auditRecord = [...h.values.entries()].find(([key]) => key.startsWith("beach-events:v1:audit:"))?.[1];
-		expect(JSON.parse(auditRecord!)).toMatchObject({ changes: { title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end" } });
+		expect(JSON.parse(auditRecord!)).toMatchObject({
+			changes: {
+				previous: { title: original.title, bannerMessage: original.bannerMessage, beachId: original.beachId },
+				next: { title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end" },
+			},
+			previousState: "pendingReview",
+			newState: "pendingReview",
+			changedFields: expect.arrayContaining(["title", "bannerMessage", "beachId", "matchMethod", "matchConfidence", "matchRuleId", "matchExplanation"]),
+			origin: "manual",
+		});
 	});
 
 	it("publishes a revision ETag and honors conditional revalidation", async () => {
@@ -193,9 +205,14 @@ describe("event lifecycle", () => {
 
 	it("isolates provider failures and does not write a beach-condition key", async () => {
 		const h = memoryEnv();
+		const event = { ...normalizedEvent(facts(), new Date("2026-07-27T12:00:00Z"))!, status: "published" } as BeachEvent;
+		const priorSnapshot = buildSnapshot([event], new Date("2026-07-27T12:00:00Z"));
+		h.values.set("beach-events:v1:snapshot", JSON.stringify(priorSnapshot));
 		const fetcher = vi.fn(async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
 		const result = await refreshBeachEvents(h.env, new Date("2026-07-28T12:00:00Z"), fetcher);
 		expect(result.outcome).toBe("failed");
+		expect(result.refresh.publicRevisionChanged).toBe(false);
+		expect(JSON.parse(h.values.get("beach-events:v1:snapshot")!)).toEqual(priorSnapshot);
 		expect(h.kv.put.mock.calls.some(([key]) => key === "beach-conditions")).toBe(false);
 	});
 });
@@ -248,15 +265,49 @@ describe("event refresh observability", () => {
 		expect(JSON.parse(partial.values.get(REFRESH_STATUS_KEY)!)).toMatchObject({ status: "warning", lastSuccess: expect.any(String), lastFailure: expect.any(String) });
 	});
 
-	it("preserves last-good Town Crier events when a later PDF conversion fails", async () => {
+	it.each(["HTTP failure", "timeout", "malformed feed"])("does not count an absent event when its provider has an unsuccessful %s refresh", async (failure) => {
+		const h = memoryEnv();
+		const sourceFact = facts();
+		const event = normalizedEvent(sourceFact, new Date("2026-07-27T12:00:00.000Z"))!;
+		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, status: "published" }));
+		const malformedFeed = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:partial\r\nSUMMARY:Partial Beach Event\r\nDTSTART:20260801T130000Z";
+		const fetcher = vi.fn((url: RequestInfo | URL) => {
+			if (!String(url).includes("gulfshoresal.gov")) return response(emptyFeed);
+			if (failure === "HTTP failure") return response("down", 503);
+			if (failure === "timeout") return Promise.reject(new Error("request timed out"));
+			return response(malformedFeed);
+		}) as unknown as typeof fetch;
+		const result = await refreshBeachEvents(h.env, new Date("2026-07-28T12:00:00.000Z"), fetcher);
+		expect(result.outcome).toBe("partial");
+		const failedProvider = result.providers.find((provider) => provider.providerId === "gulfShoresCity");
+		expect(failedProvider).toMatchObject({ status: "failed" });
+		expect(failedProvider).not.toHaveProperty("missingFromSource");
+		const stored = JSON.parse(h.values.get(`${EVENT_PREFIX}${event.id}`)!);
+		expect(stored).toMatchObject({ status: "published" });
+		expect(stored).not.toHaveProperty("sourceMissingCount");
+		expect(stored).not.toHaveProperty("sourceRemovedAt");
+	});
+
+	it("does not retrieve the disabled Dauphin Island source and preserves manual review records", async () => {
 		const retained = memoryEnv();
 		const fact = facts({ providerId: "dauphinIslandTown", externalId: "July 2026:movie", title: "Family Movie Night", venue: "East End Beach", sourceName: "Town of Dauphin Island Events · July 2026", sourceURL: townIssueURL });
 		const event = normalizedEvent(fact, new Date("2026-07-28T12:00:00Z"))!;
 		retained.values.set(`beach-events:v1:event:${event.id}`, JSON.stringify({ ...event, status: "approved" }));
-		(retained.env.AI.toMarkdown as ReturnType<typeof vi.fn>).mockResolvedValue({ format: "error", error: "OCR unavailable" });
-		const result = await refreshBeachEvents(retained.env, new Date("2026-07-29T12:00:00Z"), feedFetcher(emptyFeed));
-		expect(result.refresh.providers.find((item) => item.providerId === "dauphinIslandTown")).toMatchObject({ status: "failed", freshness: "never" });
+		const fetcher = feedFetcher(emptyFeed) as unknown as ReturnType<typeof vi.fn>;
+		const result = await refreshBeachEvents(retained.env, new Date("2026-07-29T12:00:00Z"), fetcher as unknown as typeof fetch);
+		expect(result.refresh.providers.find((item) => item.providerId === "dauphinIslandTown")).toMatchObject({ status: "disabled", freshness: "never", fetched: 0 });
+		expect(fetcher.mock.calls.some(([url]) => String(url).includes("townofdauphinisland.org"))).toBe(false);
 		expect(JSON.parse(retained.values.get(`beach-events:v1:event:${event.id}`)!)).toMatchObject({ title: "Family Movie Night", status: "approved" });
+	});
+
+	it("reports stable new/unchanged/duplicate counts and public revision changes", async () => {
+		const h = memoryEnv();
+		const fetcher = feedFetcher(beachFeed);
+		const first = await refreshBeachEvents(h.env, new Date("2026-07-28T12:00:00Z"), fetcher);
+		expect(first.refresh).toMatchObject({ publicRevisionChanged: true, counts: { newEvents: 1, possibleDuplicates: 3, unchanged: 0 } });
+		const second = await refreshBeachEvents(h.env, new Date("2026-07-29T12:00:00Z"), fetcher);
+		expect(second.refresh).toMatchObject({ publicRevisionChanged: false, counts: { newEvents: 0, possibleDuplicates: 3, unchanged: 1 } });
+		expect(second.refresh.providers.find((provider) => provider.providerId === "gulfShoresCity")).toMatchObject({ newEvents: 0, changed: 0, unchanged: 1 });
 	});
 
 	it("reports disabled and monitor-only controls without unsafe ingestion", async () => {
@@ -267,13 +318,36 @@ describe("event refresh observability", () => {
 		const providerDisabled = memoryEnv(), providerDoc = defaultOperationalControl(new Date("2026-07-28T12:00:00Z"));
 		providerDoc.controls["providers.orangeBeachEvents"] = { state: "disabled" };
 		providerDisabled.values.set(CURRENT_KEY, JSON.stringify(providerDoc));
+		const disabledFact = facts({ providerId: "orangeBeachParks", venue: "Cotton Bayou Public Beach", sourceName: "City of Orange Beach" });
+		const disabledEvent = normalizedEvent(disabledFact, new Date("2026-07-27T12:00:00.000Z"))!;
+		providerDisabled.values.set(`${EVENT_PREFIX}${disabledEvent.id}`, JSON.stringify({ ...disabledEvent, status: "published" }));
 		const result = await refreshBeachEvents(providerDisabled.env, new Date("2026-07-28T12:00:00Z"), feedFetcher(emptyFeed));
 		expect(result.providers.find((item) => item.providerId === "orangeBeachParks")?.status).toBe("disabled");
+		expect(JSON.parse(providerDisabled.values.get(`${EVENT_PREFIX}${disabledEvent.id}`)!)).not.toHaveProperty("sourceMissingCount");
 		const monitored = memoryEnv(), monitorDoc = defaultOperationalControl(new Date("2026-07-28T12:00:00Z"));
 		monitorDoc.controls["providers.gulfShoresEvents"] = { state: "monitorOnly" };
 		monitored.values.set(CURRENT_KEY, JSON.stringify(monitorDoc));
-		const monitorResult = await refreshBeachEvents(monitored.env, new Date("2026-07-28T12:00:00Z"), feedFetcher(beachFeed));
+		const monitoredEvent = normalizedEvent(facts(), new Date("2026-07-27T12:00:00.000Z"))!;
+		monitored.values.set(`${EVENT_PREFIX}${monitoredEvent.id}`, JSON.stringify({ ...monitoredEvent, status: "published" }));
+		const monitorResult = await refreshBeachEvents(monitored.env, new Date("2026-07-28T12:00:00Z"), feedFetcher(emptyFeed));
 		expect(monitorResult.providers.find((item) => item.providerId === "gulfShoresCity")?.status).toBe("monitored");
+		expect(JSON.parse(monitored.values.get(`${EVENT_PREFIX}${monitoredEvent.id}`)!)).not.toHaveProperty("sourceMissingCount");
+	});
+
+	it("does not send a review summary as a side effect of an out-of-window refresh", async () => {
+		const h = memoryEnv();
+		const pending = normalizedEvent(facts({ providerId: "manual", venue: "Gulf Shores Public Beach" }), new Date("2026-07-27T12:00:00.000Z"))!;
+		h.values.set(`${EVENT_PREFIX}${pending.id}`, JSON.stringify(pending));
+		const send = vi.fn(async () => undefined);
+		Object.assign(h.env, {
+			BEACH_ACTIVITY_NOTIFICATIONS_ENABLED: "true",
+			BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS: "operations@alabamabeachflag.com",
+			VERIFICATION_ALERT_EMAIL: { send },
+		});
+		await refreshBeachEvents(h.env, new Date("2026-07-28T20:00:00.000Z"), feedFetcher(emptyFeed));
+		expect(send).not.toHaveBeenCalled();
+		expect(h.values.has(BEACH_ACTIVITY_NOTIFICATION_STATE_KEY)).toBe(false);
+		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${pending.id}`)!)).toMatchObject({ status: "pendingReview" });
 	});
 
 	it("prevents concurrent admin refreshes and records the manual audit", async () => {

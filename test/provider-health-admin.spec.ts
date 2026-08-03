@@ -19,7 +19,7 @@ describe("provider-health admin endpoint", () => {
 		expect((await worker.fetch(new Request("https://example.com/admin/provider-health"), h.env)).status).toBe(403);
 		const response = await worker.fetch(new Request("https://example.com/admin/provider-health", { headers: { "x-refresh-secret": "secret" } }), h.env);
 		expect(response.status).toBe(200);
-		expect((await response.json() as any)).toMatchObject({ schemaVersion: 2, overall: { status: "healthy", expectedBeachCount: 9 }, catalogSummary: { primaryProviderCount: 13, standbyProviderCount: 3 }, providerCatalog: expect.arrayContaining([expect.objectContaining({ provider: "nws", role: "Primary", health: expect.objectContaining({ status: "healthy" }) })]), providers: [expect.objectContaining({ provider: "nws", status: "healthy" })] });
+		expect((await response.json() as any)).toMatchObject({ schemaVersion: 2, overall: { status: "healthy", expectedBeachCount: 9 }, catalogSummary: { primaryProviderCount: 12, standbyProviderCount: 3 }, providerCatalog: expect.arrayContaining([expect.objectContaining({ provider: "nws", role: "Primary", health: expect.objectContaining({ status: "healthy" }) }), expect.objectContaining({ provider: "dauphinIslandTown", role: "Disabled", productionUsage: expect.stringContaining("manual fallback") })]), providers: [expect.objectContaining({ provider: "nws", status: "healthy" })] });
 		expect((await worker.fetch(new Request("https://example.com/admin/provider-health", { method: "POST", headers: { "x-refresh-secret": "secret" } }), h.env)).status).toBe(405);
 	});
 

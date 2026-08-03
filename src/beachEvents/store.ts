@@ -1,10 +1,11 @@
 import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
-import { dedupeKey, explainBeachMatch } from "./matching";
-import type { BeachEvent, BeachEventsSnapshot, DecisionRule, ExcludedEventCandidate, SourceFacts } from "./types";
+import { explainBeachMatch, possibleDuplicateOf } from "./matching";
+import type { BeachEvent, BeachEventsSnapshot, DecisionRule, EventAttentionFlag, ExcludedEventCandidate, PublicBeachEvent, SourceFacts } from "./types";
 import { EVENT_STATUSES, EVENT_TYPES, IMPACT_LEVELS } from "./types";
 import { normalizeDescription, resolveOfficialEventURL, sanitizeEventURL } from "./normalize";
 import { BEACH_EVENT_PROVIDERS } from "./providers";
+import { compareSourceFacts, eventSourceStatus, sourceRevision, stableHash } from "./sourceChanges";
 
 export const SNAPSHOT_KEY = "beach-events:v1:snapshot";
 export const EVENT_PREFIX = "beach-events:v1:event:";
@@ -16,6 +17,17 @@ export const STALE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const safeText = (value: unknown, max: number): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value);
 const httpsURL = (value: unknown): value is string => safeText(value, 1000) && (() => { try { return new URL(value).protocol === "https:"; } catch { return false; } })();
 const iso = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value));
+
+export const PUBLIC_BEACH_EVENT_FIELDS = ["id", "beachId", "title", "venue", "address", "startAt", "endAt", "displayFrom", "allDay", "recurring", "eventType", "impactLevel", "bannerTitle", "bannerMessage", "parkingImpact", "trafficImpact", "accessImpact", "showCompareNearbyBeaches", "sourceName", "summary", "eventDescription", "fullDescription", "officialEventURL", "registrationURL", "officialEventsPageURL", "organizerWebsiteURL", "sourceNote", "contactInformation", "sourceNewsletterMonth", "endTimeUnavailable", "updatedAt"] as const;
+
+export function importedEventId(facts: Pick<SourceFacts, "providerId" | "externalId">): string {
+	return `imported-${facts.providerId}-${encodeURIComponent(facts.externalId).slice(0, 120)}`;
+}
+
+const attention = (values: Array<EventAttentionFlag | undefined>) => [...new Set(values.filter((value): value is EventAttentionFlag => Boolean(value)))];
+const publicPresentationChanged = (previous: BeachEvent, next: BeachEvent) => PUBLIC_BEACH_EVENT_FIELDS
+	.filter((field) => field !== "updatedAt")
+	.some((field) => JSON.stringify(previous[field] ?? null) !== JSON.stringify(next[field] ?? null));
 
 export function suggestPresentation(title: string, description = ""): Pick<BeachEvent, "eventType" | "impactLevel" | "bannerTitle" | "bannerMessage" | "parkingImpact" | "trafficImpact" | "accessImpact" | "showCompareNearbyBeaches"> {
 	const text = `${title} ${description}`.toLowerCase();
@@ -35,7 +47,7 @@ export function suggestPresentation(title: string, description = ""): Pick<Beach
 	};
 }
 
-export function normalizedEvent(facts: SourceFacts, now: Date, override?: { beachId: string; ruleId: string; explanation: string }): BeachEvent | null {
+export function normalizedEvent(facts: SourceFacts, now: Date, override?: { beachId: string; ruleId: string; explanation: string; method?: BeachEvent["matchMethod"]; confidence?: BeachEvent["matchConfidence"] }): BeachEvent | null {
 	const match = explainBeachMatch({ providerId: facts.providerId, venue: facts.venue, address: facts.address });
 	if ((!match.beachId || !match.method) && !override) return null;
 	const suggested = suggestPresentation(facts.title, facts.description);
@@ -48,7 +60,7 @@ export function normalizedEvent(facts: SourceFacts, now: Date, override?: { beac
 	const organizerWebsiteURL = sanitizeEventURL(facts.organizerWebsiteURL ?? provider?.organizerWebsiteURL);
 	const sourceURL = sourceCalendarURL ?? facts.sourceURL;
 	return {
-		id: `imported-${facts.providerId}-${encodeURIComponent(facts.externalId).slice(0, 120)}`,
+		id: importedEventId(facts),
 		beachId: override?.beachId ?? match.beachId!,
 		title: facts.title,
 		venue: facts.venue,
@@ -73,11 +85,14 @@ export function normalizedEvent(facts: SourceFacts, now: Date, override?: { beac
 		...(facts.contactInformation ? { contactInformation: facts.contactInformation } : {}),
 		...(facts.sourceNewsletterMonth ? { sourceNewsletterMonth: facts.sourceNewsletterMonth } : {}),
 		...(facts.endTimeUnavailable ? { endTimeUnavailable: true } : {}),
-		matchMethod: override ? "adminOverride" : match.method!,
-		matchConfidence: override ? "admin" : "exact",
+		matchMethod: override?.method ?? (override ? "adminOverride" : match.method!),
+		matchConfidence: override?.confidence ?? (override ? "admin" : "exact"),
 		matchRuleId: override?.ruleId ?? match.ruleId,
 		matchExplanation: override?.explanation ?? match.reason,
 		sourceFacts: facts,
+		sourceRevision: sourceRevision(facts),
+		lastSeenAt: now.toISOString(),
+		...(normalized.warnings.length ? { attentionFlags: ["normalizationWarning"] } : {}),
 		createdAt: now.toISOString(),
 		updatedAt: now.toISOString(),
 	};
@@ -98,7 +113,7 @@ export async function listExcludedCandidates(env: Pick<Env, "BEACH_DATA">): Prom
 	return (await Promise.all(listed.keys.map((key) => env.BEACH_DATA.get<ExcludedEventCandidate>(key.name, "json")))).filter((item): item is ExcludedEventCandidate => Boolean(item));
 }
 
-async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, reason: ExcludedEventCandidate["reason"], reasonDetail: string, ruleId: string, now: Date): Promise<void> {
+async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, reason: ExcludedEventCandidate["reason"], reasonDetail: string, ruleId: string, now: Date, options: { possibleDuplicateOf?: string; matchConfidence?: ExcludedEventCandidate["matchConfidence"] } = {}): Promise<void> {
 	const id = `${fact.providerId}-${encodeURIComponent(fact.externalId).slice(0, 150)}`;
 	const key = `${EXCLUSION_PREFIX}${id}`;
 	const prior = await env.BEACH_DATA.get<ExcludedEventCandidate>(key, "json");
@@ -114,7 +129,8 @@ async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, re
 		sourceURL: fact.officialURL ?? fact.sourceURL,
 		reason,
 		reasonDetail,
-		matchConfidence: "none",
+		matchConfidence: options.matchConfidence ?? "none",
+		...(options.possibleDuplicateOf ? { possibleDuplicateOf: options.possibleDuplicateOf } : {}),
 		ruleId,
 		decision: "automatic",
 		sourceFacts: fact,
@@ -126,47 +142,256 @@ async function saveExclusion(env: Pick<Env, "BEACH_DATA">, fact: SourceFacts, re
 
 const exclusionKey = (fact: SourceFacts) => `${EXCLUSION_PREFIX}${fact.providerId}-${encodeURIComponent(fact.externalId).slice(0, 150)}`;
 
-export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date): Promise<{ discovered: number; matched: number; excluded: number; pendingReview: number; ruleSuppressed: number; unsupportedOrAmbiguous: number }> {
+export interface ApplyImportedEventsResult {
+	discovered: number;
+	newEvents: number;
+	changed: number;
+	unchanged: number;
+	matched: number;
+	excluded: number;
+	pendingReview: number;
+	ruleSuppressed: number;
+	unsupportedOrAmbiguous: number;
+	possibleDuplicates: number;
+	warnings: number;
+	restored: number;
+}
+
+const SOURCE_MANAGED_FIELDS: Array<keyof BeachEvent> = [
+	"beachId", "title", "venue", "address", "startAt", "endAt", "allDay", "recurring", "sourceName", "sourceURL", "sourceNote",
+	"eventDescription", "summary", "fullDescription", "officialEventURL", "registrationURL", "officialEventsPageURL", "organizerWebsiteURL",
+	"sourceCalendarURL", "normalizationWarnings", "contactInformation", "sourceNewsletterMonth", "endTimeUnavailable", "matchMethod", "matchConfidence", "matchRuleId", "matchExplanation",
+];
+const ADMIN_OVERRIDABLE_SOURCE_FIELDS = new Set<keyof BeachEvent>(["beachId", "title", "venue", "address", "startAt", "endAt", "allDay", "summary", "fullDescription", "officialEventURL", "registrationURL", "officialEventsPageURL", "organizerWebsiteURL", "sourceName", "sourceURL"]);
+
+function normalizedPrior(event: BeachEvent): BeachEvent | null {
+	const override = event.matchMethod === "adminOverride"
+		? { beachId: event.beachId, ruleId: event.matchRuleId ?? "admin-existing-assignment", explanation: event.matchExplanation ?? "Administrator assigned beach" }
+		: undefined;
+	return normalizedEvent(event.sourceFacts, new Date(event.createdAt), override);
+}
+
+function mergeSourceManagedFields(prior: BeachEvent, candidate: BeachEvent): { event: BeachEvent; manualOverrideFields: string[] } {
+	const oldCandidate = normalizedPrior(prior);
+	const overrides = new Set(prior.manualOverrideFields ?? []);
+	if (oldCandidate) {
+		for (const field of SOURCE_MANAGED_FIELDS) {
+			if (ADMIN_OVERRIDABLE_SOURCE_FIELDS.has(field) && JSON.stringify(prior[field] ?? null) !== JSON.stringify(oldCandidate[field] ?? null)) overrides.add(field);
+		}
+	}
+	if (prior.matchMethod === "adminOverride") for (const field of ["beachId", "matchMethod", "matchConfidence", "matchRuleId", "matchExplanation"] as const) overrides.add(field);
+	const result = { ...prior } as unknown as Record<string, unknown>;
+	for (const field of SOURCE_MANAGED_FIELDS) {
+		if (overrides.has(field)) continue;
+		if (candidate[field] === undefined) delete result[field];
+		else result[field] = candidate[field];
+	}
+	return { event: result as unknown as BeachEvent, manualOverrideFields: [...overrides].sort() };
+}
+
+function reviewedStatus(status: BeachEvent["status"]): boolean {
+	return status === "approved" || status === "scheduled" || status === "published";
+}
+
+export function eventNeedsReview(event: BeachEvent): boolean {
+	return event.status === "pendingReview" || Boolean(event.attentionFlags?.length);
+}
+
+export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date, origin: "scheduled" | "admin" = "scheduled"): Promise<ApplyImportedEventsResult> {
 	const existing = await listEvents(env);
 	const rules = await listRules(env);
 	const existingById = new Map(existing.map((event) => [event.id, event]));
-	const existingDedupe = new Set(existing.map(dedupeKey));
-	let matched = 0, discovered = 0, excluded = 0, pendingReview = 0, ruleSuppressed = 0, unsupportedOrAmbiguous = 0;
+	const working = [...existing];
+	let matched = 0, discovered = 0, changed = 0, unchanged = 0, excluded = 0, pendingReview = 0, ruleSuppressed = 0, unsupportedOrAmbiguous = 0, possibleDuplicates = 0, warnings = 0, restored = 0;
 	for (const fact of facts) {
-		if (Date.parse(fact.endAt) <= now.getTime()) {
+		const id = importedEventId(fact);
+		const prior = existingById.get(id);
+		if (!prior && Date.parse(fact.endAt) <= now.getTime()) {
 			excluded += 1;
 			await saveExclusion(env, fact, "expiredBeforeDiscovery", "Event ended before this discovery window", "expired-before-discovery", now);
 			continue;
 		}
 		const explanation = explainBeachMatch({ providerId: fact.providerId, venue: fact.venue, address: fact.address });
 		const aliasRule = rules.find((candidate) => candidate.enabled && candidate.action === "suggest" && candidate.providerId === fact.providerId && candidate.beachId && ((!candidate.venue || candidate.venue.toLowerCase() === fact.venue.toLowerCase()) && (!candidate.address || candidate.address.toLowerCase() === (fact.address ?? "").toLowerCase())));
-		const event = normalizedEvent(fact, now, aliasRule?.beachId ? { beachId: aliasRule.beachId, ruleId: aliasRule.id, explanation: aliasRule.address ? "Exact administrator-approved address alias" : "Exact administrator-approved venue alias" } : undefined);
+		const priorOverride = prior?.matchMethod === "adminOverride"
+			? { beachId: prior.beachId, ruleId: prior.matchRuleId ?? "admin-existing-assignment", explanation: prior.matchExplanation ?? "Administrator assigned beach" }
+			: undefined;
+		const fallbackOverride = prior && !explanation.beachId
+			? { beachId: prior.beachId, ruleId: "source-location-no-longer-matches", explanation: explanation.reason, method: "ambiguousSourceChange" as const, confidence: "ambiguous" as const }
+			: undefined;
+		const ruleOverride = aliasRule?.beachId ? { beachId: aliasRule.beachId, ruleId: aliasRule.id, explanation: aliasRule.address ? "Exact administrator-approved address alias" : "Exact administrator-approved venue alias" } : undefined;
+		const event = normalizedEvent(fact, now, priorOverride ?? ruleOverride ?? fallbackOverride);
 		if (!event) {
 			excluded += 1;
 			unsupportedOrAmbiguous += 1;
 			await saveExclusion(env, fact, explanation.exclusionReason ?? "unknownVenue", explanation.reason, explanation.ruleId, now);
 			continue;
 		}
-		matched += 1;
+		if (explanation.beachId || priorOverride || ruleOverride) matched += 1;
 		await env.BEACH_DATA.delete(exclusionKey(fact));
-		const prior = existingById.get(event.id);
 		if (prior) {
-			await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, ...prior, sourceFacts: fact, updatedAt: now.toISOString() }));
+			const diff = compareSourceFacts(prior.sourceFacts, fact);
+			const priorRevision = prior.sourceRevision ?? sourceRevision(prior.sourceFacts);
+			const currentRevision = sourceRevision(fact);
+			const wasMissing = Boolean(prior.sourceMissingCount || prior.sourceRemovedAt);
+			const wasRemoved = Boolean(prior.sourceRemovedAt);
+			if (!diff.changedFields.length && !wasMissing) {
+				await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...prior, sourceFacts: fact, sourceRevision: currentRevision, lastSeenAt: now.toISOString() }));
+				unchanged += 1;
+				continue;
+			}
+			const merged = mergeSourceManagedFields(prior, event);
+			const noLongerMatches = !explanation.beachId && !priorOverride && !ruleOverride;
+			const unresolvedChange = prior.attentionFlags?.includes("materialSourceChange") ? prior.sourceChange : undefined;
+			const materialFields = [...new Set([...(unresolvedChange?.materialFields ?? []), ...diff.materialFields, ...(noLongerMatches ? ["beachId"] : []), ...(wasRemoved ? ["sourcePresence"] : [])])];
+			const statusFromSource = eventSourceStatus(fact);
+			const isMaterial = materialFields.length > 0 || Boolean(statusFromSource) || wasRemoved || Boolean(unresolvedChange);
+			let status = prior.status;
+			if (statusFromSource === "cancelled") status = "cancelled";
+			else if (Date.parse(fact.endAt) <= now.getTime()) status = "expired";
+			else if (isMaterial && (reviewedStatus(prior.status) || prior.status === "cancelled" || prior.status === "hidden")) status = "pendingReview";
+			const retainedFlags = (prior.attentionFlags ?? []).filter((flag) => flag === "possibleDuplicate" || flag === "materialSourceChange" || flag === "sourceRestored");
+			const materialReviewRequired = isMaterial && (
+				reviewedStatus(prior.status)
+				|| prior.status === "cancelled"
+				|| prior.status === "hidden"
+				|| prior.attentionFlags?.includes("materialSourceChange")
+			);
+			const flags = attention([
+				...retainedFlags,
+				event.normalizationWarnings?.length ? "normalizationWarning" : undefined,
+				noLongerMatches ? "ambiguousMatch" : undefined,
+				statusFromSource === "cancelled" ? "sourceCancelled" : undefined,
+				statusFromSource === "postponed" ? "sourcePostponed" : undefined,
+				materialReviewRequired ? "materialSourceChange" : undefined,
+				wasRemoved ? "sourceRestored" : undefined,
+			]);
+			const presentationChanged = publicPresentationChanged(prior, merged.event);
+			const next: BeachEvent = {
+				...merged.event,
+				status,
+				sourceFacts: fact,
+				sourceRevision: currentRevision,
+				lastSeenAt: now.toISOString(),
+				manualOverrideFields: merged.manualOverrideFields,
+				...(flags.length ? { attentionFlags: flags } : { attentionFlags: undefined }),
+				...(isMaterial ? { sourceChange: {
+					detectedAt: unresolvedChange?.detectedAt ?? now.toISOString(),
+					previousRevision: unresolvedChange?.previousRevision ?? priorRevision,
+					currentRevision,
+					materialFields,
+					cosmeticFields: [...new Set([...(unresolvedChange?.cosmeticFields ?? []), ...diff.cosmeticFields])].filter((field) => !materialFields.includes(field)),
+					previousStatus: unresolvedChange?.previousStatus ?? prior.status,
+					previous: unresolvedChange?.previous ?? prior.sourceFacts,
+					current: fact,
+				} } : {}),
+				...(!isMaterial && reviewedStatus(prior.status) ? { reviewedSourceRevision: currentRevision } : {}),
+				updatedAt: presentationChanged || status !== prior.status ? now.toISOString() : prior.updatedAt,
+			};
+			delete next.sourceMissingSince;
+			delete next.sourceMissingCount;
+			delete next.sourceRemovedAt;
+			if (!isMaterial) delete next.sourceChange;
+			await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
+			await auditAutomated(env, origin, wasRemoved ? "source_event_restored" : isMaterial ? "source_event_changed" : wasMissing ? "source_event_restored" : "source_event_cosmetic_change", event.id, {
+				previousSourceFacts: prior.sourceFacts,
+				nextSourceFacts: fact,
+				materialFields,
+				cosmeticFields: diff.cosmeticFields,
+			}, now, { previousState: prior.status, newState: next.status, changedFields: [...new Set([...diff.changedFields, ...(wasMissing ? ["sourcePresence"] : [])])], sourceRevision: currentRevision, publicOutputAffected: (presentationChanged && (prior.status === "published" || next.status === "published")) || (prior.status !== next.status && (prior.status === "published" || next.status === "published")), reason: wasRemoved ? "source_restored_after_confirmed_removal" : wasMissing ? "source_restored_after_transient_absence" : undefined });
+			changed += 1;
+			warnings += flags.length;
+			if (wasMissing) restored += 1;
+			existingById.set(event.id, next);
+			const index = working.findIndex((item) => item.id === event.id);
+			if (index >= 0) working[index] = next;
 			continue;
 		}
-		if (existingDedupe.has(dedupeKey(event))) {
+		const duplicate = possibleDuplicateOf(event, working);
+		if (duplicate) {
 			excluded += 1;
-			await saveExclusion(env, fact, "duplicate", "A matching event from this or another provider already exists", "cross-provider-deduplication", now);
+			possibleDuplicates += 1;
+			await saveExclusion(env, fact, "duplicate", `Possible duplicate of ${duplicate.title}`, "cross-provider-deduplication", now, { possibleDuplicateOf: duplicate.id, matchConfidence: "possible" });
 			continue;
 		}
 		const rule = rules.find((candidate) => candidate.enabled && candidate.providerId === fact.providerId && (!candidate.venue || candidate.venue.toLowerCase() === fact.venue.toLowerCase()) && (!candidate.titlePattern || fact.title.toLowerCase().includes(candidate.titlePattern.toLowerCase())) && (!candidate.beachId || candidate.beachId === event.beachId));
-		const status = rule?.action === "disregard" ? "disregarded" : rule?.action === "autoApprove" && event.matchConfidence === "exact" ? "approved" : "pendingReview";
+		const sourceStatus = eventSourceStatus(fact);
+		const status = sourceStatus === "cancelled" ? "cancelled" : rule?.action === "disregard" ? "disregarded" : rule?.action === "autoApprove" && event.matchConfidence === "exact" ? "approved" : "pendingReview";
 		if (status === "pendingReview") pendingReview += 1;
 		if (status === "disregarded") ruleSuppressed += 1;
-		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify({ ...event, status, ...(rule?.eventType ? { eventType: rule.eventType } : {}), ...(rule?.impactLevel ? { impactLevel: rule.impactLevel } : {}) }));
-		existingDedupe.add(dedupeKey(event)); discovered += 1;
+		const flags = attention([...(event.attentionFlags ?? []), sourceStatus === "cancelled" ? "sourceCancelled" : sourceStatus === "postponed" ? "sourcePostponed" : undefined]);
+		const next = { ...event, status, ...(reviewedStatus(status) ? { reviewedSourceRevision: event.sourceRevision } : {}), ...(flags.length ? { attentionFlags: flags } : {}), ...(rule?.eventType ? { eventType: rule.eventType } : {}), ...(rule?.impactLevel ? { impactLevel: rule.impactLevel } : {}) } as BeachEvent;
+		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
+		await auditAutomated(env, origin, "discover_source_event", event.id, { sourceFacts: fact }, now, { previousState: null, newState: status, changedFields: Object.keys(fact), sourceRevision: event.sourceRevision, publicOutputAffected: false });
+		existingById.set(event.id, next);
+		working.push(next);
+		warnings += flags.length;
+		discovered += 1;
 	}
-	return { discovered, matched, excluded, pendingReview, ruleSuppressed, unsupportedOrAmbiguous };
+	return { discovered, newEvents: discovered, changed, unchanged, matched, excluded, pendingReview, ruleSuppressed, unsupportedOrAmbiguous, possibleDuplicates, warnings, restored };
+}
+
+export async function reconcileProviderSource(
+	env: Pick<Env, "BEACH_DATA">,
+	providerId: string,
+	seenExternalIds: ReadonlySet<string>,
+	now: Date,
+	origin: "scheduled" | "admin" = "scheduled",
+): Promise<{ missingFromSource: number; newlyRemoved: number }> {
+	const events = (await listEvents(env)).filter((event) =>
+		event.sourceFacts?.providerId === providerId
+		&& event.sourceFacts.providerId !== "manual"
+		&& Date.parse(event.endAt) > now.getTime()
+		&& event.status !== "expired"
+		&& event.status !== "disregarded");
+	let missingFromSource = 0, newlyRemoved = 0;
+	for (const event of events) {
+		if (seenExternalIds.has(event.sourceFacts.externalId)) continue;
+		missingFromSource += 1;
+		// A confirmed removal is already a stable actionable condition. Avoid
+		// rewriting its timestamp, source diff, and audit record on every poll.
+		if (event.sourceRemovedAt) continue;
+		const missingCount = (event.sourceMissingCount ?? 0) + 1;
+		const confirmedRemoved = missingCount >= 2;
+		const flags = attention([...(event.attentionFlags ?? []).filter((flag) => flag !== "sourceMissing" && flag !== "sourceRemoved"), confirmedRemoved ? "sourceRemoved" : "sourceMissing"]);
+		let status = event.status;
+		if (confirmedRemoved && reviewedStatus(status)) status = "pendingReview";
+		const revision = event.sourceRevision ?? sourceRevision(event.sourceFacts);
+		const unresolvedChange = event.attentionFlags?.includes("materialSourceChange") ? event.sourceChange : undefined;
+		const next: BeachEvent = {
+			...event,
+			status,
+			sourceRevision: revision,
+			sourceMissingSince: event.sourceMissingSince ?? now.toISOString(),
+			sourceMissingCount: missingCount,
+			attentionFlags: flags,
+			...(confirmedRemoved ? {
+				sourceRemovedAt: event.sourceRemovedAt ?? now.toISOString(),
+				sourceChange: {
+					detectedAt: unresolvedChange?.detectedAt ?? now.toISOString(),
+					previousRevision: unresolvedChange?.previousRevision ?? revision,
+					currentRevision: revision,
+					materialFields: [...new Set([...(unresolvedChange?.materialFields ?? []), "sourcePresence"])],
+					cosmeticFields: unresolvedChange?.cosmeticFields ?? [],
+					previousStatus: unresolvedChange?.previousStatus ?? event.status,
+					previous: unresolvedChange?.previous ?? event.sourceFacts,
+					current: null,
+				},
+				updatedAt: now.toISOString(),
+			} : {}),
+		};
+		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
+		await auditAutomated(env, origin, confirmedRemoved ? "source_event_removed" : "source_event_missing", event.id, { missingCount, sourceFacts: event.sourceFacts }, now, {
+			previousState: event.status,
+			newState: next.status,
+			changedFields: confirmedRemoved ? ["sourcePresence", ...(event.status !== next.status ? ["status"] : [])] : ["sourcePresence"],
+			sourceRevision: revision,
+			publicOutputAffected: confirmedRemoved && event.status === "published",
+			reason: confirmedRemoved ? "absent_from_two_successful_provider_refreshes" : "absent_from_successful_provider_refresh",
+		});
+		if (confirmedRemoved && !event.sourceRemovedAt) newlyRemoved += 1;
+	}
+	return { missingFromSource, newlyRemoved };
 }
 
 function centralDayOrdinal(value: Date): number {
@@ -178,7 +403,7 @@ function centralDayOrdinal(value: Date): number {
 	return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
 }
 
-export function isEventVisibleNow(event: BeachEvent, now: Date): boolean {
+export function isEventVisibleNow(event: Pick<BeachEvent, "status" | "startAt" | "endAt" | "displayFrom" | "impactLevel">, now: Date): boolean {
 	if (event.status !== "published" || Date.parse(event.endAt) <= now.getTime()) return false;
 	if (event.displayFrom && Date.parse(event.displayFrom) <= now.getTime()) return true;
 	const today = centralDayOrdinal(now);
@@ -188,31 +413,59 @@ export function isEventVisibleNow(event: BeachEvent, now: Date): boolean {
 	return ["high", "major"].includes(event.impactLevel) && firstDay <= today + 1 && lastDay >= today + 1;
 }
 
-export function buildSnapshot(events: BeachEvent[], now: Date): BeachEventsSnapshot {
-	const beaches: Record<string, BeachEvent[]> = {};
-	const visible = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
-	for (const event of visible) {
-		const publicEvent = {
-			id: event.id, beachId: event.beachId, title: event.title, venue: event.venue, address: event.address,
-			startAt: event.startAt, endAt: event.endAt, displayFrom: event.displayFrom, allDay: event.allDay, recurring: event.recurring,
-			eventType: event.eventType, impactLevel: event.impactLevel, bannerTitle: event.bannerTitle, bannerMessage: event.bannerMessage,
-			parkingImpact: event.parkingImpact, trafficImpact: event.trafficImpact, accessImpact: event.accessImpact,
-			showCompareNearbyBeaches: event.showCompareNearbyBeaches, sourceName: event.sourceName,
-			summary: event.summary, eventDescription: event.fullDescription ?? event.eventDescription, fullDescription: event.fullDescription ?? event.eventDescription,
-			officialEventURL: event.officialEventURL, registrationURL: event.registrationURL,
-			officialEventsPageURL: event.officialEventsPageURL, organizerWebsiteURL: event.organizerWebsiteURL,
-			sourceNote: event.sourceNote, contactInformation: event.contactInformation, sourceNewsletterMonth: event.sourceNewsletterMonth,
-			endTimeUnavailable: event.endTimeUnavailable, updatedAt: event.updatedAt,
-		} as unknown as BeachEvent;
-		(beaches[event.beachId] ??= []).push(publicEvent);
-	}
-	for (const items of Object.values(beaches)) items.sort((a, b) => a.startAt.localeCompare(b.startAt));
-	const attribution = [...new Map(visible.map((event) => [event.sourceFacts.providerId, { providerId: event.sourceFacts.providerId, sourceName: event.sourceName, sourceURL: event.officialEventURL ?? event.officialEventsPageURL ?? event.organizerWebsiteURL ?? "" }])).values()].filter((item) => item.sourceURL);
-	return { schemaVersion: 1, revision: crypto.randomUUID(), status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: now.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
+export function serializePublicEvent(event: BeachEvent): PublicBeachEvent {
+	return {
+		id: event.id,
+		beachId: event.beachId,
+		title: event.title,
+		venue: event.venue,
+		...(event.address ? { address: event.address } : {}),
+		startAt: event.startAt,
+		endAt: event.endAt,
+		...(event.displayFrom ? { displayFrom: event.displayFrom } : {}),
+		allDay: event.allDay,
+		recurring: event.recurring,
+		eventType: event.eventType,
+		impactLevel: event.impactLevel,
+		bannerTitle: event.bannerTitle,
+		bannerMessage: event.bannerMessage,
+		parkingImpact: event.parkingImpact,
+		trafficImpact: event.trafficImpact,
+		accessImpact: event.accessImpact,
+		showCompareNearbyBeaches: event.showCompareNearbyBeaches,
+		sourceName: event.sourceName,
+		...(event.summary ? { summary: event.summary } : {}),
+		...(event.fullDescription ?? event.eventDescription ? { eventDescription: event.fullDescription ?? event.eventDescription, fullDescription: event.fullDescription ?? event.eventDescription } : {}),
+		...(event.officialEventURL ? { officialEventURL: event.officialEventURL } : {}),
+		...(event.registrationURL ? { registrationURL: event.registrationURL } : {}),
+		...(event.officialEventsPageURL ? { officialEventsPageURL: event.officialEventsPageURL } : {}),
+		...(event.organizerWebsiteURL ? { organizerWebsiteURL: event.organizerWebsiteURL } : {}),
+		...(event.sourceNote ? { sourceNote: event.sourceNote } : {}),
+		...(event.contactInformation ? { contactInformation: event.contactInformation } : {}),
+		...(event.sourceNewsletterMonth ? { sourceNewsletterMonth: event.sourceNewsletterMonth } : {}),
+		...(event.endTimeUnavailable ? { endTimeUnavailable: true } : {}),
+		updatedAt: event.updatedAt,
+	};
 }
 
-export async function saveSnapshot(env: Pick<Env, "BEACH_DATA">, now: Date): Promise<BeachEventsSnapshot> {
-	const snapshot = buildSnapshot(await listEvents(env), now);
+export function buildSnapshot(events: BeachEvent[], now: Date, lastSuccessfulRefresh = now): BeachEventsSnapshot {
+	const beaches: Record<string, PublicBeachEvent[]> = {};
+	const visible = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
+	for (const event of visible) {
+		(beaches[event.beachId] ??= []).push(serializePublicEvent(event));
+	}
+	for (const items of Object.values(beaches)) items.sort((a, b) => a.startAt.localeCompare(b.startAt));
+	const attribution = [...new Map(visible.map((event) => [event.sourceFacts.providerId, { providerId: event.sourceFacts.providerId, sourceName: event.sourceName, sourceURL: event.officialEventURL ?? event.officialEventsPageURL ?? event.organizerWebsiteURL ?? "" }])).values()].filter((item) => item.sourceURL).sort((a, b) => a.providerId.localeCompare(b.providerId));
+	const revision = stableHash(JSON.stringify({ attribution, beaches }));
+	return { schemaVersion: 1, revision, status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: lastSuccessfulRefresh.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
+}
+
+export async function saveSnapshot(env: Pick<Env, "BEACH_DATA">, now: Date, options: { sourceRefresh?: boolean } = {}): Promise<BeachEventsSnapshot> {
+	const prior = options.sourceRefresh ? null : await env.BEACH_DATA.get<BeachEventsSnapshot>(SNAPSHOT_KEY, "json");
+	const lastSuccessfulRefresh = prior?.lastSuccessfulRefresh && !Number.isNaN(Date.parse(prior.lastSuccessfulRefresh))
+		? new Date(prior.lastSuccessfulRefresh)
+		: now;
+	const snapshot = buildSnapshot(await listEvents(env), now, lastSuccessfulRefresh);
 	await env.BEACH_DATA.put(SNAPSHOT_KEY, JSON.stringify(snapshot));
 	return snapshot;
 }
@@ -227,7 +480,7 @@ export async function renormalizeExistingEvents(env: Pick<Env, "BEACH_DATA">, no
 			const provider = BEACH_EVENT_PROVIDERS.find((item) => item.id === event.sourceFacts.providerId);
 			const registrationURL = event.registrationURL ?? sanitizeEventURL(event.sourceFacts.registrationURL) ?? normalized.extractedURLs.find((url) => /register|registration|ticket|reserve|booking|signup|sign-up/i.test(url));
 			const officialEventURL = event.officialEventURL ?? resolveOfficialEventURL({ officialURL: event.sourceFacts.officialURL, extractedURLs: normalized.extractedURLs.filter((url) => url !== registrationURL) });
-			const candidate = { ...event, ...(normalized.summary ? { summary: normalized.summary } : {}), ...(normalized.fullDescription ? { eventDescription: normalized.fullDescription, fullDescription: normalized.fullDescription } : {}), ...(officialEventURL ? { officialEventURL } : {}), ...(registrationURL ? { registrationURL } : {}), ...(provider?.officialEventsPageURL ? { officialEventsPageURL: provider.officialEventsPageURL } : {}), ...(provider?.organizerWebsiteURL ? { organizerWebsiteURL: provider.organizerWebsiteURL } : {}), sourceCalendarURL: event.sourceFacts.sourceURL, normalizationWarnings: normalized.warnings };
+			const candidate = { ...event, ...(normalized.summary ? { summary: normalized.summary } : {}), ...(normalized.fullDescription ? { eventDescription: normalized.fullDescription, fullDescription: normalized.fullDescription } : {}), ...(officialEventURL ? { officialEventURL } : {}), ...(registrationURL ? { registrationURL } : {}), ...(provider?.officialEventsPageURL ? { officialEventsPageURL: provider.officialEventsPageURL } : {}), ...(provider?.organizerWebsiteURL ? { organizerWebsiteURL: provider.organizerWebsiteURL } : {}), sourceCalendarURL: event.sourceFacts.sourceURL, normalizationWarnings: normalized.warnings, sourceRevision: event.sourceRevision ?? sourceRevision(event.sourceFacts), lastSeenAt: event.lastSeenAt ?? event.updatedAt };
 			warnings += normalized.warnings.length + (officialEventURL || candidate.officialEventsPageURL || candidate.organizerWebsiteURL ? 0 : 1);
 			if (JSON.stringify(candidate) === JSON.stringify(event)) { unchanged += 1; continue; }
 			changed += 1;
@@ -254,7 +507,41 @@ export function validateManualEvent(input: Record<string, unknown>, now = new Da
 	return [...new Set(errors)];
 }
 
-export async function audit(env: Pick<Env, "BEACH_DATA">, identity: AdminIdentity, action: string, targetId: string, changes: unknown, now = new Date()): Promise<void> {
-	const record = { schemaVersion: 1, id: crypto.randomUUID(), timestamp: now.toISOString(), actor: identity.subject.slice(0, 200), authenticationMethod: identity.method, action, targetId, changes };
+export interface EventAuditContext {
+	previousState?: BeachEvent["status"] | null;
+	newState?: BeachEvent["status"] | null;
+	changedFields?: string[];
+	sourceRevision?: string;
+	origin?: "manual" | "automated";
+	publicOutputAffected?: boolean;
+	reason?: string;
+}
+
+async function writeEventAudit(env: Pick<Env, "BEACH_DATA">, actor: string, authenticationMethod: string, action: string, targetId: string, changes: unknown, now: Date, context: EventAuditContext): Promise<void> {
+	const record = {
+		schemaVersion: 1,
+		id: crypto.randomUUID(),
+		timestamp: now.toISOString(),
+		actor: actor.slice(0, 200),
+		authenticationMethod,
+		action,
+		targetId,
+		changes,
+		previousState: context.previousState ?? null,
+		newState: context.newState ?? null,
+		changedFields: context.changedFields ?? [],
+		sourceRevision: context.sourceRevision ?? null,
+		origin: context.origin ?? "manual",
+		publicOutputAffected: context.publicOutputAffected ?? false,
+		...(context.reason ? { reason: context.reason } : {}),
+	};
 	await env.BEACH_DATA.put(`${AUDIT_PREFIX}${record.timestamp}:${record.id}`, JSON.stringify(record));
+}
+
+export async function audit(env: Pick<Env, "BEACH_DATA">, identity: AdminIdentity, action: string, targetId: string, changes: unknown, now = new Date(), context: EventAuditContext = {}): Promise<void> {
+	await writeEventAudit(env, identity.subject, identity.method, action, targetId, changes, now, { ...context, origin: context.origin ?? "manual" });
+}
+
+export async function auditAutomated(env: Pick<Env, "BEACH_DATA">, trigger: "scheduled" | "admin", action: string, targetId: string, changes: unknown, now = new Date(), context: EventAuditContext = {}): Promise<void> {
+	await writeEventAudit(env, "system-beach-events", trigger, action, targetId, changes, now, { ...context, origin: "automated" });
 }

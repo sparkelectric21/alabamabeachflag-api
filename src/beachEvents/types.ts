@@ -1,11 +1,14 @@
 export const EVENT_TYPES = ["festival", "raceOrSport", "beachCleanup", "wildlife", "conservation", "educational", "community", "fireworksOrHoliday", "accessOrParkingImpact", "other"] as const;
 export const IMPACT_LEVELS = ["informational", "noticeable", "high", "major"] as const;
 export const EVENT_STATUSES = ["draft", "discovered", "pendingReview", "approved", "scheduled", "published", "disregarded", "cancelled", "expired", "hidden"] as const;
+export const BEACH_EVENT_REFRESH_STATUS_KEY = "beach-events:v1:refresh-status";
 
 export type BeachEventType = typeof EVENT_TYPES[number];
 export type BeachEventImpact = typeof IMPACT_LEVELS[number];
 export type BeachEventStatus = typeof EVENT_STATUSES[number];
-export type MatchMethod = "exactVenue" | "exactAddress" | "sourceAlias" | "adminOverride";
+export type MatchMethod = "exactVenue" | "exactAddress" | "sourceAlias" | "adminOverride" | "ambiguousSourceChange";
+export type SourceEventStatus = "confirmed" | "tentative" | "cancelled" | "postponed";
+export type EventAttentionFlag = "materialSourceChange" | "sourceCancelled" | "sourcePostponed" | "sourceMissing" | "sourceRemoved" | "sourceRestored" | "ambiguousMatch" | "possibleDuplicate" | "normalizationWarning";
 
 export interface SourceFacts {
 	providerId: string;
@@ -28,6 +31,21 @@ export interface SourceFacts {
 	sourceNewsletterMonth?: string;
 	contactInformation?: string;
 	endTimeUnavailable?: boolean;
+	sourceStatus?: SourceEventStatus;
+	recurrenceId?: string;
+	sequence?: number;
+	lastModified?: string;
+}
+
+export interface SourceChange {
+	detectedAt: string;
+	previousRevision: string;
+	currentRevision: string;
+	materialFields: string[];
+	cosmeticFields: string[];
+	previousStatus: BeachEventStatus;
+	previous: SourceFacts;
+	current: SourceFacts | null;
 }
 
 export interface BeachEvent {
@@ -67,12 +85,56 @@ export interface BeachEvent {
 	sourceNewsletterMonth?: string;
 	endTimeUnavailable?: boolean;
 	matchMethod: MatchMethod;
-	matchConfidence: "exact" | "admin";
+	matchConfidence: "exact" | "admin" | "ambiguous";
 	matchRuleId?: string;
 	matchExplanation?: string;
 	internalNotes?: string;
 	sourceFacts: SourceFacts;
+	sourceRevision: string;
+	reviewedSourceRevision?: string;
+	lastSeenAt: string;
+	sourceMissingSince?: string;
+	sourceMissingCount?: number;
+	sourceRemovedAt?: string;
+	sourceChange?: SourceChange;
+	attentionFlags?: EventAttentionFlag[];
+	possibleDuplicateOf?: string;
+	manualOverrideFields?: string[];
 	createdAt: string;
+	updatedAt: string;
+}
+
+export interface PublicBeachEvent {
+	id: string;
+	beachId: string;
+	title: string;
+	venue: string;
+	address?: string;
+	startAt: string;
+	endAt: string;
+	displayFrom?: string;
+	allDay: boolean;
+	recurring: boolean;
+	eventType: BeachEventType;
+	impactLevel: BeachEventImpact;
+	bannerTitle: string;
+	bannerMessage: string;
+	parkingImpact: boolean;
+	trafficImpact: boolean;
+	accessImpact: boolean;
+	showCompareNearbyBeaches: boolean;
+	sourceName: string;
+	summary?: string;
+	eventDescription?: string;
+	fullDescription?: string;
+	officialEventURL?: string;
+	registrationURL?: string;
+	officialEventsPageURL?: string;
+	organizerWebsiteURL?: string;
+	sourceNote?: string;
+	contactInformation?: string;
+	sourceNewsletterMonth?: string;
+	endTimeUnavailable?: boolean;
 	updatedAt: string;
 }
 
@@ -84,7 +146,7 @@ export interface BeachEventsSnapshot {
 	lastSuccessfulRefresh: string;
 	staleUntil: string;
 	attribution: Array<{ providerId: string; sourceName: string; sourceURL: string }>;
-	beaches: Record<string, BeachEvent[]>;
+	beaches: Record<string, PublicBeachEvent[]>;
 }
 
 export interface DecisionRule {
@@ -116,6 +178,7 @@ export interface ExcludedEventCandidate {
 	reasonDetail: string;
 	suggestedBeachId?: string;
 	matchConfidence: "none" | "possible";
+	possibleDuplicateOf?: string;
 	ruleId: string;
 	decision: "automatic" | "admin";
 	sourceFacts: SourceFacts;
@@ -133,6 +196,13 @@ export interface BeachEventProviderRefresh {
 	published: number;
 	ruleSuppressed: number;
 	unsupportedOrAmbiguous: number;
+	newEvents?: number;
+	changed?: number;
+	unchanged?: number;
+	possibleDuplicates?: number;
+	warnings?: number;
+	missingFromSource?: number;
+	restored?: number;
 	freshness: "fresh" | "stale" | "never";
 	lastAttempt: string;
 	lastSuccess?: string;
@@ -161,7 +231,15 @@ export interface BeachEventRefreshStatus {
 		published: number;
 		ruleSuppressed: number;
 		unsupportedOrAmbiguous: number;
+		newEvents?: number;
+		changed?: number;
+		unchanged?: number;
+		possibleDuplicates?: number;
+		warnings?: number;
+		missingFromSource?: number;
+		restored?: number;
 	};
+	publicRevisionChanged?: boolean;
 	snapshotGeneratedAt?: string;
 	staleUntil?: string;
 }

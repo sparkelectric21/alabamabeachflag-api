@@ -12,7 +12,8 @@ export const beachReferences = beaches.map((beach) => {
 		beach.supports.beachFlags === "unavailable" ? "No official beach-specific flag source is currently available." : null,
 		beach.tide?.stationType === "subordinate" ? "Tide predictions use a subordinate NOAA station." : null,
 		beach.vibrioConditions.eligible ? beach.vibrioConditions.limitation : beach.vibrioConditions.reason,
-		beach.id.startsWith("dauphin-island") ? "West End Beach is not represented by a current app/backend beach ID and must not be mapped here." : null,
+		beach.id === "dauphin-island-public-beach" ? "West End Beach events use this existing Dauphin Island app destination while retaining West End Beach as the venue." : null,
+		beach.id === "dauphin-island-east-end" ? "West End Beach events map to the existing Dauphin Island public-beach destination, not East End." : null,
 	].filter((value): value is string => Boolean(value));
 	return {
 		id: beach.id,

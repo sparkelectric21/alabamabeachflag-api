@@ -1,16 +1,21 @@
 import type { SourceFacts } from "./types";
-import { normalizeDescription, sanitizeEventURL } from "./normalize";
+import { decodeHTMLEntities, normalizeDescription, sanitizeEventURL } from "./normalize";
 
 function unfold(input: string): string[] {
-	return input.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "").split(/\r?\n/);
+	return input.replace(/^\uFEFF/, "").replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "").split(/\r?\n/);
 }
 
 const unescape = (value: string) => value.replace(/\\n/gi, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\");
 
-function centralDate(parts: { y: number; m: number; d: number; hh: number; mm: number; ss: number }): Date {
+function zonedDate(parts: { y: number; m: number; d: number; hh: number; mm: number; ss: number }, timeZone = "America/Chicago"): Date {
 	const target = Date.UTC(parts.y, parts.m - 1, parts.d, parts.hh, parts.mm, parts.ss);
 	let guess = target;
-	const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+	let formatter: Intl.DateTimeFormat;
+	try {
+		formatter = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+	} catch {
+		formatter = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+	}
 	for (let attempt = 0; attempt < 3; attempt++) {
 		const values = Object.fromEntries(formatter.formatToParts(new Date(guess)).filter((item) => item.type !== "literal").map((item) => [item.type, Number(item.value)]));
 		const represented = Date.UTC(values.year, values.month - 1, values.day, values.hour, values.minute, values.second);
@@ -26,48 +31,126 @@ function parseDate(value: string, parameters: string, defaultDurationMs: number)
 	const match = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?)?(Z)?$/);
 	if (!match) return null;
 	const [, y, m, d, hh = "00", mm = "00", ss = "00", z] = match;
+	const numeric = { y: Number(y), m: Number(m), d: Number(d), hh: Number(hh), mm: Number(mm), ss: Number(ss) };
+	const dateOnly = new Date(Date.UTC(numeric.y, numeric.m - 1, numeric.d));
+	if (dateOnly.getUTCFullYear() !== numeric.y || dateOnly.getUTCMonth() + 1 !== numeric.m || dateOnly.getUTCDate() !== numeric.d || numeric.hh > 23 || numeric.mm > 59 || numeric.ss > 59) return null;
+	const timeZone = parameters.match(/(?:^|;)TZID=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean) ?? "America/Chicago";
+	const parts = numeric;
 	const provisional = z
 		? new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss)))
-		: centralDate({ y: Number(y), m: Number(m), d: Number(d), hh: Number(hh), mm: Number(mm), ss: Number(ss) });
-	return { date: provisional, allDay, fallbackEnd: new Date(provisional.getTime() + (allDay ? 24 * 60 * 60 * 1000 : defaultDurationMs)) };
+		: zonedDate(parts, timeZone);
+	const tomorrow = new Date(Date.UTC(parts.y, parts.m - 1, parts.d + 1));
+	const fallbackEnd = allDay
+		? zonedDate({ y: tomorrow.getUTCFullYear(), m: tomorrow.getUTCMonth() + 1, d: tomorrow.getUTCDate(), hh: 0, mm: 0, ss: 0 }, timeZone)
+		: new Date(provisional.getTime() + defaultDurationMs);
+	return { date: provisional, allDay, fallbackEnd };
+}
+
+function cleanField(value: string): string {
+	const decoded = decodeHTMLEntities(unescape(value));
+	return (normalizeDescription(decoded).fullDescription ?? decoded).replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function location(value: string): { venue: string; address?: string } {
+	const decoded = decodeHTMLEntities(unescape(value));
+	const normalized = normalizeDescription(decoded).fullDescription ?? decoded;
+	const lines = normalized.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+	if (lines.length > 1) return { venue: lines[0], address: lines.slice(1).join(", ") };
+	const single = lines[0] ?? "";
+	const embeddedAddress = single.match(/^(.+?),\s*(\d{1,6}\s+.+)$/);
+	if (embeddedAddress) return { venue: embeddedAddress[1].trim(), address: embeddedAddress[2].trim() };
+	return /^\d{1,6}\s+\S/.test(single) ? { venue: single, address: single } : { venue: single };
+}
+
+function parsedSourceStatus(status: string | undefined, title: string, calendarMethod: string | undefined): SourceFacts["sourceStatus"] {
+	if (status?.toUpperCase() === "CANCELLED" || calendarMethod?.toUpperCase() === "CANCEL" || /^\s*(?:\[?cancel(?:led|ed)\]?|cancelled\s*:)/i.test(title)) return "cancelled";
+	if (/^\s*(?:\[?postponed\]?|postponed\s*:|rescheduled\s*:)/i.test(title)) return "postponed";
+	if (status?.toUpperCase() === "TENTATIVE") return "tentative";
+	return "confirmed";
 }
 
 export function parseICalendar(input: string, provider: { id: string; name: string; feedURL: string }): SourceFacts[] {
 	const events: SourceFacts[] = [];
 	let fields: Record<string, { value: string; params: string }> | null = null;
+	let calendarMethod: string | undefined;
+	let calendarStarted = false, calendarEnded = false;
 	for (const line of unfold(input)) {
-		if (line === "BEGIN:VEVENT") { fields = {}; continue; }
-		if (line === "END:VEVENT" && fields) {
+		const upper = line.toUpperCase();
+		if (upper === "BEGIN:VCALENDAR") {
+			if (calendarStarted || calendarEnded || fields) throw new Error("Malformed iCalendar: invalid VCALENDAR start");
+			calendarStarted = true;
+			continue;
+		}
+		if (upper === "END:VCALENDAR") {
+			if (!calendarStarted || calendarEnded || fields) throw new Error("Malformed iCalendar: invalid VCALENDAR end");
+			calendarEnded = true;
+			continue;
+		}
+		if (upper === "BEGIN:VEVENT") {
+			if (!calendarStarted || calendarEnded || fields) throw new Error("Malformed iCalendar: invalid VEVENT start");
+			fields = {};
+			continue;
+		}
+		if (upper === "END:VEVENT") {
+			if (!fields) throw new Error("Malformed iCalendar: unmatched END:VEVENT");
 			const start = fields.DTSTART && parseDate(fields.DTSTART.value, fields.DTSTART.params, 60 * 60 * 1000);
 			const end = fields.DTEND && parseDate(fields.DTEND.value, fields.DTEND.params, 60 * 60 * 1000);
-			if (start && fields.SUMMARY?.value && fields.UID?.value) {
+			if (!start || !fields.SUMMARY?.value || !fields.UID?.value) throw new Error("Malformed iCalendar: VEVENT requires UID, SUMMARY, and valid DTSTART");
+			if (fields.DTEND && !end) throw new Error("Malformed iCalendar: VEVENT has invalid DTEND");
+			{
 				const description = fields.DESCRIPTION?.value ? unescape(fields.DESCRIPTION.value) : undefined;
 				const extracted = normalizeDescription(description, [], provider.feedURL).extractedURLs;
-				const registrationURL = extracted.find((url) => /register|registration|ticket|reserve|booking/i.test(url));
+				const propertyURL = fields.URL?.value ? sanitizeEventURL(unescape(fields.URL.value), provider.feedURL) : undefined;
+				const isRegistrationURL = (url: string | undefined) => Boolean(url && /register|registration|ticket|reserve|booking|signup|sign-up/i.test(url));
+				const registrationURL = isRegistrationURL(propertyURL) ? propertyURL : extracted.find(isRegistrationURL);
+				const title = cleanField(fields.SUMMARY.value);
+				const parsedLocation = location(fields.LOCATION?.value ?? "");
+				const recurrence = fields["RECURRENCE-ID"] && parseDate(fields["RECURRENCE-ID"].value, fields["RECURRENCE-ID"].params, 0);
+				const uid = unescape(fields.UID.value).trim();
+				if (!title || !uid) throw new Error("Malformed iCalendar: VEVENT has an empty UID or SUMMARY");
+				if (fields["RECURRENCE-ID"] && !recurrence) throw new Error("Malformed iCalendar: VEVENT has invalid RECURRENCE-ID");
+				const eventEnd = end?.date ?? start.fallbackEnd;
+				if (eventEnd.getTime() <= start.date.getTime()) throw new Error("Malformed iCalendar: VEVENT end must follow start");
 				events.push({
 					providerId: provider.id,
-					externalId: unescape(fields.UID.value),
-					title: unescape(fields.SUMMARY.value),
-					venue: unescape(fields.LOCATION?.value ?? ""),
+					externalId: recurrence ? `${uid}::${recurrence.date.toISOString()}` : uid,
+					title,
+					venue: parsedLocation.venue,
+					...(parsedLocation.address ? { address: parsedLocation.address } : {}),
 					startAt: start.date.toISOString(),
-					endAt: (end?.date ?? start.fallbackEnd).toISOString(),
+					endAt: eventEnd.toISOString(),
 					allDay: start.allDay,
-					recurring: Boolean(fields.RRULE),
+					recurring: Boolean(fields.RRULE || recurrence),
 					sourceName: provider.name,
 					sourceURL: provider.feedURL,
-					officialURL: fields.URL?.value ? sanitizeEventURL(unescape(fields.URL.value), provider.feedURL) : extracted.find((url) => url !== registrationURL),
+					officialURL: propertyURL && propertyURL !== registrationURL ? propertyURL : extracted.find((url) => url !== registrationURL),
 					...(registrationURL ? { registrationURL } : {}),
 					description,
+					...(!fields.DTEND && !start.allDay ? { endTimeUnavailable: true } : {}),
+					sourceStatus: parsedSourceStatus(fields.STATUS?.value, title, calendarMethod),
+					...(recurrence ? { recurrenceId: recurrence.date.toISOString() } : {}),
+					...(fields.SEQUENCE && Number.isFinite(Number(fields.SEQUENCE.value)) ? { sequence: Number(fields.SEQUENCE.value) } : {}),
+					...(fields["LAST-MODIFIED"] ? { lastModified: parseDate(fields["LAST-MODIFIED"].value, fields["LAST-MODIFIED"].params, 0)?.date.toISOString() ?? unescape(fields["LAST-MODIFIED"].value) } : {}),
 				});
 			}
 			fields = null; continue;
 		}
-		if (!fields) continue;
+		if (calendarEnded && line.trim()) throw new Error("Malformed iCalendar: content follows VCALENDAR end");
 		const colon = line.indexOf(":");
 		if (colon < 0) continue;
 		const lhs = line.slice(0, colon), value = line.slice(colon + 1);
 		const [name, ...params] = lhs.split(";");
+		if (!fields) { if (name.toUpperCase() === "METHOD") calendarMethod = value; continue; }
 		fields[name.toUpperCase()] = { value, params: params.join(";") };
 	}
-	return events;
+	if (!calendarStarted || !calendarEnded || fields) throw new Error("Malformed or incomplete iCalendar response");
+	const exact = new Map<string, SourceFacts>();
+	for (const event of events) {
+		const key = `${event.externalId}|${event.startAt}|${event.endAt}|${event.title}`;
+		if (!exact.has(key)) exact.set(key, event);
+	}
+	const deduped = [...exact.values()];
+	const counts = new Map<string, number>();
+	for (const event of deduped) counts.set(event.externalId, (counts.get(event.externalId) ?? 0) + 1);
+	return deduped.map((event) => counts.get(event.externalId)! > 1 ? { ...event, externalId: `${event.externalId}::${event.startAt}` } : event);
 }
