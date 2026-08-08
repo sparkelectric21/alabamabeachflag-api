@@ -40,8 +40,11 @@ quality/freshness, source identity, metadata, and ingestion version. Indexed sou
 beach, and time columns support diagnostics and later research without giant snapshots.
 
 The logical key identifies source + station + beach + type + provider observation time.
-The revision hash identifies the received value, units, quality, freshness, and audit
-metadata. Re-fetching identical content is ignored; corrected content at the same
+The revision hash identifies the received value, units, quality flag, and explicitly
+stable source/provenance metadata. Revision-significant metadata is separated from stored audit
+metadata: volatile locally derived values such as observation age and freshness state
+do not create revisions, while stable source qualifiers such as datum, curve method,
+advisory context, and purple-flag state do. Re-fetching identical content is ignored; corrected content at the same
 logical observation time receives the next revision number. Rows are never updated or
 replaced. Malformed values or timestamps are rejected.
 

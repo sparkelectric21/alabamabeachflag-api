@@ -19,6 +19,13 @@
 			"id": "60f732dff736438bbb53edb2815059bb"
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "HISTORICAL_DATA",
+			"database_name": "alabama-beach-flag-historical-staging",
+			"database_id": "701101d9-f450-4bc5-b1ac-cfbf18854fee"
+		}
+	],
 	"send_email": [
 		{
 			"name": "VERIFICATION_ALERT_EMAIL",

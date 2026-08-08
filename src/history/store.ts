@@ -37,8 +37,15 @@ export async function observationIdentity(input: HistoricalObservationInput): Pr
 		unit: input.unit ?? null,
 		normalizedValueNumeric: input.normalizedValueNumeric ?? null,
 		qualityFlag: input.qualityFlag ?? null,
-		freshnessState: input.freshnessState ?? null,
-		providerMetadata: input.providerMetadata ?? {},
+		// Retain the legacy serialized field shape for compatible hashes, but never
+		// hash the time-derived current/stale classification itself.
+		freshnessState: null,
+		// Freshness and general provider metadata may include values derived at fetch
+		// time (for example ageMinutes). Only explicitly stable source/provenance
+		// metadata participates in revision identity.
+		// Keep the serialized field name stable so already-correct hashes for records
+		// whose full metadata was stable (for example tide predictions) still match.
+		providerMetadata: input.revisionMetadata ?? {},
 	}));
 	return { logicalKey, revisionHash };
 }

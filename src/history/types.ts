@@ -17,6 +17,8 @@ export interface HistoricalObservationInput {
 	freshnessState?: string;
 	sourceIdentifier?: string;
 	providerMetadata?: Record<string, unknown>;
+	/** Stable source/provenance fields that represent meaningful content changes. */
+	revisionMetadata?: Record<string, unknown>;
 }
 
 export interface HistoricalIngestionResult {

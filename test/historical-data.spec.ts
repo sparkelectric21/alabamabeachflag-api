@@ -49,16 +49,56 @@ describe("historical data foundation", () => {
 		expect(revision.revisionHash).not.toBe(first.revisionHash);
 	});
 
+	it("suppresses changes to fetch-derived age and freshness metadata", async () => {
+		const base = {
+			observationType: "water_temperature", recordKind: "observation" as const,
+			provider: "ndbc", stationId: "42357", observedAt: "2026-08-08T17:55:00Z",
+			fetchedAt: "2026-08-08T19:30:00Z", valueNumeric: 87, unit: "F",
+			freshnessState: "current", providerMetadata: { ageMinutes: 95, staleAfterMinutes: 120 },
+			revisionMetadata: {},
+		};
+		const first = await observationIdentity(base);
+		const later = await observationIdentity({
+			...base,
+			fetchedAt: "2026-08-08T19:45:00Z",
+			freshnessState: "stale",
+			providerMetadata: { ageMinutes: 110, staleAfterMinutes: 120 },
+		});
+		expect(later).toEqual(first);
+	});
+
+	it("creates a revision for explicitly stable source metadata changes", async () => {
+		const base = {
+			observationType: "tide_high", recordKind: "prediction" as const,
+			provider: "noaa_coops", stationId: "8730667", observedAt: "2026-08-08T10:07:00Z",
+			fetchedAt: "2026-08-08T09:00:00Z", valueNumeric: 1.151, unit: "feet",
+			providerMetadata: { datum: "MLLW", curveMethod: "noaaInterval", ageMinutes: 1 },
+			revisionMetadata: { datum: "MLLW", curveMethod: "noaaInterval" },
+		};
+		const first = await observationIdentity(base);
+		const corrected = await observationIdentity({
+			...base,
+			providerMetadata: { datum: "MLLW", curveMethod: "fittedFromHighLow", ageMinutes: 2 },
+			revisionMetadata: { datum: "MLLW", curveMethod: "fittedFromHighLow" },
+		});
+		expect(corrected.logicalKey).toBe(first.logicalKey);
+		expect(corrected.revisionHash).not.toBe(first.revisionHash);
+	});
+
 	it("appends once, suppresses exact duplicates, and retains source corrections", async () => {
 		const db = new MemoryD1();
 		const record = {
 			observationType: "water_temperature", recordKind: "observation" as const,
 			provider: "ndbc", stationId: "PPTA1", observedAt: "2026-08-08T10:00:00Z",
 			fetchedAt: "2026-08-08T10:15:00Z", valueNumeric: 82, unit: "F",
+			freshnessState: "current", providerMetadata: { ageMinutes: 15 }, revisionMetadata: {},
 		};
-		expect(await appendHistoricalObservations(db as unknown as D1Database, "beach-conditions", [record]))
+		expect(await appendHistoricalObservations(db as unknown as D1Database, "beach-conditions", [record], new Date("2026-08-08T10:15:01Z")))
 			.toMatchObject({ inserted: 1, duplicates: 0 });
-		expect(await appendHistoricalObservations(db as unknown as D1Database, "beach-conditions", [{ ...record, fetchedAt: "2026-08-08T10:30:00Z" }]))
+		expect(await appendHistoricalObservations(db as unknown as D1Database, "beach-conditions", [{
+			...record, fetchedAt: "2026-08-08T10:30:00Z", freshnessState: "stale",
+			providerMetadata: { ageMinutes: 30 },
+		}], new Date("2026-08-08T10:30:01Z")))
 			.toMatchObject({ inserted: 0, duplicates: 1 });
 		expect(await appendHistoricalObservations(db as unknown as D1Database, "beach-conditions", [{ ...record, valueNumeric: 83 }]))
 			.toMatchObject({ inserted: 1, duplicates: 0 });

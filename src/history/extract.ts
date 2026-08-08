@@ -24,6 +24,7 @@ export function extractHistoricalObservations(job: RefreshJob, payload: Payload)
 					ageMinutes: water.ageMinutes, staleAfterMinutes: water.staleAfterMinutes,
 					unavailableAfterMinutes: water.unavailableAfterMinutes,
 				},
+				revisionMetadata: {},
 			}, fetchedAt));
 
 			const tide = beach.tide;
@@ -32,6 +33,7 @@ export function extractHistoricalObservations(job: RefreshJob, payload: Payload)
 				provider: "noaa_coops", stationId: tide.stationId, observedAt: event.time,
 				valueNumeric: event.height, unit: tide.units, sourceIdentifier: tide.stationUrl,
 				providerMetadata: { datum: tide.datum, stationType: tide.stationType, curveMethod: tide.curveMethod },
+				revisionMetadata: { datum: tide.datum, stationType: tide.stationType, curveMethod: tide.curveMethod },
 			}, tide.fetchedAt ?? fetchedAt));
 		}
 	}
@@ -45,12 +47,14 @@ export function extractHistoricalObservations(job: RefreshJob, payload: Payload)
 				provider: "adem", stationId: sample.beachId, observedAt, valueNumeric: sample.enterococcus,
 				unit: "CFU/100mL", qualityFlag: sample.status, sourceIdentifier: sample.reportUrl,
 				providerMetadata: { advisory: sample.advisory, timestampPrecision: "date" },
+				revisionMetadata: { advisory: sample.advisory, timestampPrecision: "date" },
 			}, fetchedAt));
 			observations.push(value({
 				observationType: "water_quality_advisory", recordKind: "state", beachId: sample.beachId,
 				provider: "adem", stationId: sample.beachId, observedAt,
 				valueText: sample.advisory ? "active" : "inactive", qualityFlag: sample.status,
 				sourceIdentifier: sample.reportUrl, providerMetadata: { timestampPrecision: "date" },
+				revisionMetadata: { timestampPrecision: "date" },
 			}, fetchedAt));
 		}
 	}
@@ -69,6 +73,7 @@ export function extractHistoricalObservations(job: RefreshJob, payload: Payload)
 				provider: report.sourceName, observedAt: fetchedTime.toISOString(),
 				valueText: report.primaryFlag, qualityFlag: report.sourceType,
 				providerMetadata: { hasPurpleFlag: report.hasPurpleFlag, timestampMeaning: "fetched_at_when_source_has_no_effective_time" },
+				revisionMetadata: { hasPurpleFlag: report.hasPurpleFlag },
 			}, fetchedAt));
 		}
 	}
