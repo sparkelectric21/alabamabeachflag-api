@@ -51,14 +51,14 @@ function request(job: RefreshJob, key: string, trigger: "admin" | "scheduled" = 
 	return { job, trigger, idempotencyKey: key };
 }
 
-function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamespace>) {
+function harness(runners?: Partial<RefreshRunners>, beachData?: Partial<KVNamespace>, historicalData?: D1Database) {
 	const storage = new MemoryStorage();
 	const blockConcurrencyWhile = vi.fn(async <T>(callback: () => Promise<T>) => callback());
 	const ctx = { storage, blockConcurrencyWhile } as unknown as DurableObjectState;
 	const put = vi.fn().mockResolvedValue(undefined);
 	const get = vi.fn().mockResolvedValue(null);
 	const getWithMetadata = vi.fn().mockResolvedValue({ value: new ArrayBuffer(1), metadata: { revision: "new" } });
-	const env = { BEACH_DATA: { put, get, getWithMetadata, ...beachData } } as unknown as Env;
+	const env = { BEACH_DATA: { put, get, getWithMetadata, ...beachData }, HISTORICAL_DATA: historicalData } as unknown as Env;
 	const defaults = {
 		"beach-flags": vi.fn().mockResolvedValue(payload()),
 		"beach-conditions": vi.fn().mockResolvedValue(payload()),
@@ -177,6 +177,19 @@ describe("refresh coordinator", () => {
 		const h = harness({ "water-quality": vi.fn().mockRejectedValue(new Error("provider detail\ninjected")) });
 		expect((await h.core.run(request("water-quality", "admin-request-001"))).outcome).toBe("failed");
 		expect(h.put).not.toHaveBeenCalled();
+	});
+
+	it("keeps a successful live publication successful when historical storage fails", async () => {
+		const failingDb = {
+			prepare: () => ({ bind: () => ({ run: async () => { throw new Error("D1 unavailable"); } }) }),
+		} as unknown as D1Database;
+		const h = harness({ "water-quality": vi.fn().mockResolvedValue({
+			generatedAt: "2026-08-08T12:00:00Z", count: 1,
+			waterQuality: [{ beachId: "cotton-bayou", sampleDate: "2026-08-08", enterococcus: 12,
+				advisory: false, status: "excellent", reportUrl: "https://example.test" }],
+		}) }, undefined, failingDb);
+		expect((await h.core.run(request("water-quality", "history-failure", "scheduled"))).outcome).toBe("completed");
+		expect(writesFor(h, "water-quality")).toHaveLength(1);
 	});
 
 	it("rechecks controls at commit so a pre-disable refresh cannot publish Gulf Shores", async () => {

@@ -11,6 +11,8 @@ import { processProviderHealthObservations, processQualityGateRejection } from "
 import type { ProviderHealthObservation } from "../../providerHealth/types";
 import { enforceBeachFlagPayload } from "../../routes/beachflags";
 import { evaluateVibrioAwarenessControl, readOperationalControl } from "../../operationalControl/store";
+import { extractHistoricalObservations } from "../../history/extract";
+import { appendHistoricalObservations } from "../../history/store";
 
 interface ActiveRun {
 	generation: number;
@@ -261,6 +263,24 @@ export class RefreshCoordinatorCore {
 			if (!committed) {
 				logInfo("Refresh Coordinator", "Fenced stale refresh", { job: request.job, generation });
 				return { outcome: "fenced", generation };
+			}
+
+			// History is strictly additive. It runs only after the live KV publication has
+			// committed, and every storage error is isolated from the refresh outcome.
+			if (this.env.HISTORICAL_DATA && request.job !== "rip-current-outlook") {
+				try {
+					await appendHistoricalObservations(
+						this.env.HISTORICAL_DATA,
+						request.job,
+						extractHistoricalObservations(request.job, payload),
+						new Date(this.now()),
+					);
+				} catch (error) {
+					logError("Historical Data", "Failed to persist observations", {
+						job: request.job,
+						error: error instanceof Error ? error.message : "unknown_error",
+					});
+				}
 			}
 
 			return {

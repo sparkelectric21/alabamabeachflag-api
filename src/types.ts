@@ -1,5 +1,7 @@
 export interface Env {
 	BEACH_DATA: KVNamespace;
+	/** Optional until the historical D1 database is provisioned and migrated. */
+	HISTORICAL_DATA?: D1Database;
 	REFRESH_COORDINATOR: DurableObjectNamespace;
 	VERIFICATION_COORDINATOR: DurableObjectNamespace;
 	REFRESH_SECRET: string;
