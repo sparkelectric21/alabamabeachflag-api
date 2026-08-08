@@ -5,6 +5,10 @@ import type { TideDirection, TideEvent, TidePrediction, TidePredictionPoint } fr
 import { beachDate, noaaDate } from "./time";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// The immediate segment plus two adjacent 15-minute segments resolves short
+// NOAA rounding plateaus without inferring direction from distant samples.
+const MAX_DIRECTION_SEGMENTS = 3;
+const DIRECTION_EVENT_WINDOW_MS = MAX_DIRECTION_SEGMENTS * 15 * 60_000;
 const cache = new Map<string, { expiresAt: number; value: TidePrediction }>();
 
 export function fitTideCurveFromEvents(events: TideEvent[], intervalMinutes = 15): TidePredictionPoint[] {
@@ -29,14 +33,38 @@ export function fitTideCurveFromEvents(events: TideEvent[], intervalMinutes = 15
 	return points;
 }
 
-export function deriveTideDirection(points: TidePredictionPoint[], now: Date): TideDirection | undefined {
+export function deriveTideDirection(points: TidePredictionPoint[], now: Date, events: TideEvent[] = []): TideDirection | undefined {
 	if (points.length < 2) return undefined;
 	const after = points.findIndex((point) => Date.parse(point.time) >= now.getTime());
 	const exact = after >= 0 && Date.parse(points[after].time) === now.getTime();
 	const left = exact && after < points.length - 1 ? after : after <= 0 ? 0 : after === -1 ? points.length - 2 : after - 1;
-	const right = left + 1;
-	const delta = points[right].height - points[left].height;
-	return delta > 0 ? "rising" : delta < 0 ? "falling" : undefined;
+	const predictionDate = beachDate(now);
+	const directionAt = (segment: number): TideDirection | undefined => {
+		if (segment < 0 || segment + 1 >= points.length) return undefined;
+		if (beachDate(new Date(points[segment].time)) !== predictionDate ||
+			beachDate(new Date(points[segment + 1].time)) !== predictionDate) return undefined;
+		const delta = points[segment + 1].height - points[segment].height;
+		return delta > 0 ? "rising" : delta < 0 ? "falling" : undefined;
+	};
+	const immediate = directionAt(left);
+	if (immediate) return immediate;
+
+	const sameDayEvents = events.filter((event) => beachDate(new Date(event.time)) === predictionDate);
+	const previousEvent = sameDayEvents.findLast((event) => Date.parse(event.time) <= now.getTime());
+	const nextEvent = sameDayEvents.find((event) => Date.parse(event.time) > now.getTime());
+	const afterRecentExtremum = previousEvent && now.getTime() - Date.parse(previousEvent.time) <= DIRECTION_EVENT_WINDOW_MS;
+	const beforeNearbyExtremum = nextEvent && Date.parse(nextEvent.time) - now.getTime() <= DIRECTION_EVENT_WINDOW_MS;
+	const offsets = Array.from({ length: MAX_DIRECTION_SEGMENTS - 1 }, (_, index) => index + 1);
+	const candidates = afterRecentExtremum
+		? offsets.flatMap((offset) => [left + offset, left - offset])
+		: beforeNearbyExtremum
+			? offsets.flatMap((offset) => [left - offset, left + offset])
+			: offsets.flatMap((offset) => [left + offset, left - offset]);
+	for (const segment of candidates) {
+		const direction = directionAt(segment);
+		if (direction) return direction;
+	}
+	return undefined;
 }
 
 export function selectNextTideEvent(events: TideEvent[], now: Date): TideEvent | undefined {
@@ -51,7 +79,7 @@ export async function fetchTidePrediction(
 	const key = `${configuration.stationId}:${predictionDate}`;
 	const cached = cache.get(key);
 	if (cached && cached.expiresAt > now.getTime()) {
-		return { ...cached.value, direction: deriveTideDirection(cached.value.points, now), nextEvent: selectNextTideEvent(cached.value.events, now) };
+		return { ...cached.value, direction: deriveTideDirection(cached.value.points, now, cached.value.events), nextEvent: selectNextTideEvent(cached.value.events, now) };
 	}
 
 	const date = noaaDate(now);
@@ -64,7 +92,7 @@ export async function fetchTidePrediction(
 				stationId: configuration.stationId, stationType: configuration.stationType,
 				reason: "events_request_failed", error: error instanceof Error ? error.message : String(error),
 			});
-			return { ...cached.value, direction: deriveTideDirection(cached.value.points, now), nextEvent: selectNextTideEvent(cached.value.events, now) };
+			return { ...cached.value, direction: deriveTideDirection(cached.value.points, now, cached.value.events), nextEvent: selectNextTideEvent(cached.value.events, now) };
 		}
 		throw error;
 	}
@@ -92,7 +120,7 @@ export async function fetchTidePrediction(
 	const fetchedAt = new Date();
 	const value: TidePrediction = {
 		...configuration, predictionDate, timeZone: "America/Chicago", datum: "MLLW", units: "feet",
-		points, events, curveMethod, direction: deriveTideDirection(points, now), nextEvent: selectNextTideEvent(events, now),
+		points, events, curveMethod, direction: deriveTideDirection(points, now, events), nextEvent: selectNextTideEvent(events, now),
 		fetchedAt: fetchedAt.toISOString(),
 		stationUrl: `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${configuration.stationId}`,
 	};

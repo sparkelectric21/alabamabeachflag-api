@@ -49,6 +49,66 @@ describe("tide derivation", () => {
 		expect(selectNextTideEvent(events, new Date("2026-07-18T13:00:00Z"))?.type).toBe("high");
 		expect(selectNextTideEvent(events, new Date("2026-07-18T13:00:01Z"))?.type).toBe("low");
 	});
+
+	it("resolves the August 5 Orange Beach rounded plateau as rising", () => {
+		const orangeBeachPoints = [
+			{ time: "2026-08-05T20:15:00.000Z", height: 0.014 },
+			{ time: "2026-08-05T20:30:00.000Z", height: 0.012 },
+			{ time: "2026-08-05T20:45:00.000Z", height: 0.012 },
+			{ time: "2026-08-05T21:00:00.000Z", height: 0.015 },
+		];
+		const orangeBeachEvents = [
+			{ type: "low" as const, time: "2026-08-05T20:37:00.000Z", height: 0.012 },
+		];
+
+		for (const time of ["2026-08-05T20:43:00.000Z", "2026-08-05T20:44:59.000Z", "2026-08-05T20:45:00.000Z"]) {
+			expect(deriveTideDirection(orangeBeachPoints, new Date(time), orangeBeachEvents)).toBe("rising");
+		}
+	});
+
+	it("uses official extrema to choose the correct side of a rounded plateau", () => {
+		const lowPoints = [
+			{ time: "2026-08-05T20:15:00.000Z", height: 0.014 },
+			{ time: "2026-08-05T20:30:00.000Z", height: 0.012 },
+			{ time: "2026-08-05T20:45:00.000Z", height: 0.012 },
+			{ time: "2026-08-05T21:00:00.000Z", height: 0.015 },
+		];
+		const low = [{ type: "low" as const, time: "2026-08-05T20:37:00.000Z", height: 0.012 }];
+		expect(deriveTideDirection(lowPoints, new Date("2026-08-05T20:35:00.000Z"), low)).toBe("falling");
+		expect(deriveTideDirection(lowPoints, new Date("2026-08-05T20:43:00.000Z"), low)).toBe("rising");
+
+		const highPoints = lowPoints.map((point) => ({ ...point, height: 1 - point.height }));
+		const high = [{ type: "high" as const, time: "2026-08-05T20:37:00.000Z", height: 0.988 }];
+		expect(deriveTideDirection(highPoints, new Date("2026-08-05T20:43:00.000Z"), high)).toBe("falling");
+	});
+
+	it("searches at most three nearby same-day segments for a meaningful slope", () => {
+		const base = [
+			{ time: "2026-08-05T20:15:00.000Z", height: 1 },
+			{ time: "2026-08-05T20:30:00.000Z", height: 1 },
+			{ time: "2026-08-05T20:45:00.000Z", height: 1 },
+			{ time: "2026-08-05T21:00:00.000Z", height: 1 },
+			{ time: "2026-08-05T21:15:00.000Z", height: 0.9 },
+		];
+		expect(deriveTideDirection(base, new Date("2026-08-05T20:35:00.000Z"))).toBe("falling");
+		expect(deriveTideDirection(base.map((point) => ({ ...point, height: 1 })), new Date("2026-08-05T20:35:00.000Z"))).toBeUndefined();
+		const distantSlope = [
+			...base.slice(0, -1).map((point) => ({ ...point, height: 1 })),
+			{ time: "2026-08-05T21:15:00.000Z", height: 1 },
+			{ time: "2026-08-05T21:30:00.000Z", height: 0.9 },
+		];
+		expect(deriveTideDirection(distantSlope, new Date("2026-08-05T20:35:00.000Z"))).toBeUndefined();
+	});
+
+	it("does not resolve a flat segment using a slope across the local day boundary", () => {
+		const midnightPoints = [
+			{ time: "2026-08-06T04:30:00.000Z", height: 1 },
+			{ time: "2026-08-06T04:45:00.000Z", height: 1 },
+			{ time: "2026-08-06T05:00:00.000Z", height: 1 },
+			{ time: "2026-08-06T05:15:00.000Z", height: 1.1 },
+		];
+		expect(deriveTideDirection(midnightPoints, new Date("2026-08-06T04:50:00.000Z"))).toBeUndefined();
+	});
 });
 
 describe("NOAA tide parsing and dates", () => {
