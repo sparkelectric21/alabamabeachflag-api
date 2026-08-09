@@ -47,13 +47,14 @@ export async function handleBeachEventsRequest(request: Request, env: Env, now =
 	return Response.json({ ...visible, revision, status }, { headers: responseHeaders });
 }
 
-export async function handleBeachEventsAdminGet(request: Request, env: Env): Promise<Response> {
-	const now = new Date();
+export async function handleBeachEventsAdminGet(request: Request, env: Env, now = new Date()): Promise<Response> {
 	const url = new URL(request.url);
 	const events = await listEvents(env);
 	const status = url.searchParams.get("status");
-	const filtered = status ? events.filter((event) => event.status === status) : events;
-	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 100 });
+	const archived = events.filter((event) => event.status === "completed" || event.status === "expired" || Boolean(event.archivedAt));
+	const active = events.filter((event) => event.status !== "completed" && event.status !== "expired" && !event.archivedAt);
+	const filtered = status ? active.filter((event) => event.status === status) : active;
+	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 1000 });
 	const history = (await Promise.all(auditKeys.keys.map((key) => env.BEACH_DATA.get(key.name, "json")))).filter(Boolean);
 	const exclusions = await listExcludedCandidates(env);
 	const refreshStatus = await readBeachEventRefreshStatus(env, now);
@@ -75,6 +76,7 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env): Pro
 	});
 	return respond({
 		events: filtered.sort((a, b) => a.startAt.localeCompare(b.startAt)),
+		archive: archived.sort((a, b) => String(b.archivedAt ?? b.completedAt ?? b.endAt).localeCompare(String(a.archivedAt ?? a.completedAt ?? a.endAt))),
 		rules: await listRules(env),
 		providers: BEACH_EVENT_PROVIDERS,
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
@@ -182,8 +184,10 @@ const PUBLIC_EVENT_FIELDS = new Set(["beachId", "title", "venue", "address", "st
 export async function handleBeachEventsAdminUpdate(request: Request, env: Env, identity: AdminIdentity, id: string, now = new Date()): Promise<Response> {
 	const current = await env.BEACH_DATA.get<BeachEvent>(`${EVENT_PREFIX}${id}`, "json");
 	if (!current) return respond({ error: "not_found" }, 404);
+	if (current.status === "completed" || current.status === "expired" || current.archivedAt) return respond({ error: "archived_event_read_only" }, 409);
 	let changes: Record<string, unknown>; try { changes = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
 	if (!changes || Object.keys(changes).some((key) => !EDITABLE.has(key))) return respond({ error: "invalid_changes" }, 400);
+	if (changes.status === "completed") return respond({ error: "completion_is_automatic" }, 409);
 	const acknowledgeAttention = changes.acknowledgeAttention === true;
 	delete changes.acknowledgeAttention;
 	if (changes.status === "published" && !["approved", "scheduled", "hidden", "published"].includes(current.status)) return respond({ error: "publication_requires_approval" }, 409);
@@ -236,7 +240,8 @@ export async function handleBeachEventsAdminUpdate(request: Request, env: Env, i
 export async function handleBeachEventsAdminDelete(env: Env, identity: AdminIdentity, id: string, now = new Date()): Promise<Response> {
 	const current = await env.BEACH_DATA.get<BeachEvent>(`${EVENT_PREFIX}${id}`, "json");
 	if (!current) return respond({ error: "not_found" }, 404);
-	if (current.sourceFacts.providerId !== "manual" && current.status !== "disregarded" && current.status !== "expired") return respond({ error: "delete_not_allowed" }, 409);
+	if (current.status === "completed" || current.status === "expired" || current.archivedAt) return respond({ error: "delete_not_allowed" }, 409);
+	if (current.sourceFacts.providerId !== "manual" && current.status !== "disregarded") return respond({ error: "delete_not_allowed" }, 409);
 	await env.BEACH_DATA.delete(`${EVENT_PREFIX}${id}`);
 	await audit(env, identity, "delete_event", id, { title: current.title }, now, { previousState: current.status, newState: null, changedFields: ["deleted"], sourceRevision: current.sourceRevision ?? sourceRevision(current.sourceFacts), publicOutputAffected: current.status === "published" });
 	await saveSnapshot(env, now);

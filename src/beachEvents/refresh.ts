@@ -5,7 +5,7 @@ import { readOperationalControl, evaluateBeachEventsControl } from "../operation
 import { parseICalendar } from "./ical";
 import { BEACH_EVENT_PROVIDERS } from "./providers";
 import { BEACH_EVENT_SCHEDULE_DESCRIPTION, nextBeachEventRefresh } from "./schedule";
-import { applyImportedEvents, audit, eventNeedsReview, listEvents, normalizedEvent, reconcileProviderSource, saveSnapshot, SNAPSHOT_KEY } from "./store";
+import { applyImportedEvents, archiveCompletedEvents, audit, effectiveEventEnd, eventNeedsReview, listEvents, normalizedEvent, reconcileProviderSource, saveSnapshot, SNAPSHOT_KEY } from "./store";
 import { BEACH_EVENT_REFRESH_STATUS_KEY, type BeachEventProviderRefresh, type BeachEventRefreshStatus } from "./types";
 import { fetchTownCrierFacts } from "./townCrier";
 
@@ -104,7 +104,7 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 				matched: result.matched,
 				excluded: result.excluded,
 				pendingReview: providerEvents.filter(eventNeedsReview).length,
-				published: providerEvents.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime()).length,
+				published: providerEvents.filter((event) => event.status === "published" && effectiveEventEnd(event).getTime() > now.getTime()).length,
 				ruleSuppressed: result.ruleSuppressed,
 				unsupportedOrAmbiguous: result.unsupportedOrAmbiguous,
 				newEvents: result.newEvents,
@@ -126,11 +126,12 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		}
 	}
 	await processProviderHealthObservations(env, observations, now.toISOString());
+	const archival = await archiveCompletedEvents(env, now, trigger);
 	const failures = providerResults.filter((item) => item.status === "failed");
 	const attempted = providerResults.filter((item) => item.status !== "disabled");
 	const allAttemptedProvidersFailed = attempted.length > 0 && failures.length === attempted.length;
 	// Never extend the last-known-good window when no source succeeded.
-	const snapshot = operational.state === "monitorOnly" || allAttemptedProvidersFailed ? null : await saveSnapshot(env, now, { sourceRefresh: true });
+	const snapshot = operational.state === "monitorOnly" ? null : allAttemptedProvidersFailed && !archival.archived ? null : await saveSnapshot(env, now, { sourceRefresh: !allAttemptedProvidersFailed });
 	const publicRevisionChanged = Boolean(snapshot && snapshot.revision !== priorSnapshot?.revision);
 	const events = await listEvents(env);
 	const counts = providerResults.reduce((total, provider) => ({
@@ -148,7 +149,7 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		warnings: total.warnings + (provider.warnings ?? 0),
 		missingFromSource: total.missingFromSource + (provider.missingFromSource ?? 0),
 		restored: total.restored + (provider.restored ?? 0),
-	}), { ...emptyCounts(), published: events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime()).length });
+	}), { ...emptyCounts(), published: events.filter((event) => event.status === "published" && effectiveEventEnd(event).getTime() > now.getTime()).length });
 	const status = operational.state === "monitorOnly" ? "monitorOnly" : attempted.length > 0 && failures.length === attempted.length ? "failed" : failures.length ? "warning" : "healthy";
 	const completedAt = new Date().toISOString();
 	const refresh: BeachEventRefreshStatus = {

@@ -1,6 +1,6 @@
 export const EVENT_TYPES = ["festival", "raceOrSport", "beachCleanup", "wildlife", "conservation", "educational", "community", "fireworksOrHoliday", "accessOrParkingImpact", "other"] as const;
 export const IMPACT_LEVELS = ["informational", "noticeable", "high", "major"] as const;
-export const EVENT_STATUSES = ["draft", "discovered", "pendingReview", "approved", "scheduled", "published", "disregarded", "cancelled", "expired", "hidden"] as const;
+export const EVENT_STATUSES = ["draft", "discovered", "pendingReview", "approved", "scheduled", "published", "completed", "disregarded", "cancelled", "expired", "hidden"] as const;
 export const BEACH_EVENT_REFRESH_STATUS_KEY = "beach-events:v1:refresh-status";
 
 export type BeachEventType = typeof EVENT_TYPES[number];
@@ -102,6 +102,9 @@ export interface BeachEvent {
 	manualOverrideFields?: string[];
 	createdAt: string;
 	updatedAt: string;
+	completedAt?: string;
+	archivedAt?: string;
+	priorPublicationStatus?: "published";
 }
 
 export interface PublicBeachEvent {

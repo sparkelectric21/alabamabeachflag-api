@@ -403,8 +403,42 @@ function centralDayOrdinal(value: Date): number {
 	return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
 }
 
-export function isEventVisibleNow(event: Pick<BeachEvent, "status" | "startAt" | "endAt" | "displayFrom" | "impactLevel">, now: Date): boolean {
-	if (event.status !== "published" || Date.parse(event.endAt) <= now.getTime()) return false;
+function centralDateParts(value: Date): { year: number; month: number; day: number } {
+	const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" })
+		.formatToParts(value).reduce<Record<string, number>>((result, part) => {
+			if (part.type === "year" || part.type === "month" || part.type === "day") result[part.type] = Number(part.value);
+			return result;
+		}, {});
+	return { year: parts.year, month: parts.month, day: parts.day };
+}
+
+function centralMidnightUtc(year: number, month: number, day: number): Date {
+	const target = Date.UTC(year, month - 1, day);
+	let guess = target;
+	const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const represented = Object.fromEntries(formatter.formatToParts(new Date(guess)).filter((part) => part.type !== "literal").map((part) => [part.type, Number(part.value)]));
+		const delta = target - Date.UTC(represented.year, represented.month - 1, represented.day, represented.hour, represented.minute, represented.second);
+		guess += delta;
+		if (!delta) break;
+	}
+	return new Date(guess);
+}
+
+export function effectiveEventEnd(event: Pick<BeachEvent, "startAt" | "endAt" | "allDay" | "endTimeUnavailable">): Date {
+	if (!event.endTimeUnavailable) return new Date(event.endAt);
+	const startDay = centralDateParts(new Date(event.startAt));
+	const following = new Date(Date.UTC(startDay.year, startDay.month - 1, startDay.day + 1));
+	return centralMidnightUtc(following.getUTCFullYear(), following.getUTCMonth() + 1, following.getUTCDate());
+}
+
+export function isEventCompleted(event: Pick<BeachEvent, "startAt" | "endAt" | "allDay" | "endTimeUnavailable" | "sourceFacts" | "attentionFlags">, now: Date): boolean {
+	if (event.sourceFacts?.sourceStatus === "postponed" || event.attentionFlags?.includes("sourcePostponed")) return false;
+	return effectiveEventEnd(event).getTime() <= now.getTime();
+}
+
+export function isEventVisibleNow(event: Pick<BeachEvent, "status" | "startAt" | "endAt" | "allDay" | "endTimeUnavailable" | "displayFrom" | "impactLevel">, now: Date): boolean {
+	if (event.status !== "published" || effectiveEventEnd(event).getTime() <= now.getTime()) return false;
 	if (event.displayFrom && Date.parse(event.displayFrom) <= now.getTime()) return true;
 	const today = centralDayOrdinal(now);
 	const firstDay = centralDayOrdinal(new Date(event.startAt));
@@ -450,7 +484,7 @@ export function serializePublicEvent(event: BeachEvent): PublicBeachEvent {
 
 export function buildSnapshot(events: BeachEvent[], now: Date, lastSuccessfulRefresh = now): BeachEventsSnapshot {
 	const beaches: Record<string, PublicBeachEvent[]> = {};
-	const visible = events.filter((event) => event.status === "published" && Date.parse(event.endAt) > now.getTime());
+	const visible = events.filter((event) => event.status === "published" && effectiveEventEnd(event).getTime() > now.getTime());
 	for (const event of visible) {
 		(beaches[event.beachId] ??= []).push(serializePublicEvent(event));
 	}
@@ -458,6 +492,20 @@ export function buildSnapshot(events: BeachEvent[], now: Date, lastSuccessfulRef
 	const attribution = [...new Map(visible.map((event) => [event.sourceFacts.providerId, { providerId: event.sourceFacts.providerId, sourceName: event.sourceName, sourceURL: event.officialEventURL ?? event.officialEventsPageURL ?? event.organizerWebsiteURL ?? "" }])).values()].filter((item) => item.sourceURL).sort((a, b) => a.providerId.localeCompare(b.providerId));
 	const revision = stableHash(JSON.stringify({ attribution, beaches }));
 	return { schemaVersion: 1, revision, status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: lastSuccessfulRefresh.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
+}
+
+export async function archiveCompletedEvents(env: Pick<Env, "BEACH_DATA">, now = new Date(), origin: "scheduled" | "admin" = "scheduled"): Promise<{ scanned: number; archived: number }> {
+	const events = await listEvents(env);
+	let archived = 0;
+	for (const event of events) {
+		if (event.status !== "published" || !isEventCompleted(event, now)) continue;
+		const timestamp = now.toISOString();
+		const next: BeachEvent = { ...event, status: "completed", completedAt: timestamp, archivedAt: timestamp, priorPublicationStatus: "published", updatedAt: timestamp };
+		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
+		await auditAutomated(env, origin, "complete_and_archive_event", event.id, { effectiveEndAt: effectiveEventEnd(event).toISOString(), completedAt: timestamp, archivedAt: timestamp }, now, { previousState: "published", newState: "completed", changedFields: ["status", "completedAt", "archivedAt", "priorPublicationStatus"], sourceRevision: event.sourceRevision ?? sourceRevision(event.sourceFacts), publicOutputAffected: true, reason: "effective_end_passed" });
+		archived += 1;
+	}
+	return { scanned: events.length, archived };
 }
 
 export async function saveSnapshot(env: Pick<Env, "BEACH_DATA">, now: Date, options: { sourceRefresh?: boolean } = {}): Promise<BeachEventsSnapshot> {

@@ -3,13 +3,13 @@ import { exactBeachMatch, explainBeachMatch } from "../src/beachEvents/matching"
 import { parseICalendar } from "../src/beachEvents/ical";
 import { BEACH_ACTIVITY_NOTIFICATION_STATE_KEY } from "../src/beachEvents/notifications";
 import { BEACH_EVENT_PROVIDERS } from "../src/beachEvents/providers";
-import { EVENT_PREFIX, applyImportedEvents, buildSnapshot, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
+import { EVENT_PREFIX, applyImportedEvents, archiveCompletedEvents, buildSnapshot, effectiveEventEnd, isEventCompleted, isEventVisibleNow, normalizedEvent, validateManualEvent } from "../src/beachEvents/store";
 import { readBeachEventRefreshStatus, refreshBeachEvents, REFRESH_STATUS_KEY } from "../src/beachEvents/refresh";
 import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEvents/schedule";
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
 import type { BeachEvent, BeachEventsSnapshot, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
-import { handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
+import { handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
 
 function memoryEnv() {
 	const values = new Map<string, string>();
@@ -117,6 +117,75 @@ describe("event lifecycle", () => {
 		const active = { ...base, status: "published", endAt: "2026-08-02T12:00:00Z" } as BeachEvent;
 		const expired = { ...base, id: "old", status: "published", endAt: "2026-07-27T12:00:00Z" } as BeachEvent;
 		expect(buildSnapshot([active, expired], new Date("2026-08-01T12:00:00Z")).beaches["gulf-shores-public-beach"]).toEqual([expect.objectContaining({ id: active.id, title: active.title })]);
+	});
+
+	it("uses explicit timed ends and Central end-of-day for missing end times", () => {
+		const base = normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!;
+		const timed = { ...base, status: "published", startAt: "2026-08-01T13:00:00Z", endAt: "2026-08-01T15:00:00Z" } as BeachEvent;
+		expect(isEventCompleted(timed, new Date("2026-08-01T14:59:59Z"))).toBe(false);
+		expect(isEventCompleted(timed, new Date("2026-08-01T15:00:00Z"))).toBe(true);
+		const noEnd = { ...timed, startAt: "2026-08-01T15:00:00Z", endAt: "2026-08-01T16:00:00Z", endTimeUnavailable: true };
+		expect(effectiveEventEnd(noEnd).toISOString()).toBe("2026-08-02T05:00:00.000Z");
+		expect(isEventCompleted(noEnd, new Date("2026-08-02T04:59:59Z"))).toBe(false);
+		expect(isEventCompleted(noEnd, new Date("2026-08-02T05:00:00Z"))).toBe(true);
+	});
+
+	it("keeps all-day and multi-day events active through their exclusive Central final-day boundary", () => {
+		const base = normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!;
+		const allDay = { ...base, status: "published", allDay: true, startAt: "2026-08-01T05:00:00Z", endAt: "2026-08-02T05:00:00Z" } as BeachEvent;
+		expect(isEventCompleted(allDay, new Date("2026-08-02T04:59:59Z"))).toBe(false);
+		expect(isEventCompleted(allDay, new Date("2026-08-02T05:00:00Z"))).toBe(true);
+		const multiDay = { ...allDay, endAt: "2026-08-04T05:00:00Z" };
+		expect(isEventCompleted(multiDay, new Date("2026-08-03T18:00:00Z"))).toBe(false);
+		expect(isEventCompleted(multiDay, new Date("2026-08-04T05:00:00Z"))).toBe(true);
+	});
+
+	it("handles Central daylight-saving boundaries and leaves undated postponements uncompleted", () => {
+		const base = normalizedEvent(facts(), new Date("2026-01-01T12:00:00Z"))!;
+		const spring = { ...base, endTimeUnavailable: true, startAt: "2026-03-08T07:30:00Z", endAt: "2026-03-08T08:30:00Z" };
+		const fall = { ...base, endTimeUnavailable: true, startAt: "2026-11-01T06:30:00Z", endAt: "2026-11-01T07:30:00Z" };
+		expect(effectiveEventEnd(spring).toISOString()).toBe("2026-03-09T05:00:00.000Z");
+		expect(effectiveEventEnd(fall).toISOString()).toBe("2026-11-02T06:00:00.000Z");
+		expect(isEventCompleted({ ...spring, sourceFacts: { ...base.sourceFacts, sourceStatus: "postponed" } }, new Date("2026-03-10T00:00:00Z"))).toBe(false);
+	});
+
+	it("archives a completed publication once while preserving record and history", async () => {
+		const h = memoryEnv();
+		const event = { ...normalizedEvent(facts(), new Date("2026-07-28T12:00:00Z"))!, status: "published", reviewedSourceRevision: "reviewed-revision" } as BeachEvent;
+		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify(event));
+		h.values.set("beach-events:v1:audit:2026-07-28T12:00:00.000Z:prior", JSON.stringify({ id: "prior", targetId: event.id, action: "publish_event", timestamp: "2026-07-28T12:00:00.000Z" }));
+		expect(await archiveCompletedEvents(h.env, new Date("2026-08-01T15:00:00Z"), "scheduled")).toEqual({ scanned: 1, archived: 1 });
+		expect(await archiveCompletedEvents(h.env, new Date("2026-08-02T15:00:00Z"), "scheduled")).toEqual({ scanned: 1, archived: 0 });
+		const stored = JSON.parse(h.values.get(`${EVENT_PREFIX}${event.id}`)!);
+		expect(stored).toMatchObject({ id: event.id, status: "completed", priorPublicationStatus: "published", completedAt: "2026-08-01T15:00:00.000Z", archivedAt: "2026-08-01T15:00:00.000Z", sourceFacts: event.sourceFacts, sourceRevision: event.sourceRevision, reviewedSourceRevision: "reviewed-revision" });
+		expect([...h.values.keys()].filter((key) => key.includes(":audit:")).length).toBe(2);
+		const admin = await handleBeachEventsAdminGet(new Request("https://example.com/admin/beach-events"), h.env, new Date("2026-08-02T15:00:00Z"));
+		const body = await admin.json() as { events: BeachEvent[]; archive: BeachEvent[]; audit: Array<{ targetId: string }> };
+		expect(body.events).toEqual([]);
+		expect(body.archive).toEqual([expect.objectContaining({ id: event.id, status: "completed" })]);
+		expect(body.audit.filter((record) => record.targetId === event.id)).toHaveLength(2);
+		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-02T15:00:00Z"));
+		expect(mutation.status).toBe(409);
+		expect(await mutation.json()).toEqual({ error: "archived_event_read_only" });
+	});
+
+	it("keeps a legacy expired publication unchanged, public-safe, in Archive, and read-only", async () => {
+		const h = memoryEnv();
+		const legacy = { ...normalizedEvent(facts({ externalId: "legacy-expired" }), new Date("2026-07-28T12:00:00Z"))!, status: "expired", reviewedSourceRevision: "legacy-reviewed" } as BeachEvent;
+		h.values.set(`${EVENT_PREFIX}${legacy.id}`, JSON.stringify(legacy));
+		h.values.set("beach-events:v1:audit:2026-07-28T12:00:00.000Z:legacy", JSON.stringify({ id: "legacy-audit", targetId: legacy.id, action: "expire_event", timestamp: "2026-07-28T12:00:00.000Z" }));
+		h.values.set("beach-events:v1:snapshot", JSON.stringify(buildSnapshot([{ ...legacy, status: "published" }], new Date("2026-07-28T12:00:00Z"))));
+
+		const publicResponse = await handleBeachEventsRequest(new Request("https://example.com/v1/beach-events"), h.env, new Date("2026-08-02T12:00:00Z"));
+		expect((await publicResponse.json() as BeachEventsSnapshot).beaches).toEqual({});
+		const adminResponse = await handleBeachEventsAdminGet(new Request("https://example.com/admin/beach-events"), h.env, new Date("2026-08-02T12:00:00Z"));
+		const admin = await adminResponse.json() as { events: BeachEvent[]; archive: BeachEvent[]; audit: Array<{ targetId: string }> };
+		expect(admin.events).toEqual([]);
+		expect(admin.archive).toEqual([expect.objectContaining({ id: legacy.id, status: "expired", reviewedSourceRevision: "legacy-reviewed" })]);
+		expect(admin.audit).toEqual(expect.arrayContaining([expect.objectContaining({ targetId: legacy.id, action: "expire_event" })]));
+		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${legacy.id}`)!)).toEqual(legacy);
+		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${legacy.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, legacy.id);
+		expect(mutation.status).toBe(409);
 	});
 
 	it("uses the same Central-Time display window as iOS for active counts", () => {
