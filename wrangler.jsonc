@@ -31,6 +31,13 @@
 			"id": "ca98e7fd98f74c04bee0d8a2b0449d38"
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "HISTORICAL_DATA",
+			"database_name": "alabama-beach-flag-historical-production",
+			"database_id": "2367de8c-b0d9-47f0-b419-d1c15b701ad8"
+		}
+	],
 	"ai": {
 		"binding": "AI"
 	},
@@ -77,6 +84,7 @@
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api.sparkelectricalservicesllc.workers.dev",
 		"VERIFICATION_ALERTS_ENABLED": "true",
 		"VERIFICATION_ALERT_ENVIRONMENT": "production",
+		"HISTORICAL_DATA_ENVIRONMENT": "production",
 		"VIBRIO_CONDITIONS_ENABLED": "true",
 		"BEACH_ACTIVITY_NOTIFICATIONS_ENABLED": "true",
 		"BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS": "operations@alabamabeachflag.com",

@@ -77,6 +77,33 @@ describe("Alabama Beach Flag API worker", () => {
 });
 
 describe("administrative routing", () => {
+	it("protects historical diagnostics, accepts authenticated GET, and rejects unsupported methods", async () => {
+		const historicalData = {
+			prepare: () => ({}) as D1PreparedStatement,
+			batch: async () => [
+				{ results: [{ beach_attributed_rows: 0, logical_observations: 0, unique_physical_source_observations: 0, revision_count: 0 }] },
+				{ results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] },
+			],
+		} as unknown as D1Database;
+		const env = { HISTORICAL_DATA: historicalData, HISTORICAL_DATA_ENVIRONMENT: "staging", ALLOW_LEGACY_REFRESH_SECRET: "true", REFRESH_SECRET: "migration-secret" } as Env;
+		const unauthorized = await worker.fetch(new Request("https://example.com/admin/historical-data"), env);
+		expect(unauthorized.status).toBe(403);
+		const headers = { "x-refresh-secret": "migration-secret" };
+		const response = await worker.fetch(new Request("https://example.com/admin/historical-data", { headers }), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ configured: true, environment: "staging", summary: { beach_attributed_rows: 0 } });
+		const unsupported = await worker.fetch(new Request("https://example.com/admin/historical-data", { method: "POST", headers }), env);
+		expect(unsupported.status).toBe(405);
+		expect(unsupported.headers.get("Allow")).toBe("GET");
+	});
+
+	it("reports unconfigured historical diagnostics only after authentication", async () => {
+		const env = { HISTORICAL_DATA_ENVIRONMENT: "production", ALLOW_LEGACY_REFRESH_SECRET: "true", REFRESH_SECRET: "migration-secret" } as Env;
+		const response = await worker.fetch(new Request("https://example.com/admin/historical-data", { headers: { "x-refresh-secret": "migration-secret" } }), env);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({ status: "not_configured", configured: false, environment: "production" });
+	});
+
 	it("rejects unauthorized requests before coordinator work", async () => {
 		const h = adminEnv();
 		const response = await worker.fetch(
