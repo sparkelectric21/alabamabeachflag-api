@@ -25,7 +25,7 @@ export async function handleHistoricalDiagnostics(env: Env, now: Date = new Date
 		status: 503, headers: { "Cache-Control": "no-store" },
 	});
 
-	const [summary, jobs, failures, last24Hours, datasets, latest] = await env.HISTORICAL_DATA.batch([
+	const [summary, jobs, failures, last24Hours, datasets, latest, areas, recentRuns, insertVolume] = await env.HISTORICAL_DATA.batch([
 		env.HISTORICAL_DATA.prepare(`SELECT
 			COUNT(*) AS beach_attributed_rows,
 			COUNT(DISTINCT logical_key) AS logical_observations,
@@ -71,6 +71,16 @@ export async function handleHistoricalDiagnostics(env: Env, now: Date = new Date
 					ORDER BY observed_at DESC, revision_number DESC, stored_at DESC, id DESC) AS rank
 				FROM historical_observations AS observation)
 			WHERE rank = 1 ORDER BY provider, source_station_id, observation_type, beach_id LIMIT 250`),
+		env.HISTORICAL_DATA.prepare(`SELECT beach_area,
+			COUNT(DISTINCT observation_type) AS dataset_count, COUNT(DISTINCT beach_id) AS beach_count,
+			COUNT(DISTINCT provider) AS provider_count, COUNT(DISTINCT COALESCE(source_station_id, station_id)) AS station_count,
+			MAX(observed_at) AS latest_observed_at, MAX(stored_at) AS latest_stored_at
+			FROM historical_observations WHERE beach_area IS NOT NULL GROUP BY beach_area ORDER BY beach_area`),
+		env.HISTORICAL_DATA.prepare(`SELECT id, job, fetched_at, stored_at, status, attempted_count, inserted_count,
+			duplicate_count, rejected_count, error_code FROM historical_ingestion_runs ORDER BY stored_at DESC, id DESC LIMIT 50`),
+		env.HISTORICAL_DATA.prepare(`SELECT substr(stored_at, 1, 13) || ':00:00Z' AS bucket,
+			SUM(inserted_count) AS inserted FROM historical_ingestion_runs
+			WHERE julianday(stored_at) >= julianday('now', '-7 days') GROUP BY bucket ORDER BY bucket LIMIT 168`),
 	]);
 
 	const jobRows = jobs.results as Array<Record<string, unknown>>;
@@ -94,5 +104,8 @@ export async function handleHistoricalDiagnostics(env: Env, now: Date = new Date
 		last24Hours: last24Hours.results,
 		datasets: datasets.results,
 		latestByBeachSource: latest.results,
+		areas: areas?.results ?? [],
+		recentRuns: recentRuns?.results ?? [],
+		insertVolume: insertVolume?.results ?? [],
 	}, { headers: { "Cache-Control": "no-store" } });
 }

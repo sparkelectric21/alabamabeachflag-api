@@ -9,8 +9,8 @@ staging remains `alabama-beach-flag-historical-staging`
 (`701101d9-f450-4bc5-b1ac-cfbf18854fee`). Each Wrangler configuration binds only its
 matching database.
 
-No Vibrio model, public route, provider priority, cache TTL, UI, version, or alerting
-behavior is changed. Historical persistence occurs only after the live KV candidate
+No Vibrio model, public route, provider priority, cache TTL, public UI, version, or
+alerting behavior is changed. Historical persistence occurs only after the live KV candidate
 has passed its existing quality gates and has been committed. A historical failure is
 logged and cannot change a completed live refresh into a failure.
 
@@ -155,9 +155,26 @@ explicit release operation, not an implicit part of ordinary deployment.
 `GET /admin/historical-data` uses the existing Cloudflare Access administrator
 authentication and returns environment/configuration state, beach-attributed/logical/
 physical counts, revision and timestamp summaries, persisted job health, last-24-hour
-run totals, recent failures, per-dataset/provider coverage, and deterministic latest
-rows per beach/source. It is `no-store`, GET-only, bounded, and no public history route
-exists.
+run totals, recent failures and runs, per-dataset/provider and area coverage, a bounded
+seven-day insert-volume series, and deterministic latest rows per beach/source.
+
+The authenticated, GET-only `GET /admin/historical-data/observations` endpoint backs
+the read-only admin browser. It accepts only allowlisted dataset, area, beach, provider,
+station, observation/stored time, freshness, quality, revision, and page-size filters.
+Page sizes are 10, 25, 50, or 100. Results use opaque cursor pagination ordered by
+`stored_at DESC, id DESC`; the cursor retains that stable boundary without an increasingly
+expensive offset. Current revisions are the default, with an explicit `revisions=all`
+option. Both endpoints are `no-store`, return only operationally useful provenance,
+and expose no public history route.
+
+The `/admin/historical-data/` site page presents overview metrics, job health, dataset
+and geographic coverage, a lightweight insert-volume chart with text equivalent,
+recent ingestion and quality signals, and the paginated observation browser. Source,
+fetch, and storage timestamps are labeled separately. Prediction, date-only result,
+provider-observation, and inferred flag-snapshot semantics remain explicit. Revision
+history is inspectable but never editable. Beach-attributed copies are distinguished
+from physical measurements through `source_observation_key` and separately labeled
+counts.
 
 Production job expectations deliberately measure ingestion execution rather than
 provider observation changes: flags run every 5 minutes and are late after 15 minutes;
@@ -185,6 +202,7 @@ units, datum, station type, and curve method, while water-temperature pairs diff
 in fetch-derived age/freshness. The corrected contract already suppresses those cosmetic
 changes, and regression tests retain legitimate value and stable-metadata corrections.
 
-No historical backfill, public history API, observation-browser endpoint, CSV export,
-admin Historical Data page, weather/UV/alert/rip-current/event history, or Vibrio model
-is implemented.
+The admin experience is deliberately read-only. No historical backfill, public history
+API, CSV export, editing, deletion, rollback, weather/UV/alert/rip-current/event history,
+advanced analytics, or Vibrio model is implemented. The insert-volume chart is an
+operational collection view; it is not an environmental trend analysis.

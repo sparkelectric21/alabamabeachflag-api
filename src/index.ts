@@ -27,6 +27,7 @@ import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
 import { readProviderHealthNotificationConfig, readProviderHealthNotificationState, sendProviderHealthNotificationTest, updateProviderHealthNotificationConfig } from "./providerHealth/notifications";
 import { handleHistoricalDiagnostics } from "./history/diagnostics";
+import { handleHistoricalObservations } from "./history/observations";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -175,6 +176,12 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleHistoricalDiagnostics(env);
+		}
+		if (pathname === "/admin/historical-data/observations") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleHistoricalObservations(request, env);
 		}
 		if (pathname === "/admin/provider-catalog") {
 			const identity = await authenticateAdminRequest(request, env);
