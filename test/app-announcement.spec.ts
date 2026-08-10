@@ -21,6 +21,8 @@ const valid = {
 	expiresAt: "2099-07-21T00:00:00Z",
 	actionTitle: "Learn More",
 	actionUrl: "https://alabamabeachflag.com/status",
+	scope: "all",
+	beachIds: [],
 };
 
 function admin(method: "PUT" | "DELETE", body?: unknown, secret = "secret") {
@@ -56,6 +58,22 @@ describe("app announcement", () => {
 		const cleared = await worker.fetch(admin("DELETE"), h.env);
 		expect(await cleared.json()).toEqual({ status: "ok", announcement: null });
 		expect(h.kv.delete).toHaveBeenCalledOnce();
+	});
+
+	it("defaults omitted targeting to all beaches and preserves targeted scope", async () => {
+		const h = harness();
+		const { scope: _scope, beachIds: _beachIds, ...legacyInput } = valid;
+		const legacy = await worker.fetch(admin("PUT", legacyInput), h.env);
+		expect((await legacy.json() as { announcement: { scope: string; beachIds: string[] } }).announcement).toMatchObject({ scope: "all", beachIds: [] });
+		const targeted = await worker.fetch(admin("PUT", { ...valid, scope: "beaches", beachIds: ["gulf-shores", "fort-morgan"] }), h.env);
+		expect((await targeted.json() as { announcement: { scope: string; beachIds: string[] } }).announcement).toMatchObject({ scope: "beaches", beachIds: ["gulf-shores", "fort-morgan"] });
+	});
+
+	it.each(["unknown", "gulf-shores-public-beach"])("rejects unsupported beach ID %s", async (beachId) => {
+		const h = harness();
+		const response = await worker.fetch(admin("PUT", { ...valid, scope: "beaches", beachIds: [beachId] }), h.env);
+		expect(response.status).toBe(400);
+		expect(h.kv.put).not.toHaveBeenCalled();
 	});
 
 	it("serves the announcement manager through the protected same-origin prefix", async () => {
@@ -232,7 +250,14 @@ describe("app announcement", () => {
 		const response = await worker.fetch(new Request("https://example.com/v1/app-announcement"), harness(stored).env);
 		const body = await response.json() as { announcement: Record<string, unknown> };
 		expect(Object.keys(body.announcement).sort()).toEqual([
-			"actionTitle", "actionUrl", "expiresAt", "id", "message", "revision", "severity", "startsAt", "title",
+			"actionTitle", "actionUrl", "beachIds", "expiresAt", "id", "message", "revision", "scope", "severity", "startsAt", "title",
 		].sort());
+	});
+
+	it("normalizes a legacy stored announcement to all beaches", async () => {
+		const { scope: _scope, beachIds: _beachIds, ...legacy } = { ...valid, revision: "legacy-revision" };
+		const response = await worker.fetch(new Request("https://example.com/v1/app-announcement"), harness(legacy).env);
+		const body = await response.json() as { announcement: { scope: string; beachIds: string[] } };
+		expect(body.announcement).toMatchObject({ scope: "all", beachIds: [] });
 	});
 });

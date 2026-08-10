@@ -4,6 +4,9 @@ import { ANNOUNCEMENT_ACTION_URL_ERROR, isApprovedAnnouncementActionUrl } from "
 
 export const ANNOUNCEMENT_SEVERITIES = ["information", "notice", "important", "critical"] as const;
 export type AppAnnouncementSeverity = typeof ANNOUNCEMENT_SEVERITIES[number];
+export const ANNOUNCEMENT_BEACH_IDS = ["gulf-shores", "orange-beach", "fort-morgan", "dauphin-island"] as const;
+export type AppAnnouncementBeachId = typeof ANNOUNCEMENT_BEACH_IDS[number];
+export type AppAnnouncementScope = "all" | "beaches";
 
 export interface StoredAppAnnouncement {
 	id: string;
@@ -15,9 +18,11 @@ export interface StoredAppAnnouncement {
 	expiresAt: string;
 	actionTitle: string | null;
 	actionUrl: string | null;
+	scope: AppAnnouncementScope;
+	beachIds: AppAnnouncementBeachId[];
 }
 
-const ALLOWED_FIELDS = new Set(["id", "title", "message", "severity", "startsAt", "expiresAt", "actionTitle", "actionUrl"]);
+const ALLOWED_FIELDS = new Set(["id", "title", "message", "severity", "startsAt", "expiresAt", "actionTitle", "actionUrl", "scope", "beachIds"]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CONTROL_OR_MARKUP_PATTERN = /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const AUTHORITY_IMPERSONATION_PATTERN = /\b(apple|national weather service|nws|noaa|police|sheriff|law enforcement|emergency services?|emergency management|fema|government|coast guard|fire department|city of|county of|state of)\b/i;
@@ -112,6 +117,15 @@ export function validateAnnouncementInput(value: unknown, _env: Env, now = new D
 		if (typeof actionUrl !== "string" || actionUrl.length > 2048) return error("actionUrl is invalid.");
 		if (!isApprovedAnnouncementActionUrl(actionUrl)) return error(ANNOUNCEMENT_ACTION_URL_ERROR);
 	}
+	const scope = input.scope ?? "all";
+	if (scope !== "all" && scope !== "beaches") return error("scope must be all or beaches.");
+	const beachIds = input.beachIds ?? [];
+	if (!Array.isArray(beachIds) || beachIds.some((id) => typeof id !== "string" || !ANNOUNCEMENT_BEACH_IDS.includes(id as AppAnnouncementBeachId))) {
+		return error("beachIds contains an unsupported beach ID.");
+	}
+	if (new Set(beachIds).size !== beachIds.length) return error("beachIds must not contain duplicates.");
+	if (scope === "all" && beachIds.length > 0) return error("beachIds must be empty when scope is all.");
+	if (scope === "beaches" && beachIds.length === 0) return error("Select at least one beach when scope is beaches.");
 
 	return {
 		id: input.id,
@@ -123,6 +137,8 @@ export function validateAnnouncementInput(value: unknown, _env: Env, now = new D
 		expiresAt,
 		actionTitle: actionTitle === null ? null : actionTitle.trim(),
 		actionUrl: actionUrl as string | null,
+		scope,
+		beachIds: beachIds as AppAnnouncementBeachId[],
 	};
 }
 
@@ -132,7 +148,9 @@ export function isAnnouncementActive(announcement: StoredAppAnnouncement, now = 
 
 function publicAnnouncement(announcement: StoredAppAnnouncement): StoredAppAnnouncement {
 	const { id, revision, title, message, severity, startsAt, expiresAt, actionTitle, actionUrl } = announcement;
-	return { id, revision, title, message, severity, startsAt, expiresAt, actionTitle, actionUrl };
+	const scope = announcement.scope === "beaches" ? "beaches" : "all";
+	const beachIds = scope === "beaches" && Array.isArray(announcement.beachIds) ? announcement.beachIds : [];
+	return { id, revision, title, message, severity, startsAt, expiresAt, actionTitle, actionUrl, scope, beachIds };
 }
 
 export async function handleAppAnnouncementRequest(request: Request, env: Env, now = new Date()): Promise<Response> {
