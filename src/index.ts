@@ -1,5 +1,6 @@
 import { handleWaterQualityRequest } from "./routes/waterQuality";
 import { handleBeachesRequest } from "./routes/beaches";
+import { handleMapPOIsRequest } from "./routes/mapPOIs";
 import { handleRefreshWaterQualityRequest } from "./routes/refreshWaterQuality";
 import { handleBeachConditionsRequest } from "./routes/beach-conditions";
 import { handleRefreshBeachConditionsRequest } from "./routes/refreshBeachConditions";
@@ -319,6 +320,11 @@ export default {
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
 			}
 
+
+		if (url.pathname === "/v1/map-pois") {
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleMapPOIsRequest(request);
+		}
 
 		if (request.method !== "GET") {
 			return methodNotAllowed("GET, POST");
