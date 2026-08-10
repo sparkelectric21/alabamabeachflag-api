@@ -25,10 +25,10 @@ const valid = {
 	beachIds: [],
 };
 
-function admin(method: "PUT" | "DELETE", body?: unknown, secret = "secret") {
+function admin(method: "PUT" | "DELETE", body?: unknown, secret = "secret", revision?: string) {
 	return new Request("https://example.com/internal/app-announcement", {
 		method,
-		headers: { "x-refresh-secret": secret, "Content-Type": "application/json" },
+		headers: { "x-refresh-secret": secret, "Content-Type": "application/json", ...(revision ? { "If-Match": revision } : {}) },
 		body: body === undefined ? undefined : JSON.stringify(body),
 	});
 }
@@ -51,11 +51,11 @@ describe("app announcement", () => {
 		expect(first.status).toBe(200);
 		expect(first.headers.get("Cache-Control")).toBe("no-store");
 		const firstBody = await first.json() as { announcement: { revision: string } };
-		const second = await worker.fetch(admin("PUT", { ...valid, message: "Updated." }), h.env);
+		const second = await worker.fetch(admin("PUT", { ...valid, message: "Updated." }, "secret", firstBody.announcement.revision), h.env);
 		const secondBody = await second.json() as { announcement: { revision: string } };
 		expect(secondBody.announcement.revision).not.toBe(firstBody.announcement.revision);
 		expect(h.kv.put).toHaveBeenCalledTimes(2);
-		const cleared = await worker.fetch(admin("DELETE"), h.env);
+		const cleared = await worker.fetch(admin("DELETE", undefined, "secret", secondBody.announcement.revision), h.env);
 		expect(await cleared.json()).toEqual({ status: "ok", announcement: null });
 		expect(h.kv.delete).toHaveBeenCalledOnce();
 	});
@@ -64,8 +64,9 @@ describe("app announcement", () => {
 		const h = harness();
 		const { scope: _scope, beachIds: _beachIds, ...legacyInput } = valid;
 		const legacy = await worker.fetch(admin("PUT", legacyInput), h.env);
-		expect((await legacy.json() as { announcement: { scope: string; beachIds: string[] } }).announcement).toMatchObject({ scope: "all", beachIds: [] });
-		const targeted = await worker.fetch(admin("PUT", { ...valid, scope: "beaches", beachIds: ["gulf-shores", "fort-morgan"] }), h.env);
+		const legacyBody = await legacy.json() as { announcement: { scope: string; beachIds: string[]; revision: string } };
+		expect(legacyBody.announcement).toMatchObject({ scope: "all", beachIds: [] });
+		const targeted = await worker.fetch(admin("PUT", { ...valid, scope: "beaches", beachIds: ["gulf-shores", "fort-morgan"] }, "secret", legacyBody.announcement.revision), h.env);
 		expect((await targeted.json() as { announcement: { scope: string; beachIds: string[] } }).announcement).toMatchObject({ scope: "beaches", beachIds: ["gulf-shores", "fort-morgan"] });
 	});
 
@@ -207,7 +208,7 @@ describe("app announcement", () => {
 		expect(allowed.status).toBe(200);
 
 		for (const message of ["NWS alert from the National Weather Service.", "Government emergency notice.", "Coast Guard warning."]) {
-			const response = await worker.fetch(admin("PUT", { ...valid, message }), h.env);
+			const response = await worker.fetch(admin("PUT", { ...valid, message }), harness().env);
 			expect(response.status).toBe(400);
 		}
 	});
@@ -220,6 +221,33 @@ describe("app announcement", () => {
 			const response = await worker.fetch(new Request("https://example.com/v1/app-announcement"), harness(stored).env);
 			expect((await response.json() as { announcement: unknown }).announcement).toBeNull();
 		}
+	});
+
+	it.each([
+		["scheduled", "2098-01-01T00:00:00Z", "2099-01-01T00:00:00Z"],
+		["active", "2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z"],
+		["expired", "2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z"],
+	])("protected read returns a %s stored announcement", async (status, startsAt, expiresAt) => {
+		const stored = { ...valid, revision: `revision-${status}`, startsAt, expiresAt };
+		const response = await worker.fetch(new Request("https://example.com/admin/app-announcement", { headers: { "x-refresh-secret": "secret" } }), harness(stored).env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ status, announcement: { revision: stored.revision, scope: "all", beachIds: [] } });
+	});
+
+	it("rejects stale replacement and clear revisions", async () => {
+		const h = harness({ ...valid, revision: "current-revision" });
+		expect((await worker.fetch(admin("PUT", { ...valid, message: "stale" }, "secret", "stale-revision"), h.env)).status).toBe(412);
+		expect((await worker.fetch(admin("DELETE", undefined, "secret", "stale-revision"), h.env)).status).toBe(412);
+		expect(h.kv.put).not.toHaveBeenCalled();
+		expect(h.kv.delete).not.toHaveBeenCalled();
+	});
+
+	it("protected read derives a revision for legacy stored records", async () => {
+		const { revision: _revision, scope: _scope, beachIds: _beachIds, ...legacy } = { ...valid, revision: "unused" };
+		const response = await worker.fetch(new Request("https://example.com/admin/app-announcement", { headers: { "x-refresh-secret": "secret" } }), harness(legacy).env);
+		const body = await response.json() as { announcement: { revision: string; scope: string; beachIds: string[] } };
+		expect(body.announcement).toMatchObject({ scope: "all", beachIds: [] });
+		expect(body.announcement.revision).toMatch(/^legacy-/);
 	});
 
 	it("becomes inactive at the exact expiration instant", async () => {

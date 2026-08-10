@@ -146,6 +146,18 @@ export function isAnnouncementActive(announcement: StoredAppAnnouncement, now = 
 	return now >= new Date(announcement.startsAt) && now < new Date(announcement.expiresAt);
 }
 
+function storedAnnouncementRevision(announcement: StoredAppAnnouncement): string {
+	return typeof announcement.revision === "string" && announcement.revision ? announcement.revision : `legacy-${announcement.id}-${announcement.startsAt}-${announcement.expiresAt}`;
+}
+
+export async function handleAppAnnouncementAdminRequest(env: Env, now = new Date()): Promise<Response> {
+	const stored = await readCache<StoredAppAnnouncement>(env.BEACH_DATA, APP_ANNOUNCEMENT_CACHE_KEY);
+	if (!stored) return response({ status: "none", announcement: null }, { headers: { "Cache-Control": "no-store" } });
+	const announcement = { ...publicAnnouncement(stored), revision: storedAnnouncementRevision(stored) };
+	const status = now < new Date(announcement.startsAt) ? "scheduled" : now >= new Date(announcement.expiresAt) ? "expired" : "active";
+	return response({ status, announcement }, { headers: { "Cache-Control": "no-store" } });
+}
+
 function publicAnnouncement(announcement: StoredAppAnnouncement): StoredAppAnnouncement {
 	const { id, revision, title, message, severity, startsAt, expiresAt, actionTitle, actionUrl } = announcement;
 	const scope = announcement.scope === "beaches" ? "beaches" : "all";
@@ -164,6 +176,8 @@ export async function handleAppAnnouncementRequest(request: Request, env: Env, n
 }
 
 export async function handlePutAppAnnouncementRequest(request: Request, env: Env): Promise<Response> {
+	const current = await readCache<StoredAppAnnouncement>(env.BEACH_DATA, APP_ANNOUNCEMENT_CACHE_KEY);
+	if (current && request.headers.get("If-Match") !== storedAnnouncementRevision(current)) return response({ error: "revision_conflict", currentRevision: storedAnnouncementRevision(current) }, { status: 412, headers: { "Cache-Control": "no-store" } });
 	let input: unknown;
 	try { input = await request.json(); } catch { return error("Valid JSON is required."); }
 	const announcement = validateAnnouncementInput(input, env);
@@ -173,7 +187,10 @@ export async function handlePutAppAnnouncementRequest(request: Request, env: Env
 	return response({ status: "ok", announcement }, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function handleDeleteAppAnnouncementRequest(env: Env): Promise<Response> {
+export async function handleDeleteAppAnnouncementRequest(request: Request, env: Env): Promise<Response> {
+	const current = await readCache<StoredAppAnnouncement>(env.BEACH_DATA, APP_ANNOUNCEMENT_CACHE_KEY);
+	if (!current) return response({ status: "ok", announcement: null }, { headers: { "Cache-Control": "no-store" } });
+	if (request.headers.get("If-Match") !== storedAnnouncementRevision(current)) return response({ error: "revision_conflict", currentRevision: storedAnnouncementRevision(current) }, { status: 412, headers: { "Cache-Control": "no-store" } });
 	await deleteCache(env.BEACH_DATA, APP_ANNOUNCEMENT_CACHE_KEY);
 	return response({ status: "ok", announcement: null }, { headers: { "Cache-Control": "no-store" } });
 }

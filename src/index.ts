@@ -16,7 +16,7 @@ import { dispatchRefresh, scheduledIdempotencyKey } from "./services/refresh/dis
 import type { RefreshJob } from "./services/refresh/types";
 import { dispatchVerification, handleLatestVerification, monitorVerificationReports } from "./routes/verification";
 import { isVerificationHour } from "./verification/run";
-import { handleAnnouncementOptions, handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest, hasTrustedAnnouncementOrigin, withAnnouncementCors } from "./routes/appAnnouncement";
+import { handleAnnouncementOptions, handleAppAnnouncementAdminRequest, handleAppAnnouncementRequest, handleDeleteAppAnnouncementRequest, handlePutAppAnnouncementRequest, hasTrustedAnnouncementOrigin, withAnnouncementCors } from "./routes/appAnnouncement";
 import { handleProviderHealthAdminRequest } from "./routes/providerHealthAdmin";
 import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
@@ -148,6 +148,12 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
+		}
+		if (pathname === "/admin/app-announcement") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleAppAnnouncementAdminRequest(env);
 		}
 		if (pathname === "/admin/provider-health/notifications") {
 			const identity = await authenticateAdminRequest(request, env);
@@ -283,7 +289,7 @@ export default {
 				if (pathname === "/internal/app-announcement") {
 					if (!hasTrustedAnnouncementOrigin(request)) return withAnnouncementCors(forbiddenAdminResponse(), request);
 					if (request.method === "PUT") return withAnnouncementCors(await handlePutAppAnnouncementRequest(request, env), request);
-					if (request.method === "DELETE") return withAnnouncementCors(await handleDeleteAppAnnouncementRequest(env), request);
+					if (request.method === "DELETE") return withAnnouncementCors(await handleDeleteAppAnnouncementRequest(request, env), request);
 					return withAnnouncementCors(methodNotAllowed("PUT, DELETE"), request);
 				}
 

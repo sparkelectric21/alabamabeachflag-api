@@ -9,7 +9,7 @@ import { isBeachEventRefreshHour, nextBeachEventRefresh } from "../src/beachEven
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
 import type { BeachEvent, BeachEventsSnapshot, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
-import { handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
+import { eventAdminRevision, handleBeachEventsAdminGet, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
 
 function memoryEnv() {
 	const values = new Map<string, string>();
@@ -163,8 +163,9 @@ describe("event lifecycle", () => {
 		const body = await admin.json() as { events: BeachEvent[]; archive: BeachEvent[]; audit: Array<{ targetId: string }> };
 		expect(body.events).toEqual([]);
 		expect(body.archive).toEqual([expect.objectContaining({ id: event.id, status: "completed" })]);
+		expect((body.archive[0] as BeachEvent & { revision: string }).revision).toBe(eventAdminRevision(stored));
 		expect(body.audit.filter((record) => record.targetId === event.id)).toHaveLength(2);
-		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-02T15:00:00Z"));
+		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(stored) }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-02T15:00:00Z"));
 		expect(mutation.status).toBe(409);
 		expect(await mutation.json()).toEqual({ error: "archived_event_read_only" });
 	});
@@ -184,7 +185,7 @@ describe("event lifecycle", () => {
 		expect(admin.archive).toEqual([expect.objectContaining({ id: legacy.id, status: "expired", reviewedSourceRevision: "legacy-reviewed" })]);
 		expect(admin.audit).toEqual(expect.arrayContaining([expect.objectContaining({ targetId: legacy.id, action: "expire_event" })]));
 		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${legacy.id}`)!)).toEqual(legacy);
-		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${legacy.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, legacy.id);
+		const mutation = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${legacy.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(legacy) }, body: JSON.stringify({ status: "published" }) }), h.env, { method: "access", subject: "operator@example.com" }, legacy.id);
 		expect(mutation.status).toBe(409);
 	});
 
@@ -220,7 +221,7 @@ describe("event lifecycle", () => {
 		const response = await handleBeachEventsAdminUpdate(
 			new Request(`https://example.com/admin/beach-events/${original.id}`, {
 				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(original) },
 				body: JSON.stringify({ title: "Updated cleanup", bannerMessage: "Updated copy.", beachId: "dauphin-island-east-end" }),
 			}),
 			h.env,

@@ -14,7 +14,7 @@ import {
 	reconcileProviderSource,
 	serializePublicEvent,
 } from "../src/beachEvents/store";
-import { handleBeachEventsAdminCreate, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
+import { eventAdminRevision, handleBeachEventsAdminCreate, handleBeachEventsAdminUpdate, handleBeachEventsRequest } from "../src/routes/beachEvents";
 import { CURRENT_KEY, defaultOperationalControl } from "../src/operationalControl/store";
 import type { BeachEvent, SourceFacts } from "../src/beachEvents/types";
 import type { Env } from "../src/types";
@@ -317,7 +317,7 @@ describe("duplicates, workflow, and auditability", () => {
 		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify(event));
 		const sourceRefreshSnapshot = buildSnapshot([], new Date("2026-08-01T11:00:00.000Z"));
 		h.values.set(SNAPSHOT_KEY, JSON.stringify(sourceRefreshSnapshot));
-		const request = (status: string) => new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+		const request = (status: string) => new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(JSON.parse(h.values.get(`${EVENT_PREFIX}${event.id}`)!)) }, body: JSON.stringify({ status }) });
 		expect((await handleBeachEventsAdminUpdate(request("published"), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T12:05:00.000Z"))).status).toBe(409);
 		expect((await handleBeachEventsAdminUpdate(request("approved"), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T12:10:00.000Z"))).status).toBe(200);
 		expect(JSON.parse(h.values.get(SNAPSHOT_KEY)!)).toMatchObject({ beaches: {}, lastSuccessfulRefresh: sourceRefreshSnapshot.lastSuccessfulRefresh });
@@ -351,11 +351,21 @@ describe("duplicates, workflow, and auditability", () => {
 		const h = memoryEnv();
 		const event = { ...normalizedEvent(facts(), new Date("2026-08-01T12:00:00.000Z"))!, status: "pendingReview", matchMethod: "ambiguousSourceChange", matchConfidence: "ambiguous", attentionFlags: ["ambiguousMatch", "materialSourceChange"] } as BeachEvent;
 		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify(event));
-		const response = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "approved" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T12:10:00.000Z"));
+		const response = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(event) }, body: JSON.stringify({ status: "approved" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T12:10:00.000Z"));
 		expect(response.status).toBe(200);
 		const approved = (await response.json() as { event: BeachEvent }).event;
 		expect(approved).toMatchObject({ status: "approved", matchMethod: "adminOverride", matchConfidence: "admin", matchRuleId: "admin-reviewed-ambiguous-source-location" });
 		expect(approved).not.toHaveProperty("attentionFlags");
+	});
+
+	it("rejects a stale approval without clearing newer source-change attention", async () => {
+		const h = memoryEnv();
+		const event = { ...normalizedEvent(facts(), new Date("2026-08-01T12:00:00.000Z"))!, status: "pendingReview", updatedAt: "2026-08-01T12:10:00.000Z", attentionFlags: ["materialSourceChange"] } as BeachEvent;
+		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify(event));
+		const response = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": "2026-08-01T12:00:00.000Z" }, body: JSON.stringify({ status: "approved" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id);
+		expect(response.status).toBe(412);
+		expect(await response.json()).toEqual({ error: "revision_conflict", currentRevision: eventAdminRevision(event) });
+		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${event.id}`)!)).toMatchObject({ status: "pendingReview", attentionFlags: ["materialSourceChange"] });
 	});
 
 	it("treats scheduled as reviewed while keeping it non-public", async () => {
@@ -376,7 +386,7 @@ describe("duplicates, workflow, and auditability", () => {
 			},
 		} as BeachEvent;
 		h.values.set(`${EVENT_PREFIX}${event.id}`, JSON.stringify(event));
-		const response = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "scheduled" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T13:00:00.000Z"));
+		const response = await handleBeachEventsAdminUpdate(new Request(`https://example.com/admin/beach-events/${event.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "If-Match": eventAdminRevision(event) }, body: JSON.stringify({ status: "scheduled" }) }), h.env, { method: "access", subject: "operator@example.com" }, event.id, new Date("2026-08-01T13:00:00.000Z"));
 		expect(response.status).toBe(200);
 		const scheduled = (await response.json() as { event: BeachEvent }).event;
 		expect(scheduled).toMatchObject({ status: "scheduled", reviewedSourceRevision: event.sourceRevision });

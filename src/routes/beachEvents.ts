@@ -11,10 +11,19 @@ import { beachReferences } from "../beachEvents/beachReference";
 import { buildReviewQueue, evaluateBeachActivityNotifications, readBeachActivityNotificationConfig, readBeachActivityNotificationState, updateBeachActivityNotificationConfig } from "../beachEvents/notifications";
 import { normalizeDescription, sanitizeEventURL } from "../beachEvents/normalize";
 import { possibleDuplicateOf } from "../beachEvents/matching";
-import { sourceRevision } from "../beachEvents/sourceChanges";
+import { sourceRevision, stableHash } from "../beachEvents/sourceChanges";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
+
+export function eventAdminRevision(event: BeachEvent): string {
+	const { lastSeenAt: _lastSeenAt, ...record } = event;
+	return stableHash(JSON.stringify(record));
+}
+
+function adminEvent(event: BeachEvent): BeachEvent & { revision: string } {
+	return { ...event, revision: eventAdminRevision(event) };
+}
 
 function visibleSnapshot(snapshot: BeachEventsSnapshot, now: Date): BeachEventsSnapshot {
 	const beaches = Object.fromEntries(
@@ -75,8 +84,8 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env, now 
 		};
 	});
 	return respond({
-		events: filtered.sort((a, b) => a.startAt.localeCompare(b.startAt)),
-		archive: archived.sort((a, b) => String(b.archivedAt ?? b.completedAt ?? b.endAt).localeCompare(String(a.archivedAt ?? a.completedAt ?? a.endAt))),
+		events: filtered.sort((a, b) => a.startAt.localeCompare(b.startAt)).map(adminEvent),
+		archive: archived.sort((a, b) => String(b.archivedAt ?? b.completedAt ?? b.endAt).localeCompare(String(a.archivedAt ?? a.completedAt ?? a.endAt))).map(adminEvent),
 		rules: await listRules(env),
 		providers: BEACH_EVENT_PROVIDERS,
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
@@ -184,6 +193,8 @@ const PUBLIC_EVENT_FIELDS = new Set(["beachId", "title", "venue", "address", "st
 export async function handleBeachEventsAdminUpdate(request: Request, env: Env, identity: AdminIdentity, id: string, now = new Date()): Promise<Response> {
 	const current = await env.BEACH_DATA.get<BeachEvent>(`${EVENT_PREFIX}${id}`, "json");
 	if (!current) return respond({ error: "not_found" }, 404);
+	const currentRevision = eventAdminRevision(current);
+	if (request.headers.get("If-Match") !== currentRevision) return respond({ error: "revision_conflict", currentRevision }, 412);
 	if (current.status === "completed" || current.status === "expired" || current.archivedAt) return respond({ error: "archived_event_read_only" }, 409);
 	let changes: Record<string, unknown>; try { changes = await request.json(); } catch { return respond({ error: "invalid_json" }, 400); }
 	if (!changes || Object.keys(changes).some((key) => !EDITABLE.has(key))) return respond({ error: "invalid_changes" }, 400);
