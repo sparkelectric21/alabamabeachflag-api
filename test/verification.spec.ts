@@ -53,6 +53,34 @@ describe("verification reports", () => {
 		expect(e.BEACH_DATA.put).toHaveBeenCalledWith("verification:gulf-shores-flags:latest", expect.any(String));
 	});
 
+	it("compares all three locations using the current CivicPlus semantic representation", async () => {
+		const currentHtml = `<div id="surfTS">
+			<p>Surf Conditions:</p><p>Medium Hazard</p>
+			<style>.fancyButton { background-image: url('/ImageRepository/Document?documentID=10356'); }</style>
+		</div>`;
+		vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
+			String(input).includes("gulfshoresal.gov")
+				? new Response(currentHtml, { headers: { "Content-Type": "text/html" } })
+				: Response.json(published)));
+		const report = await runVerification(env(), new Date("2026-07-17T12:00:00.000Z"));
+		expect(report.status).toBe("pass");
+		expect(report.checks.filter((check) => check.location)).toHaveLength(3);
+		expect(report.checks.filter((check) => check.location).every((check) => check.status === "pass")).toBe(true);
+	});
+
+	it("still detects an API mismatch with the current semantic representation", async () => {
+		vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
+			String(input).includes("gulfshoresal.gov")
+				? new Response(`<div id="surfTS"><p>High Hazard</p></div>`, { headers: { "Content-Type": "text/html" } })
+				: Response.json(published)));
+		const report = await runVerification(env(), new Date("2026-07-17T12:00:00.000Z"));
+		expect(report.status).toBe("fail");
+		expect(report.checks.filter((check) => check.location)).toHaveLength(3);
+		expect(report.checks.filter((check) => check.location).every((check) =>
+			check.message === "published result differs from official source"
+		)).toBe(true);
+	});
+
 	it("recognizes the current CivicPlus closure IDs and public compatibility value", async () => {
 		vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
 			String(input).includes("gulfshoresal.gov")
