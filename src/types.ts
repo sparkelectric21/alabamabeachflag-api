@@ -19,6 +19,8 @@ export interface Env {
 	AI: Ai;
 	BEACH_ACTIVITY_NOTIFICATIONS_ENABLED?: string;
 	BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS?: string;
+	/** Canonical protected admin page used in information-report notification links. */
+	INFORMATION_REPORTS_ADMIN_URL?: string;
 	PROVIDER_HEALTH_NOTIFICATIONS_ENABLED?: string;
 	PROVIDER_HEALTH_NOTIFICATION_RECIPIENTS?: string;
 	VIBRIO_CONDITIONS_ENABLED?: string;

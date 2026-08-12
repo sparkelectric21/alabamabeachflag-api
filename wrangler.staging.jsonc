@@ -9,6 +9,10 @@
 		{
 			"pattern": "staging.alabamabeachflag.com/admin/service/*",
 			"zone_name": "alabamabeachflag.com"
+		},
+		{
+			"pattern": "staging.alabamabeachflag.com/v1/information-reports*",
+			"zone_name": "alabamabeachflag.com"
 		}
 	],
 	"observability": { "enabled": true },

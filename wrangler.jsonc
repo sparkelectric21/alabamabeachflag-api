@@ -23,6 +23,14 @@
 		{
 			"pattern": "alabamabeachflag.com/admin/service/*",
 			"zone_name": "alabamabeachflag.com"
+		},
+		{
+			"pattern": "www.alabamabeachflag.com/v1/information-reports*",
+			"zone_name": "alabamabeachflag.com"
+		},
+		{
+			"pattern": "alabamabeachflag.com/v1/information-reports*",
+			"zone_name": "alabamabeachflag.com"
 		}
 	],
 	"kv_namespaces": [

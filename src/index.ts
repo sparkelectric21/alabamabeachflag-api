@@ -29,6 +29,7 @@ import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBe
 import { readProviderHealthNotificationConfig, readProviderHealthNotificationState, sendProviderHealthNotificationTest, updateProviderHealthNotificationConfig } from "./providerHealth/notifications";
 import { handleHistoricalDiagnostics } from "./history/diagnostics";
 import { handleHistoricalObservations } from "./history/observations";
+import { handleInformationReportCreate, handleInformationReportsAdmin, isInformationReportSubmissionHost } from "./routes/informationReports";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -140,6 +141,18 @@ export default {
 		const pathname = url.pathname.startsWith(`${sameOriginAdminPrefix}/`)
 			? url.pathname.slice(sameOriginAdminPrefix.length)
 			: url.pathname;
+		if (pathname === "/v1/information-reports") {
+			if (request.method !== "POST") return methodNotAllowed("POST");
+			if (!isInformationReportSubmissionHost(url, env)) return new Response(null, { status: 404 });
+			return handleInformationReportCreate(request, env);
+		}
+		if (pathname.startsWith("/v1/information-reports")) return new Response(null, { status: 404 });
+		if (pathname === "/admin/information-reports" || pathname.startsWith("/admin/information-reports/")) {
+			const identity = await authenticateAdminRequest(request, env); if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET" && request.method !== "PATCH") return methodNotAllowed("GET, PATCH");
+			const id = pathname === "/admin/information-reports" ? undefined : decodeURIComponent(pathname.slice("/admin/information-reports/".length));
+			return handleInformationReportsAdmin(request, env, identity, id);
+		}
 		if (pathname === "/internal/app-announcement" && request.method === "OPTIONS") {
 			return handleAnnouncementOptions(request);
 		}
