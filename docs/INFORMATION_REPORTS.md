@@ -11,11 +11,43 @@ cleanup may rename or separate the binding after deployment planning; that
 naming cleanup is intentionally not required for the 1.2.1 feature and does
 not change the report schema or repository boundary.
 
+## Client architecture disposition
+
+The production iOS app does not download or parse ADEM workbooks. It requests
+the normalized `/v1/water-quality` JSON response from this backend. Workbook
+download, parsing, validation, normalization, and caching belong to
+`src/services/adem` in the Worker. The unfinished client-side
+`ADEMWaterQualityParser` was unused legacy scaffolding and was removed for
+version 1.3.0 so the app cannot drift into a conflicting second parser.
+
 Migration `0003_information_reports.sql` is forward-only and must be reviewed
 and applied through the normal release process. Local development should apply
 it only to disposable local D1 state. Reports are never interpreted as source
 data and no report action changes published beach, condition, map, source, or
 Learn content.
+
+## Submitted fields, purpose, and retention
+
+Submitting a report is optional. The client requires a category and a
+user-entered explanation. A contact email address is optional. The submitted
+record also contains its client creation time, a client-generated report ID
+used for idempotency, app version and build, platform, screen and content
+context identifiers, readable context title, and catalog version when
+available. Device location is not requested or submitted.
+
+The private review workflow uses this information to identify, investigate,
+deduplicate, and resolve a possible content or app-behavior issue and, when an
+email address was supplied, to contact the reporter about that report. A new
+report may trigger a private reviewer notification containing a bounded
+preview, but reports and review fields are not returned by public endpoints.
+
+Accepted reports and their review history are stored in the private D1 review
+tables. The current implementation has no automatic retention period and no
+report-deletion route. Changing a report to `resolved`, `dismissed`, or
+`duplicate` does not delete its record or history. The website privacy policy
+therefore directs a person to the privacy contact for a request concerning an
+accepted report without promising automatic deletion. Deleting an unsent
+report in the iOS outbox affects only that pending on-device copy.
 
 ## Public route and abuse protection
 
