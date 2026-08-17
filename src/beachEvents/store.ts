@@ -239,7 +239,7 @@ export function eventNeedsReview(event: BeachEvent): boolean {
 	return event.status === "pendingReview" || Boolean(event.attentionFlags?.length);
 }
 
-export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date, origin: "scheduled" | "admin" = "scheduled"): Promise<ApplyImportedEventsResult> {
+export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: SourceFacts[], now: Date, origin: "scheduled" | "admin" = "scheduled", auditIdGenerator?: EventAuditIdGenerator): Promise<ApplyImportedEventsResult> {
 	const existing = await listEvents(env);
 	const rules = await listRules(env);
 	const existingById = new Map(existing.map((event) => [event.id, event]));
@@ -363,7 +363,7 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 				nextSourceFacts: fact,
 				materialFields,
 				cosmeticFields: diff.cosmeticFields,
-			}, now, { previousState: prior.status, newState: next.status, changedFields: [...new Set([...diff.changedFields, ...(wasMissing ? ["sourcePresence"] : [])])], sourceRevision: currentRevision, publicOutputAffected: (presentationChanged && (prior.status === "published" || next.status === "published")) || (prior.status !== next.status && (prior.status === "published" || next.status === "published")), reason: wasRemoved ? "source_restored_after_confirmed_removal" : wasMissing ? "source_restored_after_transient_absence" : undefined });
+			}, now, { previousState: prior.status, newState: next.status, changedFields: [...new Set([...diff.changedFields, ...(wasMissing ? ["sourcePresence"] : [])])], sourceRevision: currentRevision, publicOutputAffected: (presentationChanged && (prior.status === "published" || next.status === "published")) || (prior.status !== next.status && (prior.status === "published" || next.status === "published")), reason: wasRemoved ? "source_restored_after_confirmed_removal" : wasMissing ? "source_restored_after_transient_absence" : undefined }, auditIdGenerator);
 			changed += 1;
 			warnings += flags.length;
 			if (wasMissing) restored += 1;
@@ -384,7 +384,7 @@ export async function applyImportedEvents(env: Pick<Env, "BEACH_DATA">, facts: S
 		const next = { ...event, status: duplicate ? "pendingReview" as const : status, ...(reviewedStatus(status) && !duplicate ? { reviewedSourceRevision: event.sourceRevision } : {}), ...(flags.length ? { attentionFlags: flags } : {}), ...(duplicate ? { possibleDuplicateOf: duplicate.candidate.id, duplicateAssessment: duplicate.assessment } : {}), ...(rule?.eventType ? { eventType: rule.eventType } : {}), ...(rule?.impactLevel ? { impactLevel: rule.impactLevel } : {}) } as BeachEvent;
 		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
 		await persistSourceObservation(env, { providerId: fact.providerId, observedAt: now.toISOString(), sourceRevision: event.sourceRevision, facts: fact, completeness: "complete", confirmationOutcome: event.confirmation?.status ?? "confirmed", severity: "material", materialFields: Object.keys(fact), cosmeticFields: [], sourceReference: fact.officialURL ?? fact.sourceURL, approvedRevision: next.reviewedSourceRevision });
-		await auditAutomated(env, origin, "discover_source_event", event.id, { sourceFacts: fact }, now, { previousState: null, newState: status, changedFields: Object.keys(fact), sourceRevision: event.sourceRevision, publicOutputAffected: false });
+		await auditAutomated(env, origin, "discover_source_event", event.id, { sourceFacts: fact }, now, { previousState: null, newState: status, changedFields: Object.keys(fact), sourceRevision: event.sourceRevision, publicOutputAffected: false }, auditIdGenerator);
 		existingById.set(event.id, next);
 		working.push(next);
 		warnings += flags.length;
@@ -399,6 +399,7 @@ export async function reconcileProviderSource(
 	seenExternalIds: ReadonlySet<string>,
 	now: Date,
 	origin: "scheduled" | "admin" = "scheduled",
+	auditIdGenerator?: EventAuditIdGenerator,
 ): Promise<{ missingFromSource: number; newlyRemoved: number }> {
 	const events = (await listEvents(env)).filter((event) =>
 		event.sourceFacts?.providerId === providerId
@@ -456,7 +457,7 @@ export async function reconcileProviderSource(
 			sourceRevision: revision,
 			publicOutputAffected: confirmedRemoved && event.status === "published",
 			reason: confirmation.reason,
-		});
+		}, auditIdGenerator);
 		if (confirmedRemoved && !event.sourceRemovedAt) newlyRemoved += 1;
 	}
 	return { missingFromSource, newlyRemoved };
@@ -581,7 +582,7 @@ export function buildSnapshot(events: BeachEvent[], now: Date, lastSuccessfulRef
 	return { schemaVersion: 1, revision, status: "ok", generatedAt: now.toISOString(), lastSuccessfulRefresh: lastSuccessfulRefresh.toISOString(), staleUntil: new Date(now.getTime() + STALE_WINDOW_MS).toISOString(), attribution, beaches };
 }
 
-export async function archiveCompletedEvents(env: Pick<Env, "BEACH_DATA">, now = new Date(), origin: "scheduled" | "admin" = "scheduled"): Promise<{ scanned: number; archived: number }> {
+export async function archiveCompletedEvents(env: Pick<Env, "BEACH_DATA">, now = new Date(), origin: "scheduled" | "admin" = "scheduled", auditIdGenerator?: EventAuditIdGenerator): Promise<{ scanned: number; archived: number }> {
 	const events = await listEvents(env);
 	let archived = 0;
 	for (const event of events) {
@@ -589,7 +590,7 @@ export async function archiveCompletedEvents(env: Pick<Env, "BEACH_DATA">, now =
 		const timestamp = now.toISOString();
 		const next: BeachEvent = { ...event, status: "completed", completedAt: timestamp, archivedAt: timestamp, priorPublicationStatus: "published", updatedAt: timestamp, confirmation: { ...(event.confirmation ?? { reason: "effective_end_passed", policyId: eventCadencePolicy(event.sourceFacts.providerId).id, successfulChecksAbsent: 0 }), status: "archived", reason: "effective_end_passed" } };
 		await env.BEACH_DATA.put(`${EVENT_PREFIX}${event.id}`, JSON.stringify(next));
-		await auditAutomated(env, origin, "complete_and_archive_event", event.id, { effectiveEndAt: effectiveEventEnd(event).toISOString(), completedAt: timestamp, archivedAt: timestamp }, now, { previousState: "published", newState: "completed", changedFields: ["status", "completedAt", "archivedAt", "priorPublicationStatus"], sourceRevision: event.sourceRevision ?? sourceRevision(event.sourceFacts), publicOutputAffected: true, reason: "effective_end_passed" });
+		await auditAutomated(env, origin, "complete_and_archive_event", event.id, { effectiveEndAt: effectiveEventEnd(event).toISOString(), completedAt: timestamp, archivedAt: timestamp }, now, { previousState: "published", newState: "completed", changedFields: ["status", "completedAt", "archivedAt", "priorPublicationStatus"], sourceRevision: event.sourceRevision ?? sourceRevision(event.sourceFacts), publicOutputAffected: true, reason: "effective_end_passed" }, auditIdGenerator);
 		archived += 1;
 	}
 	return { scanned: events.length, archived };
@@ -652,7 +653,10 @@ export interface EventAuditContext {
 	reason?: string;
 }
 
-async function writeEventAudit(env: Pick<Env, "BEACH_DATA">, actor: string, authenticationMethod: string, action: string, targetId: string, changes: unknown, now: Date, context: EventAuditContext): Promise<void> {
+export interface EventAuditIdInput { timestamp: string; action: string; targetId: string; sourceRevision: string | null }
+export type EventAuditIdGenerator = (input: EventAuditIdInput) => string | Promise<string>;
+
+async function writeEventAudit(env: Pick<Env, "BEACH_DATA">, actor: string, authenticationMethod: string, action: string, targetId: string, changes: unknown, now: Date, context: EventAuditContext, auditIdGenerator?: EventAuditIdGenerator): Promise<void> {
 	const clean = (value: unknown, depth = 0): unknown => {
 		if (depth > 3) return "[truncated]";
 		if (typeof value === "string") {
@@ -663,9 +667,11 @@ async function writeEventAudit(env: Pick<Env, "BEACH_DATA">, actor: string, auth
 		if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !/description|contactInformation|sourceFacts|body/i.test(key)).slice(0, 40).map(([key, item]) => [key.slice(0, 80), clean(item, depth + 1)]));
 		return typeof value === "number" || typeof value === "boolean" || value === null ? value : undefined;
 	};
+	const auditId = auditIdGenerator ? await auditIdGenerator({ timestamp: now.toISOString(), action, targetId, sourceRevision: context.sourceRevision ?? null }) : crypto.randomUUID();
+	if (!/^[a-zA-Z0-9_-]{1,128}$/.test(auditId)) throw new Error("invalid_event_audit_id");
 	const record = {
 		schemaVersion: 1,
-		id: crypto.randomUUID(),
+		id: auditId,
 		timestamp: now.toISOString(),
 		actor: actor.slice(0, 200),
 		authenticationMethod,
@@ -689,6 +695,6 @@ export async function audit(env: Pick<Env, "BEACH_DATA">, identity: AdminIdentit
 	await writeEventAudit(env, identity.subject, identity.method, action, targetId, changes, now, { ...context, origin: context.origin ?? "manual" });
 }
 
-export async function auditAutomated(env: Pick<Env, "BEACH_DATA">, trigger: "scheduled" | "admin", action: string, targetId: string, changes: unknown, now = new Date(), context: EventAuditContext = {}): Promise<void> {
-	await writeEventAudit(env, "system-beach-events", trigger, action, targetId, changes, now, { ...context, origin: "automated" });
+export async function auditAutomated(env: Pick<Env, "BEACH_DATA">, trigger: "scheduled" | "admin", action: string, targetId: string, changes: unknown, now = new Date(), context: EventAuditContext = {}, auditIdGenerator?: EventAuditIdGenerator): Promise<void> {
+	await writeEventAudit(env, "system-beach-events", trigger, action, targetId, changes, now, { ...context, origin: "automated" }, auditIdGenerator);
 }

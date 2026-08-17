@@ -74,7 +74,7 @@ describe("staging isolation", () => {
 		h.values.set("ordinary:event", "keep");
 		expect(syntheticFixturesAllowed(h.env)).toBe(true);
 		const result = await runEventStagingFixture(h.env);
-		expect(result).toMatchObject({ fixtureSetVersion: "events-isolation-v1", parsed: { total: 3, valid: 2, rejected: 1 } });
+		expect(result).toMatchObject({ fixtureSetVersion: "events-isolation-v1", parsed: { total: 13, valid: 12, rejected: 1 }, verification: { failed: [] } });
 		expect([...h.values.keys()].filter((key) => key !== "ordinary:event").every((key) => key.startsWith(EVENT_STAGING_FIXTURE_PREFIX))).toBe(true);
 		await cleanupEventStagingFixture(h.env);
 		expect([...h.values.entries()]).toEqual([["ordinary:event", "keep"]]);
