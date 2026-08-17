@@ -26,7 +26,9 @@ describe("staging isolation", () => {
 	it("removes staging schedules while leaving production schedules intact", () => {
 		const staging = readFileSync("wrangler.staging.jsonc", "utf8"), production = readFileSync("wrangler.jsonc", "utf8");
 		expect(staging).toMatch(/"triggers"\s*:\s*\{\s*"crons"\s*:\s*\[\s*\]/);
+		expect(staging).toMatch(/"preview_urls"\s*:\s*false/);
 		expect(staging).not.toContain("operations@alabamabeachflag.com");
+		expect(production).not.toContain('"preview_urls": false');
 		expect(production).toContain('"*/5 * * * *"');
 	});
 

@@ -5,6 +5,7 @@
 	"compatibility_date": "2026-06-27",
 	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
+	"preview_urls": false,
 	"observability": { "enabled": true },
 	"upload_source_maps": true,
 	"kv_namespaces": [
