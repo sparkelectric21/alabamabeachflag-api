@@ -8,6 +8,7 @@ export const RIP_CURRENT_OUTLOOK_LEGACY_IMAGE_KEY = "rip-current-outlook:image";
 export const RIP_CURRENT_OUTLOOK_IMAGE_KEY_PREFIX = "rip-current-outlook:image:";
 export const APP_ANNOUNCEMENT_CACHE_KEY = "app-announcement";
 export const BEACH_EVENTS_CACHE_KEY = "beach-events:v1:snapshot";
+export const OFFICIAL_ALERTS_CACHE_KEY = "official-alerts:v1:snapshot";
 
 export function ripCurrentOutlookImageKey(revision: string): string {
 	return `${RIP_CURRENT_OUTLOOK_IMAGE_KEY_PREFIX}${revision}`;

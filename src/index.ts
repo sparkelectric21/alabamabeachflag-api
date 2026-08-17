@@ -30,6 +30,8 @@ import { readProviderHealthNotificationConfig, readProviderHealthNotificationSta
 import { handleHistoricalDiagnostics } from "./history/diagnostics";
 import { handleHistoricalObservations } from "./history/observations";
 import { handleInformationReportCreate, handleInformationReportsAdmin, isInformationReportSubmissionHost } from "./routes/informationReports";
+import { handleOfficialAlertHealthRequest, handleOfficialAlertsRequest } from "./routes/officialAlerts";
+import { refreshOfficialAlerts } from "./officialAlerts/refresh";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -161,6 +163,12 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
+		}
+		if (pathname === "/admin/official-alerts/health") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return await handleOfficialAlertHealthRequest(env);
 		}
 		if (pathname === "/admin/app-announcement") {
 			const identity = await authenticateAdminRequest(request, env);
@@ -334,6 +342,7 @@ export default {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
 				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env, new Date(), fetch, { trigger: "admin", identity }));
+				if (pathname === "/internal/refresh/official-alerts") return jsonResponse(await refreshOfficialAlerts(env));
 				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
 				return jsonResponse({ error: "Not Found" }, { status: 404 });
@@ -366,6 +375,7 @@ export default {
 		if (pathname === "/v1/app-announcement") return withAnnouncementCors(await handleAppAnnouncementRequest(request, env), request);
 		if (pathname === "/v1/app-configuration") return await handleAppConfiguration(env);
 		if (pathname === "/v1/beach-events") return await handleBeachEventsRequest(request, env);
+		if (pathname === "/v1/official-alerts") return await handleOfficialAlertsRequest(request, env);
 
 		if (url.pathname === "/v1/water-quality") {
 			return await handleWaterQualityRequest(env);
@@ -430,6 +440,12 @@ export default {
 					await runScheduled("beach-conditions");
 			} catch (error) {
 				console.error("Scheduled beach conditions refresh failed");
+			}
+
+			try {
+				await refreshOfficialAlerts(env, new Date(controller.scheduledTime));
+			} catch {
+				console.error("Scheduled official-alert refresh failed");
 			}
 
 			try {
