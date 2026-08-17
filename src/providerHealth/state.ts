@@ -1,6 +1,54 @@
-import type { ProviderAlertEvent, ProviderHealthDecision, ProviderHealthObservation, ProviderHealthOptions, ProviderHealthState, ProviderIncidentKind } from "./types";
+import type { ProviderAlertEvent, ProviderFetchDiagnostics, ProviderHealthDecision, ProviderHealthObservation, ProviderHealthOptions, ProviderHealthState, ProviderIncidentKind, ProviderIngestionMode } from "./types";
 
 const DEFAULT_REMINDER_AFTER_MS = 6 * 60 * 60 * 1_000;
+const ACTIONABLE_MODES = new Set<ProviderIngestionMode>(["enabled", "monitorOnly"]);
+const MAX_DIAGNOSTIC_TEXT = 120;
+
+const boundedText = (value: unknown): string | undefined => typeof value === "string" && value.trim()
+	? value.trim().replace(/[\r\n\t]+/g, " ").slice(0, MAX_DIAGNOSTIC_TEXT)
+	: undefined;
+const boundedInteger = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number | undefined => typeof value === "number" && Number.isFinite(value)
+	? Math.min(maximum, Math.max(0, Math.floor(value)))
+	: undefined;
+
+export function sanitizeProviderDiagnostics(value: unknown): ProviderFetchDiagnostics | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const input = value as Record<string, unknown>;
+	const output: ProviderFetchDiagnostics = {};
+	const httpStatus = boundedInteger(input.httpStatus, 999); if (httpStatus !== undefined) output.httpStatus = httpStatus;
+	const contentType = boundedText(input.contentType); if (contentType) output.contentType = contentType;
+	const responseBytes = boundedInteger(input.responseBytes); if (responseBytes !== undefined) output.responseBytes = responseBytes;
+	const fetchDurationMs = boundedInteger(input.fetchDurationMs, 86_400_000); if (fetchDurationMs !== undefined) output.fetchDurationMs = fetchDurationMs;
+	const componentIndex = boundedInteger(input.componentIndex, 1_000_000); if (componentIndex !== undefined) output.componentIndex = componentIndex;
+	const uidHash = boundedText(input.uidHash); if (uidHash && /^[a-f0-9]{8,64}$/i.test(uidHash)) output.uidHash = uidHash;
+	const fieldCategory = boundedText(input.fieldCategory); if (fieldCategory && /^[a-z0-9_-]+$/i.test(fieldCategory)) output.fieldCategory = fieldCategory;
+	const failureCategory = boundedText(input.failureCategory); if (failureCategory && /^[a-z0-9_-]+$/i.test(failureCategory)) output.failureCategory = failureCategory;
+	const attemptCount = boundedInteger(input.attemptCount, 2); if (attemptCount !== undefined) output.attemptCount = attemptCount;
+	if (typeof input.partial === "boolean") output.partial = input.partial;
+	for (const field of ["totalVEventCount", "validVEventCount", "rejectedVEventCount"] as const) {
+		const parsed = boundedInteger(input[field], 1_000_000); if (parsed !== undefined) output[field] = parsed;
+	}
+	return Object.keys(output).length ? output : undefined;
+}
+
+export const providerModeIsActionable = (mode: ProviderIngestionMode | undefined): boolean => mode === undefined || ACTIONABLE_MODES.has(mode);
+
+export function reconcileProviderMonitoringState(previous: ProviderHealthState, mode: ProviderIngestionMode, now: string): ProviderHealthState {
+	if (providerModeIsActionable(mode)) {
+		return { ...previous, ingestionMode: mode, monitoringStatus: mode === "monitorOnly" ? "monitoring" : "actionable", incidentActionable: Boolean(previous.activeIncidentId) };
+	}
+	const reason = mode === "disabled" ? "provider_disabled" as const : mode === "manualOnly" ? "manual_only" as const : mode === "retired" ? "provider_retired" as const : "monitoring_ended" as const;
+	if (previous.ingestionMode === mode && previous.monitoringStatus === "ended" && previous.incidentActionable === false && previous.monitoringEndedReason === reason) return previous;
+	return {
+		...previous,
+		ingestionMode: mode,
+		monitoringStatus: previous.activeIncidentId ? "ended" : "excluded",
+		incidentActionable: false,
+		monitoringEndedAt: previous.monitoringEndedAt ?? now,
+		monitoringEndedReason: reason,
+		updatedAt: now,
+	};
+}
 
 function normalizedCount(value: number): number {
 	return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
@@ -42,6 +90,9 @@ function initial(observation: ProviderHealthObservation, now: string): ProviderH
 		affectedBeachCount: 0,
 		expectedBeachCount: normalizedCount(observation.expectedBeachCount),
 		alertState: "clear",
+		ingestionMode: observation.ingestionMode ?? "enabled",
+		monitoringStatus: observation.ingestionMode === "monitorOnly" ? "monitoring" : "actionable",
+		incidentActionable: false,
 		updatedAt: now,
 	};
 }
@@ -58,6 +109,8 @@ export function evaluateProviderHealth(
 	const base = previous?.provider === observation.provider && previous.domain === observation.domain
 		? previous
 		: initial(observation, now);
+	const mode = observation.ingestionMode ?? base.ingestionMode ?? "enabled";
+	if (!providerModeIsActionable(mode)) return { state: reconcileProviderMonitoringState(base, mode, now) };
 
 	if (!failed) {
 		const successes = base.consecutiveSuccesses + 1;
@@ -70,6 +123,10 @@ export function evaluateProviderHealth(
 			expectedBeachCount: expected,
 			lastSuccessAt: now,
 			updatedAt: now,
+			ingestionMode: mode,
+			monitoringStatus: mode === "monitorOnly" ? "monitoring" : "actionable",
+			incidentActionable: Boolean(base.activeIncidentId),
+			...(sanitizeProviderDiagnostics(observation.diagnostics) ? { lastDiagnostics: sanitizeProviderDiagnostics(observation.diagnostics) } : {}),
 		};
 		if (!base.activeIncidentId) return { state: { ...next, alertState: "clear" } };
 		const recoveryThreshold = base.incidentKind === "isolated" ? 2 : 1;
@@ -85,6 +142,7 @@ export function evaluateProviderHealth(
 				recoveryAlertSentAt: now,
 				lastReminderAt: undefined,
 				lastErrorReason: undefined,
+				incidentActionable: false,
 				firstFailureAt: undefined,
 			},
 			event: recovery,
@@ -105,6 +163,10 @@ export function evaluateProviderHealth(
 		lastErrorReason: observation.errorReason ?? "provider_failure",
 		alertState: base.activeIncidentId ? "active" : "pending",
 		updatedAt: now,
+		ingestionMode: mode,
+		monitoringStatus: mode === "monitorOnly" ? "monitoring" : "actionable",
+		incidentActionable: Boolean(base.activeIncidentId),
+		...(sanitizeProviderDiagnostics(observation.diagnostics) ? { lastDiagnostics: sanitizeProviderDiagnostics(observation.diagnostics) } : {}),
 	};
 
 	if (base.activeIncidentId) {
@@ -126,6 +188,7 @@ export function evaluateProviderHealth(
 		incidentKind: kind,
 		alertState: "active" as const,
 		alertOpenedAt: now,
+		incidentActionable: true,
 	};
 	return { state: opened, event: event(opened, "opened", now) };
 }

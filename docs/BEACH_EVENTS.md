@@ -120,3 +120,17 @@ Manual records require a canonical beach, valid time range, known type and impac
 ## Legal and editorial notes
 
 Store normalized facts and app-authored summaries. Do not claim a beach is packed, quiet, not crowded, or has parking available. Event details can change; users should confirm with the organizer. Source names and official HTTPS links remain visible.
+
+## Refresh coordination decision (2026-08-17)
+
+The refresh-status read/write check in Workers KV is advisory, not a globally exclusive lock. KV is eventually consistent and concurrent Workers can both observe an available lock. Beach-event refreshes currently start only from the scheduled Worker handler and the Access-authenticated internal refresh route. Production should operationally nominate the scheduled handler as the single routine coordinator and restrict manual refreshes to exceptional operator use.
+
+Each run now records a `runId` and checks ownership before snapshot publication and again before final status publication. A run already known to be superseded stops stale publication. This narrows stale-write risk but does not make acquisition exclusive and cannot eliminate a race after the final ownership read.
+
+| Option | Failure recovery | Deployment and compatibility | Cost/complexity | Required before production? |
+| --- | --- | --- | --- | --- |
+| Operational single coordinator | Existing stale timeout and operator retry; overlapping manual runs remain possible | No new binding; fully compatible | Lowest | Recommended for the current staging checkpoint, with manual refresh access restricted |
+| Durable Object coordinator | Strong per-object serialization; alarms/retry can recover abandoned work | Requires a new binding, class migration, routing, and deployment review | Medium | Not required if operational single-coordinator discipline is acceptable; preferred if concurrent triggers become routine |
+| D1 transactional lease/job | Transactional lease ownership and queryable job history; explicit expiry/recovery | Requires D1 schema, binding, migration, and operational ownership | Highest | Not required for the current workload; consider only if durable job history or broader orchestration is needed |
+
+No Durable Object or D1 binding is introduced by this decision.

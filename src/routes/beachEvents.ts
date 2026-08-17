@@ -10,8 +10,11 @@ import { nextBeachEventRefresh } from "../beachEvents/schedule";
 import { beachReferences } from "../beachEvents/beachReference";
 import { buildReviewQueue, evaluateBeachActivityNotifications, readBeachActivityNotificationConfig, readBeachActivityNotificationState, updateBeachActivityNotificationConfig } from "../beachEvents/notifications";
 import { normalizeDescription, sanitizeEventURL } from "../beachEvents/normalize";
-import { possibleDuplicateOf } from "../beachEvents/matching";
 import { sourceRevision, stableHash } from "../beachEvents/sourceChanges";
+import { auditEventLocations } from "../beachEvents/location";
+import { auditConfirmationTransition } from "../beachEvents/lifecycle";
+import { SOURCE_OBSERVATION_PREFIX, observationIdentityHash } from "../beachEvents/observations";
+import { auditDuplicateCandidates, selectDuplicateCandidates } from "../beachEvents/duplicates";
 
 const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 const respond = (body: unknown, status = 200) => Response.json(body, { status, headers });
@@ -63,10 +66,12 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env, now 
 	const archived = events.filter((event) => event.status === "completed" || event.status === "expired" || Boolean(event.archivedAt));
 	const active = events.filter((event) => event.status !== "completed" && event.status !== "expired" && !event.archivedAt);
 	const filtered = status ? active.filter((event) => event.status === status) : active;
-	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 1000 });
+	const auditKeys = await env.BEACH_DATA.list({ prefix: AUDIT_PREFIX, limit: 25 });
 	const history = (await Promise.all(auditKeys.keys.map((key) => env.BEACH_DATA.get(key.name, "json")))).filter(Boolean);
 	const exclusions = await listExcludedCandidates(env);
 	const refreshStatus = await readBeachEventRefreshStatus(env, now);
+	const observationKeys = await env.BEACH_DATA.list({ prefix: SOURCE_OBSERVATION_PREFIX, limit: 25 });
+	const sourceObservations = (await Promise.all(observationKeys.keys.map((key) => env.BEACH_DATA.get<any>(key.name, "json")))).filter(Boolean).map((observation) => ({ ...observation, eventId: events.find((event) => event.sourceFacts.providerId === observation.providerId && [stableHash(event.sourceFacts.externalId), observationIdentityHash(event.sourceFacts.externalId)].includes(observation.externalIdHash))?.id }));
 	const activeEvents = events.filter((event) => isEventVisibleNow(event, now));
 	const coverage = beaches.map(({ id, displayName }) => {
 		const beachEvents = events.filter((event) => event.beachId === id);
@@ -91,8 +96,16 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env, now 
 		beaches: beaches.map(({ id, displayName }) => ({ id, displayName })),
 		beachReferences,
 		audit: history.sort((a: any, b: any) => String(b.timestamp).localeCompare(String(a.timestamp))),
+		historyPage: { audit: { hasMore: !auditKeys.list_complete, cursor: auditKeys.list_complete ? null : auditKeys.cursor, count: history.length }, observations: { hasMore: !observationKeys.list_complete, cursor: observationKeys.list_complete ? null : observationKeys.cursor, count: sourceObservations.length } },
 		exclusions: exclusions.sort((a, b) => a.startAt.localeCompare(b.startAt)),
 		coverage,
+		locationAudit: auditEventLocations(events),
+		confirmationAudit: events.map((event) => {
+			const provider = refreshStatus.providers.find((item) => item.providerId === event.sourceFacts.providerId);
+			return auditConfirmationTransition(event, provider?.status === "partial" ? "partial" : provider?.status === "failed" ? "failed" : "confirmedUnchanged", now, provider?.status === "failed" ? "unavailable" : provider?.status === "partial" ? "degraded" : "healthy");
+		}),
+		sourceObservations,
+		duplicateAudit: auditDuplicateCandidates(events),
 		notifications: {
 			configuration: await readBeachActivityNotificationConfig(env),
 			state: await readBeachActivityNotificationState(env),
@@ -106,6 +119,20 @@ export async function handleBeachEventsAdminGet(request: Request, env: Env, now 
 			staleCache: Boolean(await env.BEACH_DATA.get<BeachEventsSnapshot>(SNAPSHOT_KEY, "json").then((snapshot) => snapshot && Date.parse(snapshot.generatedAt) + 6 * 60 * 60 * 1000 < now.getTime())),
 		},
 	});
+}
+
+export async function handleBeachEventHistory(request: Request, env: Env, eventId: string): Promise<Response> {
+	if (!eventId || eventId.length > 240) return respond({ error: "invalid_event_id" }, 400);
+	const event = await env.BEACH_DATA.get<BeachEvent>(`${EVENT_PREFIX}${eventId}`, "json");
+	if (!event) return respond({ error: "not_found" }, 404);
+	const url = new URL(request.url), kind = url.searchParams.get("kind") ?? "audit", cursor = url.searchParams.get("cursor") ?? undefined;
+	if (!/^(audit|observations)$/.test(kind) || (cursor && cursor.length > 512)) return respond({ error: "invalid_history_query" }, 400);
+	const prefix = kind === "audit" ? AUDIT_PREFIX : `${SOURCE_OBSERVATION_PREFIX}${encodeURIComponent(event.sourceFacts.providerId)}:`;
+	const page = await env.BEACH_DATA.list({ prefix, limit: 50, ...(cursor ? { cursor } : {}) });
+	const values = (await Promise.all(page.keys.map((key) => env.BEACH_DATA.get<any>(key.name, "json")))).filter(Boolean);
+	const hashes = new Set([stableHash(event.sourceFacts.externalId), observationIdentityHash(event.sourceFacts.externalId)]);
+	const items = kind === "audit" ? values.filter((item) => item.targetId === eventId) : values.filter((item) => hashes.has(item.externalIdHash));
+	return respond({ schemaVersion: 1, eventId, kind, items: items.slice(0, 50), hasMore: !page.list_complete, cursor: page.list_complete ? null : page.cursor, scanned: values.length, truncated: items.length > 50 });
 }
 
 export async function handleBeachActivityNotificationPreferences(request: Request, env: Env, identity: AdminIdentity): Promise<Response> {
@@ -178,10 +205,11 @@ export async function handleBeachEventsAdminCreate(request: Request, env: Env, i
 		createdAt: timestamp,
 		updatedAt: timestamp,
 	};
-	const duplicate = possibleDuplicateOf(event, await listEvents(env));
-	const next = duplicate ? { ...event, status: "pendingReview" as const, possibleDuplicateOf: duplicate.id, attentionFlags: ["possibleDuplicate" as const] } : event;
+	const existingEvents = await listEvents(env);
+	const duplicate = selectDuplicateCandidates(event, existingEvents).candidates[0];
+	const next = duplicate ? { ...event, status: "pendingReview" as const, possibleDuplicateOf: duplicate.candidate.id, duplicateAssessment: duplicate.assessment, attentionFlags: ["possibleDuplicate" as const] } : event;
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${id}`, JSON.stringify(next));
-	await audit(env, identity, "create_event", id, next, now, { previousState: null, newState: next.status, changedFields: Object.keys(next), sourceRevision: next.sourceRevision, publicOutputAffected: false, ...(duplicate ? { reason: `possible_duplicate_of:${duplicate.id}` } : {}) });
+	await audit(env, identity, "create_event", id, next, now, { previousState: null, newState: next.status, changedFields: Object.keys(next), sourceRevision: next.sourceRevision, publicOutputAffected: false, ...(duplicate ? { reason: `possible_duplicate_of:${duplicate.candidate.id}` } : {}) });
 	await saveSnapshot(env, now);
 	return respond({ event: next }, 201);
 }
@@ -220,7 +248,7 @@ export async function handleBeachEventsAdminUpdate(request: Request, env: Env, i
 	if (!beaches.some((beach) => beach.id === candidate.beachId)) return respond({ error: "unknown_beach" }, 400);
 	const changedFields = Object.fromEntries(Object.entries({ ...changes, ...assignmentChanges }).filter(([key, value]) => JSON.stringify((current as unknown as Record<string, unknown>)[key]) !== JSON.stringify(value)));
 	const clearedReviewFields = acceptedReview || acknowledgeAttention
-		? ["attentionFlags", "sourceChange", "possibleDuplicateOf"].filter((key) => (current as unknown as Record<string, unknown>)[key] !== undefined)
+		? ["attentionFlags", "sourceChange", "possibleDuplicateOf", "duplicateAssessment"].filter((key) => (current as unknown as Record<string, unknown>)[key] !== undefined)
 		: [];
 	const changedFieldNames = [...Object.keys(changedFields), ...clearedReviewFields];
 	const previousValues = Object.fromEntries(changedFieldNames.map((key) => [key, (current as unknown as Record<string, unknown>)[key]]));
@@ -240,6 +268,8 @@ export async function handleBeachEventsAdminUpdate(request: Request, env: Env, i
 		delete next.attentionFlags;
 		delete next.sourceChange;
 		delete next.possibleDuplicateOf;
+		if (current.duplicateAssessment) next.duplicateAcknowledgment = { acknowledgedAt: current.duplicateAcknowledgment?.assessmentRevision === stableHash(JSON.stringify(current.duplicateAssessment)) ? current.duplicateAcknowledgment.acknowledgedAt : now.toISOString(), assessmentRevision: stableHash(JSON.stringify(current.duplicateAssessment)), reason: "reviewed" };
+		delete next.duplicateAssessment;
 	}
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${id}`, JSON.stringify(next));
 	const publicOutputAffected = changedFieldNames.some((key) => PUBLIC_EVENT_FIELDS.has(key)) && (current.status === "published" || next.status === "published");
@@ -298,11 +328,11 @@ export async function handleExcludedEventAssign(request: Request, env: Env, iden
 		matchMethod: "adminOverride", matchConfidence: "admin", matchRuleId: "admin-candidate-assignment", matchExplanation: "Administrator assigned the excluded candidate to an exact beach",
 		sourceFacts: candidate.sourceFacts, sourceRevision: revision, lastSeenAt: now.toISOString(), createdAt: now.toISOString(), updatedAt: now.toISOString(),
 	};
-	const duplicate = possibleDuplicateOf(event, await listEvents(env));
-	const next = duplicate ? { ...event, possibleDuplicateOf: duplicate.id, attentionFlags: ["possibleDuplicate" as const] } : event;
+	const duplicate = selectDuplicateCandidates(event, await listEvents(env)).candidates[0];
+	const next = duplicate ? { ...event, possibleDuplicateOf: duplicate.candidate.id, duplicateAssessment: duplicate.assessment, attentionFlags: ["possibleDuplicate" as const] } : event;
 	await env.BEACH_DATA.put(`${EVENT_PREFIX}${eventId}`, JSON.stringify(next));
 	await env.BEACH_DATA.put(key, JSON.stringify({ ...candidate, suggestedBeachId: beachId, decision: "admin", lastSeenAt: now.toISOString() }), { expirationTtl: 90 * 24 * 60 * 60 });
-	await audit(env, identity, "assign_excluded_candidate", id, { beachId, eventId, ...(duplicate ? { possibleDuplicateOf: duplicate.id } : {}) }, now, { previousState: null, newState: "pendingReview", changedFields: ["beachId", "matchMethod", ...(duplicate ? ["possibleDuplicateOf"] : [])], sourceRevision: revision, publicOutputAffected: false });
+	await audit(env, identity, "assign_excluded_candidate", id, { beachId, eventId, ...(duplicate ? { possibleDuplicateOf: duplicate.candidate.id, duplicateAssessment: duplicate.assessment } : {}) }, now, { previousState: null, newState: "pendingReview", changedFields: ["beachId", "matchMethod", ...(duplicate ? ["possibleDuplicateOf", "duplicateAssessment"] : [])], sourceRevision: revision, publicOutputAffected: false });
 	await saveSnapshot(env, now);
 	return respond({ event: next }, 201);
 }

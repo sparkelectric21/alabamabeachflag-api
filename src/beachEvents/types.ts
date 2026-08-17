@@ -8,7 +8,27 @@ export type BeachEventImpact = typeof IMPACT_LEVELS[number];
 export type BeachEventStatus = typeof EVENT_STATUSES[number];
 export type MatchMethod = "exactVenue" | "exactAddress" | "sourceAlias" | "adminOverride" | "ambiguousSourceChange";
 export type SourceEventStatus = "confirmed" | "tentative" | "cancelled" | "postponed";
-export type EventAttentionFlag = "materialSourceChange" | "sourceCancelled" | "sourcePostponed" | "sourceMissing" | "sourceRemoved" | "sourceRestored" | "ambiguousMatch" | "possibleDuplicate" | "normalizationWarning";
+export type EventLocationClass = "beachSpecific" | "nearbyCoastal" | "regional" | "irrelevant";
+export type LocationEvidenceOrigin = "source" | "rule" | "administrator";
+export interface LocationEvidenceItem {
+	kind: "exactVenue" | "exactAddress" | "explicitBeachToken" | "providerCoverage" | "knownExclusion" | "broadLocation" | "nearbyVenue" | "administratorOverride" | "missingLocation";
+	origin: LocationEvidenceOrigin;
+	value: string;
+	supportsExact: boolean;
+}
+export interface EventLocationAssessment {
+	classification: EventLocationClass;
+	precisionLabel: "At this beach" | "Nearby coastal" | "Regional" | "Not beach relevant";
+	proposedBeachId?: string;
+	region?: string;
+	evidence: LocationEvidenceItem[];
+	conflicts: string[];
+	exactAssignmentSupported: boolean;
+	assignmentOrigin: LocationEvidenceOrigin;
+}
+export type EventAttentionFlag = "materialSourceChange" | "sourceCancelled" | "sourcePostponed" | "sourceMissing" | "sourceRemoved" | "sourceRestored" | "ambiguousMatch" | "possibleDuplicate" | "normalizationWarning" | "identityCompatibilityReview";
+export type EventConfirmationStatus = "confirmed" | "aging" | "suspectedMissing" | "sourceRemoved" | "cancelled" | "postponed" | "completed" | "archived" | "manualReviewDue";
+export type SourceChangeSeverity = "cosmetic" | "informational" | "material" | "critical";
 
 export interface SourceFacts {
 	providerId: string;
@@ -35,7 +55,14 @@ export interface SourceFacts {
 	recurrenceId?: string;
 	sequence?: number;
 	lastModified?: string;
+	organizerEventId?: string;
+	seriesId?: string;
 }
+
+export type DuplicateClassification = "sameSourceRecord" | "strongDuplicate" | "likelyDuplicate" | "possibleDuplicate" | "distinctOccurrence" | "unrelated";
+export type DuplicateRelationship = "sameCanonicalEvent" | "relatedOccurrences" | "keepSeparate" | "suppressDuplicate";
+export interface DuplicateAssessment { pairId: string; eventIds: string[]; classification: DuplicateClassification; blockingReasons: string[]; positiveEvidence: string[]; conflictingEvidence: string[]; titleTokens: Record<string, string[]>; proposedCanonicalEventId?: string; proposedRelationship: DuplicateRelationship; recommendedAction: "reviewCanonicalLink" | "reviewPossibleDuplicate" | "keepSeparate" }
+export interface DuplicateResolution { decision: DuplicateRelationship; relatedEventId: string; canonicalEventId?: string; evidenceRevision: string; decidedAt: string; decidedBy: string }
 
 export interface SourceChange {
 	detectedAt: string;
@@ -46,6 +73,22 @@ export interface SourceChange {
 	previousStatus: BeachEventStatus;
 	previous: SourceFacts;
 	current: SourceFacts | null;
+	severity?: SourceChangeSeverity;
+	explanations?: string[];
+	observedAt?: string;
+}
+
+export interface EventAbsenceInterval { firstAbsentAt: string; restoredAt?: string; removedAt?: string; successfulChecksAbsent: number; policyId: string }
+export interface EventConfirmation {
+	status: EventConfirmationStatus;
+	reason: string;
+	policyId: string;
+	lastConfirmedAt?: string;
+	firstAbsentAt?: string;
+	successfulChecksAbsent: number;
+	lastCompleteObservationAt?: string;
+	observationCompleteness?: "complete" | "partial" | "confirmedUnchanged" | "failed" | "qualityRejected";
+	absenceHistory?: EventAbsenceInterval[];
 }
 
 export interface BeachEvent {
@@ -88,6 +131,9 @@ export interface BeachEvent {
 	matchConfidence: "exact" | "admin" | "ambiguous";
 	matchRuleId?: string;
 	matchExplanation?: string;
+	location?: EventLocationAssessment;
+	locationReviewRequired?: boolean;
+	confirmation?: EventConfirmation;
 	internalNotes?: string;
 	sourceFacts: SourceFacts;
 	sourceRevision: string;
@@ -99,6 +145,10 @@ export interface BeachEvent {
 	sourceChange?: SourceChange;
 	attentionFlags?: EventAttentionFlag[];
 	possibleDuplicateOf?: string;
+	duplicateAssessment?: DuplicateAssessment;
+	duplicateAcknowledgment?: { acknowledgedAt: string; assessmentRevision: string; reason: "reviewed" };
+	duplicateResolution?: DuplicateResolution;
+	identityCompatibility?: { status: "legacyCompatible" | "legacyCollision"; legacyId: string; preferredId: string };
 	manualOverrideFields?: string[];
 	createdAt: string;
 	updatedAt: string;
@@ -139,6 +189,7 @@ export interface PublicBeachEvent {
 	sourceNewsletterMonth?: string;
 	endTimeUnavailable?: boolean;
 	updatedAt: string;
+	locationClass?: EventLocationClass;
 }
 
 export interface BeachEventsSnapshot {
@@ -185,13 +236,14 @@ export interface ExcludedEventCandidate {
 	ruleId: string;
 	decision: "automatic" | "admin";
 	sourceFacts: SourceFacts;
+	location?: EventLocationAssessment;
 	firstSeenAt: string;
 	lastSeenAt: string;
 }
 
 export interface BeachEventProviderRefresh {
 	providerId: string;
-	status: "ok" | "failed" | "disabled" | "monitored";
+	status: "ok" | "partial" | "failed" | "disabled" | "monitored";
 	fetched: number;
 	matched: number;
 	excluded: number;
@@ -211,10 +263,13 @@ export interface BeachEventProviderRefresh {
 	lastSuccess?: string;
 	lastFailure?: string;
 	error?: string;
+	diagnostics?: import("../providerHealth/types").ProviderFetchDiagnostics;
+	completeness?: "complete" | "partial" | "confirmedUnchanged";
 }
 
 export interface BeachEventRefreshStatus {
 	schemaVersion: 1;
+	runId?: string;
 	status: "running" | "healthy" | "warning" | "failed" | "disabled" | "monitorOnly" | "neverRun";
 	trigger: "scheduled" | "admin";
 	lastAttempt: string;

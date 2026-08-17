@@ -1,5 +1,7 @@
 import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
+import { BEACH_EVENT_PROVIDERS } from "../beachEvents/providers";
+import type { ProviderIngestionMode } from "./types";
 
 export const PROVIDER_CATALOG_PREFIX = "provider-catalog:v1:";
 export const PROVIDER_CATALOG_AUDIT_PREFIX = "provider-catalog:v1:audit:";
@@ -32,6 +34,7 @@ export interface ProviderCatalogRecord {
 	coverageArea?: string;
 	supportedBeachMappings?: string[];
 	knownLimitations?: string;
+	ingestionMode: ProviderIngestionMode;
 	updatedAt: string | null;
 	updatedBy: string | null;
 }
@@ -67,7 +70,12 @@ const defaults: ProviderCatalogRecord[] = [
 	{ provider: "dauphinIslandSeaLab", domain: "beach_events", displayName: "Dauphin Island Sea Lab Events", category: "Beach Events", role: "Disabled", description: "Official education and research programs without a verified structured feed.", usedFor: ["Manual beach-program records"], productionUsage: "Manual-only.", internalNotes: "Campus, aquarium, vessel, and lab events are excluded unless explicitly at a supported beach.", officialSource: true, websiteVisible: true, editable: true, sourceType: "Web page", authority: "Dauphin Island Sea Lab", refreshCadence: "Manual", attributionNeeds: "Sea Lab attribution and official URL.", legalUsageNotes: "Automated retrieval and commercial reuse unclear.", sourceURL: "https://www.disl.edu/events/", publicFeed: false, automatedRetrieval: "Unclear", coverageArea: "Dauphin Island", supportedBeachMappings: ["dauphin-island-public-beach", "dauphin-island-east-end"], knownLimitations: "Most programs are not located at an app-supported beach." },
 	{ provider: "fortMorganOfficial", domain: "beach_events", displayName: "Fort Morgan Official Announcements", category: "Beach Events", role: "Disabled", description: "Manual official-announcement workflow for Fort Morgan beach activity.", usedFor: ["Manual Fort Morgan beach events"], productionUsage: "Manual-only.", internalNotes: "Historic site, museum, ferry, campground, and inland events never map automatically.", officialSource: true, websiteVisible: true, editable: true, sourceType: "Manual", authority: "Alabama Historical Commission and public agencies", refreshCadence: "Manual", attributionNeeds: "Issuing agency attribution.", legalUsageNotes: "No reliable beach-specific structured source verified.", sourceURL: "https://ahc.alabama.gov/properties/fortmorgan/fortmorgan.aspx", publicFeed: false, automatedRetrieval: "Not applicable", coverageArea: "Fort Morgan", supportedBeachMappings: ["fort-morgan-public-beach"], knownLimitations: "Strong manual workflow is required." },
 	{ provider: "tourismCalendar", domain: "beach_events", displayName: "Gulf Shores & Orange Beach Tourism Calendar", category: "Beach Events", role: "Disabled", description: "Tourism calendar is outside the approved automated sources.", usedFor: [], productionUsage: "Disabled; permission required.", internalNotes: "Never scrape, use undocumented endpoints, or copy descriptions/images/deep links.", officialSource: false, websiteVisible: false, editable: false, sourceType: "Website", authority: "Tourism organization", refreshCadence: "None", attributionNeeds: "Not applicable while disabled.", legalUsageNotes: "Permission required before any integration." },
-].map((record) => ({ schemaVersion: 1, updatedAt: null, updatedBy: null, ...record, role: record.role as ProviderCatalogRole }));
+].map((record) => {
+	const eventMode = BEACH_EVENT_PROVIDERS.find((provider) => provider.id === record.provider && record.domain === "beach_events")?.mode;
+	const ingestionMode: ProviderIngestionMode = eventMode
+		?? (record.role === "Monitoring Only" ? "monitorOnly" : record.role === "Disabled" ? "unmonitored" : "enabled");
+	return { schemaVersion: 1, updatedAt: null, updatedBy: null, ...record, role: record.role as ProviderCatalogRole, ingestionMode };
+});
 
 const safeId = (value: unknown): value is string => typeof value === "string" && /^[a-z0-9._:-]{1,80}$/i.test(value);
 const safeText = (value: unknown, max = 2000): string | null => typeof value === "string" && value.length <= max ? value.trim() : null;

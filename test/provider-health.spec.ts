@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { captureProviderAlertTransport, formatProviderAlertEmail } from "../src/providerHealth/delivery";
-import { processProviderHealthObservations, processQualityGateRejection, PROVIDER_HEALTH_EVENT_PREFIX, PROVIDER_HEALTH_STATES_KEY } from "../src/providerHealth/process";
-import { evaluateProviderHealth, evaluateQualityGateRejection } from "../src/providerHealth/state";
+import { processProviderHealthObservations, processQualityGateRejection, PROVIDER_HEALTH_EVENT_PREFIX, PROVIDER_HEALTH_STATES_KEY, reconcileProviderHealthModes } from "../src/providerHealth/process";
+import { evaluateProviderHealth, evaluateQualityGateRejection, sanitizeProviderDiagnostics } from "../src/providerHealth/state";
 import type { ProviderAlertEvent, ProviderHealthObservation } from "../src/providerHealth/types";
 import type { Env } from "../src/types";
 
@@ -64,6 +64,21 @@ describe("provider-health rules", () => {
 		expect(evaluateProviderHealth(opened.state, sharedFailure, at(390)).event).toBeUndefined();
 		expect(evaluateProviderHealth(opened.state, sharedFailure, at(390), { remindersEnabled: true }).event).toMatchObject({ type: "reminder" });
 	});
+
+	it.each(["disabled", "manualOnly"] as const)("does not open incidents for %s providers", (ingestionMode) => {
+		let state = evaluateProviderHealth(undefined, { ...sharedFailure, ingestionMode }, at(0)).state;
+		for (const minute of [15, 30, 45]) {
+			const decision = evaluateProviderHealth(state, { ...sharedFailure, ingestionMode }, at(minute));
+			expect(decision.event).toBeUndefined();
+			state = decision.state;
+		}
+		expect(state).toMatchObject({ ingestionMode, incidentActionable: false });
+		expect(state.activeIncidentId).toBeUndefined();
+	});
+
+	it("bounds and sanitizes structured diagnostics", () => {
+		expect(sanitizeProviderDiagnostics({ httpStatus: 200, contentType: `text/calendar\n${"x".repeat(300)}`, responseBytes: -2, fetchDurationMs: 12.9, componentIndex: 4, uidHash: "deadbeef", fieldCategory: "dtstart_invalid", totalVEventCount: 9, secret: "no" })).toEqual({ httpStatus: 200, contentType: `text/calendar ${"x".repeat(106)}`, responseBytes: 0, fetchDurationMs: 12, componentIndex: 4, uidHash: "deadbeef", fieldCategory: "dtstart_invalid", totalVEventCount: 9 });
+	});
 });
 
 describe("provider-health persistence and capture delivery", () => {
@@ -93,5 +108,25 @@ describe("provider-health persistence and capture delivery", () => {
 		await processQualityGateRejection(h.env, at(0), "invalid_candidate", 9, 9, captureProviderAlertTransport(captured));
 		expect(captured[0].preview.subject).toBe("Alabama Beach Flag: Critical — Publication Quality Gate / Beach Conditions");
 		expect(captured[0].preview.text).toContain("Reason: invalid_candidate");
+	});
+
+	it.each(["disabled", "manualOnly"] as const)("ends active incident actionability as %s without recovery and preserves history idempotently", async (mode) => {
+		const h = harness();
+		const captured: Array<{ event: ProviderAlertEvent; preview: ReturnType<typeof formatProviderAlertEmail> }> = [];
+		const transport = captureProviderAlertTransport(captured);
+		const failure = { ...sharedFailure, provider: "gulfStatePark", domain: "beach_events", ingestionMode: "enabled" as const };
+		await processProviderHealthObservations(h.env, [failure], at(0), transport);
+		await processProviderHealthObservations(h.env, [failure], at(15), transport);
+		const eventKeys = [...h.values.keys()].filter((key) => key.startsWith(PROVIDER_HEALTH_EVENT_PREFIX));
+		expect(eventKeys).toHaveLength(1);
+		const first = await reconcileProviderHealthModes(h.env, new Map([["gulfStatePark:beach_events", mode]]), at(30));
+		expect(first[0]).toMatchObject({ activeIncidentId: expect.any(String), incidentActionable: false, monitoringStatus: "ended", monitoringEndedAt: at(30) });
+		expect(first[0].monitoringEndedReason).toBe(mode === "disabled" ? "provider_disabled" : "manual_only");
+		const putsAfterFirst = h.put.mock.calls.length;
+		const second = await reconcileProviderHealthModes(h.env, new Map([["gulfStatePark:beach_events", mode]]), at(45));
+		expect(second[0].monitoringEndedAt).toBe(at(30));
+		expect(h.put.mock.calls.length).toBe(putsAfterFirst);
+		expect(captured.map((item) => item.event.type)).toEqual(["opened"]);
+		expect([...h.values.keys()].filter((key) => key.startsWith(PROVIDER_HEALTH_EVENT_PREFIX))).toEqual(eventKeys);
 	});
 });

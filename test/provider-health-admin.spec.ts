@@ -28,11 +28,24 @@ describe("provider-health admin endpoint", () => {
 		const h = harness({ "provider-health:v1:states": { version: 1, states: [healthy, { malformed: true }, incident, regional] }, "provider-health:v1:event:bad": { malformed: true } });
 		const response = await handleProviderHealthAdminRequest(h.env);
 		const body = await response.json() as any;
-		expect(body).toMatchObject({ status: "ok", schemaVersion: 2, overall: { status: "degraded", activeIncidentCount: 1, degradedProviderCount: 1 }, providers: [{ status: "healthy" }, { status: "incident" }, { provider: "open_meteo", domain: "current_uv:dauphinIsland" }] });
+		expect(body).toMatchObject({ status: "ok", schemaVersion: 2, overall: { status: "degraded", activeIncidentCount: 1, degradedProviderCount: 1 }, providers: expect.arrayContaining([expect.objectContaining({ provider: "nws", status: "incident" }), expect.objectContaining({ provider: "open_meteo", domain: "current_uv:dauphinIsland", status: "healthy" })]) });
 		expect(JSON.stringify(body)).not.toContain("private");
 		expect(JSON.stringify(body)).not.toContain("upstream.test");
 		const critical = harness({ "provider-health:v1:states": { states: [{ ...incident, provider: "publication_quality_gate", domain: "beach_conditions", incidentKind: "quality_gate" }] } });
 		expect((await (await handleProviderHealthAdminRequest(critical.env)).json() as any).overall.status).toBe("critical");
+	});
+
+	it("counts only actionable modes while preserving ended disabled and manual-only incidents", async () => {
+		const enabled = { ...incident, provider: "gulfStatePark", domain: "beach_events", ingestionMode: "enabled", incidentActionable: true };
+		const disabled = { ...incident, provider: "dauphinIslandTown", domain: "beach_events" };
+		const manualOnly = { ...incident, provider: "alabamaCoastalCleanup", domain: "beach_events" };
+		const h = harness({ "provider-health:v1:states": { version: 1, states: [enabled, disabled, manualOnly] } });
+		const body = await (await handleProviderHealthAdminRequest(h.env)).json() as any;
+		expect(body.overall).toMatchObject({ status: "degraded", activeIncidentCount: 1, degradedProviderCount: 1 });
+		expect(body.activeIncidents).toEqual([expect.objectContaining({ provider: "gulfStatePark", incidentActionable: true })]);
+		expect(body.providers.find((item: any) => item.provider === "dauphinIslandTown")).toMatchObject({ ingestionMode: "disabled", monitoringStatus: "ended", incidentActionable: false, excludedFromActiveTotals: true, monitoringEndedReason: "provider_disabled", activeIncidentId: "nws:forecast:1" });
+		expect(body.providers.find((item: any) => item.provider === "alabamaCoastalCleanup")).toMatchObject({ ingestionMode: "manualOnly", monitoringStatus: "ended", incidentActionable: false, excludedFromActiveTotals: true, monitoringEndedReason: "manual_only", activeIncidentId: "nws:forecast:1" });
+		expect(body.recentAlerts.filter((item: any) => item.type === "recovery")).toHaveLength(0);
 	});
 
 	it("persists only editable metadata and records sanitized audit entries", async () => {

@@ -22,7 +22,7 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
-import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
+import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventHistory, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
@@ -269,6 +269,8 @@ export default {
 		if (pathname.startsWith("/admin/beach-events/")) {
 			const identity = await authenticateAdminRequest(request, env);
 			if (!identity) return forbiddenAdminResponse();
+			const historyMatch = pathname.match(/^\/admin\/beach-events\/([^/]+)\/history$/);
+			if (historyMatch) return request.method === "GET" ? await handleBeachEventHistory(request, env, decodeURIComponent(historyMatch[1])) : methodNotAllowed("GET");
 			const id = decodeURIComponent(pathname.slice("/admin/beach-events/".length));
 			if (request.method === "PATCH") return await handleBeachEventsAdminUpdate(request, env, identity, id);
 			if (request.method === "DELETE") return await handleBeachEventsAdminDelete(env, identity, id);
