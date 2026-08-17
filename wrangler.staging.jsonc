@@ -30,13 +30,6 @@
 			"database_id": "701101d9-f450-4bc5-b1ac-cfbf18854fee"
 		}
 	],
-	"send_email": [
-		{
-			"name": "VERIFICATION_ALERT_EMAIL",
-			"destination_address": "operations@alabamabeachflag.com",
-			"allowed_sender_addresses": ["alerts@alabamabeachflag.com"]
-		}
-	],
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REFRESH_COORDINATOR", "class_name": "RefreshCoordinator" },
@@ -48,6 +41,10 @@
 		{ "tag": "v2-verification-coordinator", "new_sqlite_classes": ["VerificationCoordinator"] }
 	],
 	"vars": {
+		"APP_ENVIRONMENT": "staging",
+		"STAGING_LIVE_PROVIDER_FETCH_ENABLED": "false",
+		"STAGING_EXTERNAL_EMAIL_ENABLED": "false",
+		"STAGING_SYNTHETIC_FIXTURES_ENABLED": "false",
 		"ACCESS_ALLOWED_SERVICE_TOKENS": "1ea9ef0cf1792c8fa0cebda9f2ea39e5.access",
 		"ACCESS_AUD": "8800bcaa72226e887fd0387676deae7680774fd2ad25ddb19137cee6547bd8bb,b8dda13f6db62585623946aca114a8b5e74d3a985addc21a990e8d8df7fa7ab2",
 		"ACCESS_ALLOWED_IDENTITIES": "sparkelectricalservicesllc@gmail.com",
@@ -59,7 +56,6 @@
 		"HISTORICAL_DATA_ENVIRONMENT": "staging",
 		"VIBRIO_CONDITIONS_ENABLED": "true"
 	},
-	// Internal QA builds use this isolated cache. Keep beach conditions refreshed
-	// so its two-hour TTL does not expire between device test sessions.
-	"triggers": { "crons": ["*/15 * * * *"] }
+	// Staging has no schedules by default. Adding one requires separate authorization.
+	"triggers": { "crons": [] }
 }

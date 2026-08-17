@@ -32,6 +32,7 @@ import { handleHistoricalObservations } from "./history/observations";
 import { handleInformationReportCreate, handleInformationReportsAdmin, isInformationReportSubmissionHost } from "./routes/informationReports";
 import { handleOfficialAlertHealthRequest, handleOfficialAlertsRequest } from "./routes/officialAlerts";
 import { refreshOfficialAlerts } from "./officialAlerts/refresh";
+import { liveProviderFetchAllowed, providerFetchDisabledResponse, stagingIsolationDiagnostics } from "./config/stagingIsolation";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -163,6 +164,12 @@ export default {
 			if (!identity) return forbiddenAdminResponse();
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
+		}
+		if (pathname === "/admin/environment-diagnostics") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return jsonResponse({ ...stagingIsolationDiagnostics(env), apiVersion: API_VERSION }, { headers: { "Cache-Control": "no-store" } });
 		}
 		if (pathname === "/admin/official-alerts/health") {
 			const identity = await authenticateAdminRequest(request, env);
@@ -323,10 +330,12 @@ export default {
 
 				if (pathname === "/internal/verification/run") {
 					if (request.method !== "POST") return methodNotAllowed("POST");
+					if (!liveProviderFetchAllowed(env)) return providerFetchDisabledResponse();
 					return await dispatchVerification(env);
 				}
 
 				if (request.method !== "POST") return methodNotAllowed("POST");
+				if (pathname.startsWith("/internal/refresh/") && !liveProviderFetchAllowed(env)) return providerFetchDisabledResponse();
 
 				if (pathname === "/internal/refresh/water-quality") {
 					return await handleRefreshWaterQualityRequest(request, env, identity);
@@ -410,7 +419,11 @@ export default {
 		);
 	},
 
-		async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+	async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+		if (!liveProviderFetchAllowed(env)) {
+			console.info("[Staging isolation] staging provider fetch disabled");
+			return;
+		}
 			const cron = controller.cron;
 			const runScheduled = async (job: RefreshJob): Promise<void> => {
 				const heartbeat = await recordJobAttempt(env, job, new Date(controller.scheduledTime));

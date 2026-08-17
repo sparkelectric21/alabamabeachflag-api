@@ -71,6 +71,8 @@ function harness(events: BeachEvent[] = []) {
 	};
 	const env = {
 		BEACH_DATA: kv,
+		VERIFICATION_ALERT_ENVIRONMENT: "production",
+		HISTORICAL_DATA_ENVIRONMENT: "production",
 		VERIFICATION_ALERT_EMAIL: { send },
 		BEACH_ACTIVITY_NOTIFICATIONS_ENABLED: "true",
 		BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS: "operations@alabamabeachflag.com",

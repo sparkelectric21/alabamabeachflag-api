@@ -1,10 +1,12 @@
 import type { Env } from "../../types";
 import type { RefreshJob, RefreshRunRequest, RefreshRunResult } from "./types";
+import { liveProviderFetchAllowed } from "../../config/stagingIsolation";
 
 export async function dispatchRefresh(
 	env: Env,
 	request: RefreshRunRequest,
 ): Promise<RefreshRunResult> {
+	if (!liveProviderFetchAllowed(env)) return { outcome: "failed" };
 	const id = env.REFRESH_COORDINATOR.idFromName(request.job);
 	const stub = env.REFRESH_COORDINATOR.get(id);
 	const response = await stub.fetch("https://refresh-coordinator/run", {

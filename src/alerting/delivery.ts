@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import type { AlertNotification } from "./types";
+import { externalEmailAllowed } from "../config/stagingIsolation";
 
 const ALERT_SENDER = "alerts@alabamabeachflag.com";
 const ALERT_RECIPIENT = "operations@alabamabeachflag.com";
@@ -9,7 +10,7 @@ export interface AlertDelivery {
 }
 
 export function alertDeliveryEnabled(env: Env): boolean {
-	return env.VERIFICATION_ALERTS_ENABLED === "true";
+	return externalEmailAllowed(env) && env.VERIFICATION_ALERTS_ENABLED === "true";
 }
 
 function alertLabel(notification: AlertNotification): string {

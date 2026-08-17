@@ -4,6 +4,7 @@ import { logError } from "../utils/logger";
 import { createReport, getReport, listReports, markNotification, reportHistory, updateReport } from "../informationReports/store";
 import { INFORMATION_REPORT_STATUSES, type InformationReportStatus } from "../informationReports/types";
 import { parseInformationReport, ReportValidationError } from "../informationReports/validation";
+import { externalEmailAllowed } from "../config/stagingIsolation";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
 const labels: Record<string,string> = { beachOrAccessInformation:"Beach or access information",mapPinOrDirections:"Map pin or directions",facilityOrAmenity:"Facility or amenity",officialSourceOrWebsiteLink:"Official source or website link",beachConditionDisplay:"Beach condition display",appDisplayOrTechnicalProblem:"App display or technical problem",somethingElse:"Something else" };
@@ -31,6 +32,7 @@ export function isInformationReportSubmissionHost(url: URL, env: Pick<Env, "HIST
 }
 
 async function notify(env: Env, report: Awaited<ReturnType<typeof createReport>>["record"]): Promise<void> {
+	if (!externalEmailAllowed(env)) throw new Error("delivery_suppressed");
 	if (!env.VERIFICATION_ALERT_EMAIL?.send) throw new Error("email_binding_unavailable");
 	const recipients = [...new Set((env.BEACH_ACTIVITY_NOTIFICATION_RECIPIENTS ?? "").split(",").map((item) => item.trim()).filter(Boolean))];
 	if (!recipients.length) throw new Error("notification_recipient_unavailable");
