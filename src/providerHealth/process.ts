@@ -1,8 +1,8 @@
 import type { Env } from "../types";
 import { formatProviderAlertEmail, type ProviderAlertTransport } from "./delivery";
 import { providerHealthAlertTransport } from "./notifications";
-import { evaluateProviderHealth, evaluateQualityGateRejection } from "./state";
-import type { ProviderAlertEvent, ProviderHealthObservation, ProviderHealthOptions, ProviderHealthState } from "./types";
+import { evaluateProviderHealth, evaluateQualityGateRejection, reconcileProviderMonitoringState } from "./state";
+import type { ProviderAlertEvent, ProviderHealthObservation, ProviderHealthOptions, ProviderHealthState, ProviderIngestionMode } from "./types";
 
 export const PROVIDER_HEALTH_STATE_PREFIX = "provider-health:v1:state:";
 export const PROVIDER_HEALTH_EVENT_PREFIX = "provider-health:v1:event:";
@@ -36,6 +36,35 @@ async function persist(store: ProviderHealthStore, state: ProviderHealthState, a
 	if (alertEvent) await store.put(`${PROVIDER_HEALTH_EVENT_PREFIX}${encodeURIComponent(alertEvent.id)}`, JSON.stringify(alertEvent), { expirationTtl: PROVIDER_HEALTH_RETENTION_SECONDS });
 }
 
+async function indexedHealthStates(env: Pick<Env, "BEACH_DATA">): Promise<Map<string, ProviderHealthState>> {
+	const priorIndex = await env.BEACH_DATA.get<unknown>(PROVIDER_HEALTH_STATES_KEY, "json");
+	const indexed = new Map<string, ProviderHealthState>();
+	if (priorIndex && typeof priorIndex === "object" && Array.isArray((priorIndex as Partial<ProviderHealthStateIndex>).states)) {
+		for (const state of (priorIndex as ProviderHealthStateIndex).states) if (state && typeof state.provider === "string" && typeof state.domain === "string") indexed.set(key(state.provider, state.domain), state);
+	}
+	return indexed;
+}
+
+export async function reconcileProviderHealthModes(
+	env: Pick<Env, "BEACH_DATA">,
+	modes: ReadonlyMap<string, ProviderIngestionMode>,
+	now: string,
+): Promise<ProviderHealthState[]> {
+	const indexed = await indexedHealthStates(env);
+	let changed = false;
+	for (const [stateKey, prior] of indexed) {
+		const mode = modes.get(`${prior.provider}:${prior.domain}`);
+		if (!mode) continue;
+		const next = reconcileProviderMonitoringState(prior, mode, now);
+		if (JSON.stringify(next) === JSON.stringify(prior)) continue;
+		await persist(env.BEACH_DATA, next);
+		indexed.set(stateKey, next);
+		changed = true;
+	}
+	if (changed) await env.BEACH_DATA.put(PROVIDER_HEALTH_STATES_KEY, JSON.stringify({ version: 1, updatedAt: now, states: [...indexed.values()] }));
+	return [...indexed.values()];
+}
+
 export async function processProviderHealthObservations(
 	env: Env,
 	observations: ProviderHealthObservation[],
@@ -45,13 +74,7 @@ export async function processProviderHealthObservations(
 ): Promise<ProviderAlertEvent[]> {
 	const delivery = transport ?? providerHealthAlertTransport(env);
 	const events: ProviderAlertEvent[] = [];
-	const priorIndex = await env.BEACH_DATA.get<unknown>(PROVIDER_HEALTH_STATES_KEY, "json");
-	const indexedStates = new Map<string, ProviderHealthState>();
-	if (priorIndex && typeof priorIndex === "object" && Array.isArray((priorIndex as Partial<ProviderHealthStateIndex>).states)) {
-		for (const state of (priorIndex as ProviderHealthStateIndex).states) {
-			if (state && typeof state.provider === "string" && typeof state.domain === "string") indexedStates.set(key(state.provider, state.domain), state);
-		}
-	}
+	const indexedStates = await indexedHealthStates(env);
 	for (const observation of observations) {
 		const stateKey = key(observation.provider, observation.domain);
 		const stored = safeState(await env.BEACH_DATA.get<unknown>(stateKey, "json"), observation.provider, observation.domain);

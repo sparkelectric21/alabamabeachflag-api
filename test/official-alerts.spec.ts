@@ -35,7 +35,7 @@ function kvHarness(initial?: Record<string, unknown>) {
 	};
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("explicit NWS event policy", () => {
 	it.each(Object.entries(NWS_EVENT_POLICY))("supports %s as %s", (event, expected) => {
@@ -119,6 +119,8 @@ describe("ingestion, lifecycle, outage behavior, and ordering", () => {
 
 describe("public API and source health", () => {
 	it("returns a sanitized multi-alert contract, supports region filtering, rejects invalid regions, and never serves expired alerts", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-08-17T19:59:59.999Z"));
 		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ features: [feature("Tornado Warning"), feature("High Surf Advisory", { expires: "2026-08-17T17:00:00Z" })] }, { headers: { "Content-Type": "application/geo+json" } })));
 		const h = kvHarness();
 		await refreshOfficialAlerts(h.env, now);
@@ -131,6 +133,10 @@ describe("public API and source health", () => {
 		const health = await worker.fetch(new Request("https://example.com/admin/official-alerts/health", { headers: { "x-refresh-secret": "secret" } }), { ...h.env, REFRESH_SECRET: "secret", ALLOW_LEGACY_REFRESH_SECRET: "true" } as Env);
 		expect(health.status).toBe(200);
 		expect(await health.json()).toMatchObject({ source: "nws", freshness: "fresh", activeAlertCount: 1, regions: expect.any(Array) });
+		vi.setSystemTime(new Date("2026-08-17T20:00:00.000Z"));
+		expect(await (await worker.fetch(new Request("https://example.com/v1/official-alerts?region=gulfShores"), h.env)).json()).toMatchObject({ alerts: [] });
+		vi.setSystemTime(new Date("2026-08-17T20:00:00.001Z"));
+		expect(await (await worker.fetch(new Request("https://example.com/v1/official-alerts?region=gulfShores"), h.env)).json()).toMatchObject({ alerts: [] });
 	});
 
 	it("returns an honest unavailable response before first ingestion", async () => {

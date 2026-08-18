@@ -1,7 +1,8 @@
 import { formatProviderAlertEmail } from "../providerHealth/delivery";
-import { PROVIDER_HEALTH_EVENT_PREFIX, PROVIDER_HEALTH_STATES_KEY } from "../providerHealth/process";
+import { PROVIDER_HEALTH_EVENT_PREFIX, reconcileProviderHealthModes } from "../providerHealth/process";
 import type { ProviderAlertEvent, ProviderHealthState } from "../providerHealth/types";
 import { loadProviderCatalog, loadProviderCatalogAudit } from "../providerHealth/catalog";
+import { providerModeIsActionable, sanitizeProviderDiagnostics } from "../providerHealth/state";
 import type { Env } from "../types";
 import { evaluateJobHealth, JOB_HEALTH_CONFIG, jobHealthKey, type JobHeartbeat, type MonitoredJob } from "../monitoring/jobHealth";
 import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, RIP_CURRENT_OUTLOOK_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../services/cache/kv";
@@ -30,6 +31,10 @@ function sanitizeState(value: unknown) {
 		firstFailureAt: iso(state.firstFailureAt), lastFailureAt: iso(state.lastFailureAt), lastSuccessAt: iso(state.lastSuccessAt),
 		lastErrorReason: safeReason(state.lastErrorReason), activeIncidentId: text(state.activeIncidentId, 180), alertState: text(state.alertState, 20),
 		alertOpenedAt: iso(state.alertOpenedAt), recoveryAlertSentAt: iso(state.recoveryAlertSentAt), updatedAt,
+		ingestionMode: state.ingestionMode, monitoringStatus: state.monitoringStatus,
+		incidentActionable: state.incidentActionable,
+		monitoringEndedAt: iso(state.monitoringEndedAt), monitoringEndedReason: text(state.monitoringEndedReason, 40),
+		diagnostics: sanitizeProviderDiagnostics(state.lastDiagnostics),
 	};
 }
 
@@ -48,9 +53,14 @@ function sanitizeEvent(value: unknown) {
 
 export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DATA">): Promise<Response> {
 	const now = new Date().toISOString();
-	const index = await env.BEACH_DATA.get<unknown>(PROVIDER_HEALTH_STATES_KEY, "json");
-	const rawStates = index && typeof index === "object" && Array.isArray((index as { states?: unknown[] }).states) ? (index as { states: unknown[] }).states : [];
-	const providers = rawStates.map(sanitizeState).filter((value): value is NonNullable<typeof value> => Boolean(value));
+	const catalog = await loadProviderCatalog(env);
+	const modes = new Map(catalog.map((record) => [`${record.provider}:${record.domain}`, record.ingestionMode]));
+	const rawStates = await reconcileProviderHealthModes(env, modes, now);
+	const providers = rawStates.map(sanitizeState).filter((value): value is NonNullable<typeof value> => Boolean(value)).map((provider) => {
+		const mode = modes.get(`${provider.provider}:${provider.domain}`) ?? provider.ingestionMode ?? "unmonitored";
+		const actionable = providerModeIsActionable(mode);
+		return { ...provider, ingestionMode: mode, monitoringStatus: provider.monitoringStatus ?? (actionable ? mode === "monitorOnly" ? "monitoring" : "actionable" : "excluded"), incidentActionable: actionable && provider.incidentActionable !== false && Boolean(provider.activeIncidentId), excludedFromActiveTotals: !actionable };
+	});
 	const keys = await env.BEACH_DATA.list({ prefix: PROVIDER_HEALTH_EVENT_PREFIX, limit: 100 });
 	const recentAlerts = (await Promise.all(keys.keys.map((item) => env.BEACH_DATA.get<unknown>(item.name, "json"))))
 		.map(sanitizeEvent).filter((value): value is NonNullable<typeof value> => Boolean(value))
@@ -64,7 +74,7 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 			event.capturedOnly = false;
 		}
 	});
-	const activeIncidents = providers.filter((provider) => provider.activeIncidentId).map((provider) => ({
+	const activeIncidents = providers.filter((provider) => provider.activeIncidentId && provider.incidentActionable && !provider.excludedFromActiveTotals).map((provider) => ({
 		...provider, severity: provider.incidentKind === "quality_gate" ? "critical" : "warning",
 		qualityGateTriggered: provider.incidentKind === "quality_gate",
 		expectedAlertBehavior: provider.alertState === "active" ? "Alert opened; recovery will be captured after the required successful refreshes." : "Alert pending threshold.",
@@ -77,10 +87,9 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 		const preview = formatProviderAlertEmail({ ...event, id: event.id ?? "", incidentId: event.incidentId ?? "", errorReason: event.reason ?? undefined } as ProviderAlertEvent);
 		return { eventType: event.type, createdAt: event.createdAt, subject: preview.subject, body: preview.text, capturedOnly: event.capturedOnly };
 	});
-	const degradedProviderCount = providers.filter((provider) => provider.status !== "healthy").length;
+	const degradedProviderCount = providers.filter((provider) => !provider.excludedFromActiveTotals && provider.status !== "healthy").length;
 	const expectedBeachCount = providers.reduce((maximum, provider) => Math.max(maximum, provider.expectedBeachCount), 0);
 	const lastRefreshAt = providers.map((provider) => provider.lastSuccessAt).filter(Boolean).sort().at(-1) ?? null;
-	const catalog = await loadProviderCatalog(env);
 	const catalogAudit = await loadProviderCatalogAudit(env);
 	const providersByKey = new Map(providers.map((provider) => [`${provider.provider}:${provider.domain}`, provider]));
 	const providerCatalog = catalog.map((record) => ({ ...record, health: providersByKey.get(`${record.provider}:${record.domain}`) ?? null }));

@@ -133,7 +133,8 @@ describe("delivery isolation and kill switch", () => {
 	it("fails safely when delivery is enabled without an email binding", async () => {
 		const env = {
 			VERIFICATION_ALERTS_ENABLED: "true",
-			VERIFICATION_ALERT_ENVIRONMENT: "staging",
+			VERIFICATION_ALERT_ENVIRONMENT: "production",
+			HISTORICAL_DATA_ENVIRONMENT: "production",
 		} as Env;
 		await expect(deliverAlert(env, evaluateAlert({}, failure).notification!))
 			.rejects.toThrow("verification_alert_email_not_configured");
@@ -143,7 +144,8 @@ describe("delivery isolation and kill switch", () => {
 		const send = vi.fn(async () => ({ messageId: "test-message" }));
 		const env = {
 			VERIFICATION_ALERTS_ENABLED: "true",
-			VERIFICATION_ALERT_ENVIRONMENT: "staging",
+			VERIFICATION_ALERT_ENVIRONMENT: "production",
+			HISTORICAL_DATA_ENVIRONMENT: "production",
 			VERIFICATION_ALERT_EMAIL: { send },
 		} as unknown as Env;
 		await deliverAlert(env, evaluateAlert({}, failure).notification!);

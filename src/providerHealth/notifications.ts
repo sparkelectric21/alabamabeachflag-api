@@ -2,6 +2,7 @@ import type { AdminIdentity } from "../services/admin/auth";
 import type { Env } from "../types";
 import type { ProviderAlertTransport, ProviderAlertPreview } from "./delivery";
 import type { ProviderAlertEvent } from "./types";
+import { externalEmailAllowed } from "../config/stagingIsolation";
 
 export const PROVIDER_HEALTH_NOTIFICATION_CONFIG_KEY = "provider-health:v1:notification-config";
 export const PROVIDER_HEALTH_NOTIFICATION_STATE_KEY = "provider-health:v1:notification-state";
@@ -57,6 +58,11 @@ async function persistState(env: Pick<Env, "BEACH_DATA">, state: ProviderHealthN
 
 async function send(env: Env, event: ProviderAlertEvent, preview: ProviderAlertPreview, force = false): Promise<"sent" | "disabled"> {
 	const config = await readProviderHealthNotificationConfig(env);
+	if (!externalEmailAllowed(env)) {
+		const suppressedAt = new Date().toISOString();
+		await env.BEACH_DATA.put(`${PROVIDER_HEALTH_DELIVERY_PREFIX}${encodeURIComponent(event.id)}`, JSON.stringify({ eventId: event.id, outcome: "delivery_suppressed", suppressedAt }), { expirationTtl: 90 * 24 * 60 * 60 });
+		return "disabled";
+	}
 	if (!force && !config.enabled) return "disabled";
 	if (!env.VERIFICATION_ALERT_EMAIL?.send) throw new Error("notification_email_binding_not_configured");
 	if (config.recipients.length === 0) throw new Error("notification_recipients_not_configured");

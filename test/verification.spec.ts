@@ -182,6 +182,8 @@ describe("protected verification routing", () => {
 		const env = {
 			REFRESH_SECRET: "secret",
 			ALLOW_LEGACY_REFRESH_SECRET: "true",
+			VERIFICATION_ALERT_ENVIRONMENT: "production",
+			HISTORICAL_DATA_ENVIRONMENT: "production",
 			VERIFICATION_COORDINATOR: {
 				idFromName: vi.fn(() => "id"),
 				get: vi.fn(() => ({ fetch: coordinatorFetch })),

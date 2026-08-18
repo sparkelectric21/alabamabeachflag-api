@@ -1,6 +1,7 @@
 import { decodeHTMLEntities, normalizeDescription, sanitizeEventURL } from "./normalize";
 import { normalizeMatchAddress } from "./matching";
 import type { SourceFacts } from "./types";
+import type { SourceChangeSeverity } from "./types";
 
 const MATERIAL_FIELDS = new Set<keyof SourceFacts>([
 	"title",
@@ -66,7 +67,7 @@ function normalizedURL(value: unknown): string {
 	url.pathname = url.pathname.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 	const parameters = [...url.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
 	url.search = "";
-	for (const [key, parameter] of parameters) url.searchParams.append(key, parameter);
+	for (const [key, parameter] of parameters) if (!/^(?:utm_|fbclid$|gclid$|mc_)/i.test(key)) url.searchParams.append(key, parameter);
 	return url.toString();
 }
 
@@ -110,16 +111,26 @@ export function compareSourceFacts(previous: SourceFacts, current: SourceFacts):
 	changedFields: string[];
 	materialFields: string[];
 	cosmeticFields: string[];
+	severity: SourceChangeSeverity;
+	explanations: string[];
 } {
 	const fields = [...new Set([...Object.keys(previous), ...Object.keys(current)])] as Array<keyof SourceFacts>;
 	const changedFields = fields.filter((field) => JSON.stringify(previous[field] ?? null) !== JSON.stringify(current[field] ?? null)).sort();
 	const materiallyDifferent = new Set(fields.filter((field) =>
 		MATERIAL_FIELDS.has(field)
 		&& JSON.stringify(materialComparisonValue(field, previous[field])) !== JSON.stringify(materialComparisonValue(field, current[field]))));
+	const critical = current.sourceStatus === "cancelled" || current.sourceStatus === "postponed";
+	const meaningfulDescription = changedFields.includes("description") && /\b(cancel|postpon|closed|closure|parking|traffic|access|fee|cost|ticket|register|registration|age|adult|child|prohibited|required|must)\b/i.test(`${previous.description ?? ""} ${current.description ?? ""}`);
+	if (changedFields.includes("description") && !meaningfulDescription) materiallyDifferent.delete("description");
+	const materialFields = changedFields.filter((field) => materiallyDifferent.has(field as keyof SourceFacts));
+	const severity: SourceChangeSeverity = critical ? "critical" : materialFields.length ? "material" : changedFields.includes("description") ? "informational" : "cosmetic";
+	const explanations = critical ? [`Source status changed to ${current.sourceStatus}`] : materialFields.map((field) => field === "startAt" || field === "endAt" ? "Semantic schedule change" : field === "title" ? "Identity-bearing title change" : field === "venue" || field === "address" ? "Location evidence changed" : field === "description" ? "Operational requirements changed" : `${field} changed materially`);
 	return {
 		changedFields,
-		materialFields: changedFields.filter((field) => materiallyDifferent.has(field as keyof SourceFacts)),
+		materialFields,
 		cosmeticFields: changedFields.filter((field) => !materiallyDifferent.has(field as keyof SourceFacts)),
+		severity,
+		explanations,
 	};
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseICalendar } from "../src/beachEvents/ical";
 import { buildReviewQueue } from "../src/beachEvents/notifications";
+import { assessDuplicate } from "../src/beachEvents/duplicates";
 import { compareSourceFacts, sourceRevision } from "../src/beachEvents/sourceChanges";
 import {
 	EVENT_PREFIX,
@@ -239,35 +240,38 @@ describe("stable source identity and reviewed changes", () => {
 	it("removes cancellations immediately and sends postponements back to review", async () => {
 		const cancelled = await seedPublished();
 		await applyImportedEvents(cancelled.env, [facts({ sourceStatus: "cancelled" })], new Date("2026-08-02T12:00:00.000Z"));
-		expect(readEvent(cancelled.values, cancelled.fact)).toMatchObject({ status: "cancelled", attentionFlags: expect.arrayContaining(["sourceCancelled", "materialSourceChange"]) });
+		expect(readEvent(cancelled.values, cancelled.fact)).toMatchObject({ status: "cancelled", confirmation: { status: "cancelled", reason: "explicit_source_cancellation" }, sourceChange: { severity: "critical" }, attentionFlags: expect.arrayContaining(["sourceCancelled", "materialSourceChange"]) });
 		await applyImportedEvents(cancelled.env, [facts({ sourceStatus: "confirmed" })], new Date("2026-08-03T12:00:00.000Z"));
 		const reinstated = readEvent(cancelled.values, cancelled.fact);
 		expect(reinstated).toMatchObject({ status: "pendingReview", attentionFlags: ["materialSourceChange"] });
 		expect(reinstated.attentionFlags).not.toContain("sourceCancelled");
 		const postponed = await seedPublished();
 		await applyImportedEvents(postponed.env, [facts({ sourceStatus: "postponed" })], new Date("2026-08-02T12:00:00.000Z"));
-		expect(readEvent(postponed.values, postponed.fact)).toMatchObject({ status: "pendingReview", attentionFlags: expect.arrayContaining(["sourcePostponed", "materialSourceChange"]) });
+		expect(readEvent(postponed.values, postponed.fact)).toMatchObject({ status: "pendingReview", confirmation: { status: "postponed", reason: "explicit_source_postponement" }, sourceChange: { severity: "critical" }, attentionFlags: expect.arrayContaining(["sourcePostponed", "materialSourceChange"]) });
 	});
 
-	it("confirms source removal twice, avoids repeated churn, restores to review, and preserves manual records", async () => {
+	it("uses daily count and elapsed-time thresholds, avoids repeated churn, and preserves restoration history", async () => {
 		const h = await seedPublished();
 		const manualFact = facts({ providerId: "manual", externalId: "manual-1", title: "Manual Cleanup" });
 		const manual = { ...normalizedEvent(manualFact, new Date("2026-08-01T12:00:00.000Z"))!, status: "approved" } as BeachEvent;
 		h.values.set(`${EVENT_PREFIX}${manual.id}`, JSON.stringify(manual));
 		await reconcileProviderSource(h.env, h.fact.providerId, new Set(), new Date("2026-08-02T12:00:00.000Z"));
-		expect(readEvent(h.values, h.fact)).toMatchObject({ status: "published", sourceMissingCount: 1, attentionFlags: ["sourceMissing"] });
+		expect(readEvent(h.values, h.fact)).toMatchObject({ status: "published", sourceMissingCount: 1, attentionFlags: [], confirmation: { status: "aging", successfulChecksAbsent: 1 } });
 		await reconcileProviderSource(h.env, h.fact.providerId, new Set(), new Date("2026-08-03T12:00:00.000Z"));
+		expect(readEvent(h.values, h.fact)).toMatchObject({ status: "published", sourceMissingCount: 2, attentionFlags: ["sourceMissing"], confirmation: { status: "suspectedMissing", successfulChecksAbsent: 2 } });
+		await reconcileProviderSource(h.env, h.fact.providerId, new Set(), new Date("2026-08-05T12:00:00.000Z"));
 		const removed = readEvent(h.values, h.fact);
-		expect(removed).toMatchObject({ status: "pendingReview", sourceMissingCount: 2, sourceRemovedAt: "2026-08-03T12:00:00.000Z", attentionFlags: ["sourceRemoved"] });
+		expect(removed).toMatchObject({ status: "pendingReview", sourceMissingCount: 3, sourceRemovedAt: "2026-08-05T12:00:00.000Z", attentionFlags: ["sourceRemoved"], confirmation: { status: "sourceRemoved" } });
 		const stableRemoved = JSON.stringify(removed);
-		await reconcileProviderSource(h.env, h.fact.providerId, new Set(), new Date("2026-08-04T12:00:00.000Z"));
+		await reconcileProviderSource(h.env, h.fact.providerId, new Set(), new Date("2026-08-06T12:00:00.000Z"));
 		expect(JSON.stringify(readEvent(h.values, h.fact))).toBe(stableRemoved);
-		await applyImportedEvents(h.env, [h.fact], new Date("2026-08-05T12:00:00.000Z"));
+		await applyImportedEvents(h.env, [h.fact], new Date("2026-08-07T12:00:00.000Z"));
 		const restored = readEvent(h.values, h.fact);
 		expect(restored).toMatchObject({ status: "pendingReview", attentionFlags: ["sourceRestored"] });
 		expect(restored).not.toHaveProperty("sourceMissingCount");
 		expect(restored).not.toHaveProperty("sourceRemovedAt");
 		expect(restored.sourceChange?.materialFields).toContain("sourcePresence");
+		expect(restored.confirmation).toMatchObject({ status: "confirmed", successfulChecksAbsent: 0, absenceHistory: [expect.objectContaining({ successfulChecksAbsent: 3, removedAt: "2026-08-05T12:00:00.000Z", restoredAt: "2026-08-07T12:00:00.000Z" })] });
 		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${manual.id}`)!)).toMatchObject({ status: "approved", title: "Manual Cleanup" });
 	});
 
@@ -290,12 +294,11 @@ describe("duplicates, workflow, and auditability", () => {
 		const original = facts({ venue: "Gulf Shores Public Beach" });
 		await applyImportedEvents(h.env, [original], new Date("2026-08-01T12:00:00.000Z"));
 		const unstableUid = { ...original, externalId: "replacement-calendar-uid" };
-		expect(await applyImportedEvents(h.env, [unstableUid], new Date("2026-08-01T12:03:00.000Z"))).toMatchObject({ newEvents: 0, possibleDuplicates: 1 });
-		expect(JSON.parse(h.values.get(`${EXCLUSION_PREFIX}gulfShoresCity-replacement-calendar-uid`)!)).toMatchObject({ reason: "duplicate", possibleDuplicateOf: importedEventId(original) });
+		expect(await applyImportedEvents(h.env, [unstableUid], new Date("2026-08-01T12:03:00.000Z"))).toMatchObject({ newEvents: 1, possibleDuplicates: 1 });
+		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${importedEventId(unstableUid)}`)!)).toMatchObject({ status: "pendingReview", possibleDuplicateOf: importedEventId(original), duplicateAssessment: { classification: "strongDuplicate" } });
 		const duplicate = facts({ providerId: "orangeBeachParks", externalId: "other-feed-id", sourceName: "City of Orange Beach" });
-		expect(await applyImportedEvents(h.env, [duplicate], new Date("2026-08-01T12:05:00.000Z"))).toMatchObject({ newEvents: 0, possibleDuplicates: 1 });
-		const excluded = JSON.parse(h.values.get(`${EXCLUSION_PREFIX}orangeBeachParks-other-feed-id`)!);
-		expect(excluded).toMatchObject({ reason: "duplicate", possibleDuplicateOf: importedEventId(original), matchConfidence: "possible" });
+		expect(await applyImportedEvents(h.env, [duplicate], new Date("2026-08-01T12:05:00.000Z"))).toMatchObject({ newEvents: 1, possibleDuplicates: 1 });
+		expect(JSON.parse(h.values.get(`${EVENT_PREFIX}${importedEventId(duplicate)}`)!)).toMatchObject({ status: "pendingReview", possibleDuplicateOf: importedEventId(unstableUid), duplicateAssessment: { classification: "strongDuplicate" } });
 
 		const manualResponse = await handleBeachEventsAdminCreate(new Request("https://example.com/admin/beach-events", {
 			method: "POST",
@@ -308,7 +311,7 @@ describe("duplicates, workflow, and auditability", () => {
 			}),
 		}), h.env, { method: "access", subject: "operator@example.com" }, new Date("2026-08-01T12:10:00.000Z"));
 		expect(manualResponse.status).toBe(201);
-		expect((await manualResponse.json() as { event: BeachEvent }).event).toMatchObject({ status: "pendingReview", possibleDuplicateOf: importedEventId(original), attentionFlags: ["possibleDuplicate"] });
+		expect((await manualResponse.json() as { event: BeachEvent }).event).toMatchObject({ status: "pendingReview", possibleDuplicateOf: importedEventId(unstableUid), attentionFlags: ["possibleDuplicate"] });
 	});
 
 	it("requires approval before publication and records structured state history", async () => {
@@ -356,6 +359,10 @@ describe("duplicates, workflow, and auditability", () => {
 		const approved = (await response.json() as { event: BeachEvent }).event;
 		expect(approved).toMatchObject({ status: "approved", matchMethod: "adminOverride", matchConfidence: "admin", matchRuleId: "admin-reviewed-ambiguous-source-location" });
 		expect(approved).not.toHaveProperty("attentionFlags");
+	});
+
+	it("acknowledges duplicate evidence coherently without mutating the related event", async () => {
+		const h=memoryEnv(),current=normalizedEvent(facts(),new Date("2026-08-01T12:00:00Z"))!,related={...current,id:"related",sourceFacts:{...current.sourceFacts,providerId:"manual",externalId:"related"}},assessment=assessDuplicate(current,related),flagged={...current,attentionFlags:["possibleDuplicate" as const],possibleDuplicateOf:related.id,duplicateAssessment:assessment};h.values.set(`${EVENT_PREFIX}${flagged.id}`,JSON.stringify(flagged));h.values.set(`${EVENT_PREFIX}${related.id}`,JSON.stringify(related));const relatedBefore=h.values.get(`${EVENT_PREFIX}${related.id}`),request=()=>new Request(`https://example.com/admin/beach-events/${flagged.id}`,{method:"PATCH",headers:{"Content-Type":"application/json","If-Match":eventAdminRevision(JSON.parse(h.values.get(`${EVENT_PREFIX}${flagged.id}`)!))},body:JSON.stringify({acknowledgeAttention:true})});const first=await handleBeachEventsAdminUpdate(request(),h.env,{method:"access",subject:"operator@example.com"},flagged.id,new Date("2026-08-01T13:00:00Z"));expect(first.status).toBe(200);const acknowledged=(await first.json() as {event:BeachEvent}).event;expect(acknowledged).not.toHaveProperty("duplicateAssessment");expect(acknowledged).not.toHaveProperty("possibleDuplicateOf");expect(acknowledged).toMatchObject({duplicateAcknowledgment:{reason:"reviewed"}});expect(h.values.get(`${EVENT_PREFIX}${related.id}`)).toBe(relatedBefore);const second=await handleBeachEventsAdminUpdate(request(),h.env,{method:"access",subject:"operator@example.com"},flagged.id,new Date("2026-08-01T14:00:00Z"));expect(second.status).toBe(200);expect((await second.json() as {event:BeachEvent}).event.duplicateAcknowledgment).toEqual(acknowledged.duplicateAcknowledgment);
 	});
 
 	it("rejects a stale approval without clearing newer source-change attention", async () => {

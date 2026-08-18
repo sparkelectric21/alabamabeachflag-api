@@ -2,6 +2,24 @@ export type ProviderHealthStatus = "healthy" | "degraded" | "unavailable";
 export type ProviderIncidentKind = "shared_provider" | "isolated" | "quality_gate";
 export type ProviderAlertState = "clear" | "pending" | "active";
 export type ProviderAlertEventType = "opened" | "recovery" | "reminder";
+export type ProviderIngestionMode = "enabled" | "monitorOnly" | "disabled" | "manualOnly" | "unmonitored" | "retired";
+export type ProviderMonitoringStatus = "actionable" | "monitoring" | "excluded" | "ended";
+
+export interface ProviderFetchDiagnostics {
+	httpStatus?: number;
+	contentType?: string;
+	responseBytes?: number;
+	fetchDurationMs?: number;
+	componentIndex?: number;
+	uidHash?: string;
+	fieldCategory?: string;
+	totalVEventCount?: number;
+	validVEventCount?: number;
+	rejectedVEventCount?: number;
+	failureCategory?: string;
+	attemptCount?: number;
+	partial?: boolean;
+}
 
 export interface ProviderHealthObservation {
 	provider: string;
@@ -9,6 +27,8 @@ export interface ProviderHealthObservation {
 	affectedBeachCount: number;
 	expectedBeachCount: number;
 	errorReason?: string;
+	ingestionMode?: ProviderIngestionMode;
+	diagnostics?: ProviderFetchDiagnostics;
 }
 
 export interface ProviderHealthState {
@@ -29,6 +49,12 @@ export interface ProviderHealthState {
 	alertOpenedAt?: string;
 	recoveryAlertSentAt?: string;
 	lastReminderAt?: string;
+	ingestionMode?: ProviderIngestionMode;
+	monitoringStatus?: ProviderMonitoringStatus;
+	incidentActionable?: boolean;
+	monitoringEndedAt?: string;
+	monitoringEndedReason?: "monitoring_ended" | "provider_disabled" | "manual_only" | "provider_retired";
+	lastDiagnostics?: ProviderFetchDiagnostics;
 	updatedAt: string;
 }
 

@@ -14,6 +14,11 @@ This isolated domain answers whether a scheduled activity is physically happenin
 - `PATCH /admin/beach-events/notifications` updates the review-notification preferences.
 - `POST /admin/beach-events/notifications/send` sends the current pending-review summary; `/test` verifies delivery without changing event state.
 - `POST /internal/refresh/beach-events` performs an authenticated isolated refresh.
+- `POST /internal/refresh/beach-events/provider` performs an authenticated refresh of exactly one enabled automated provider. Its JSON body is `{"providerId":"gulfStatePark"}`. IDs are matched exactly against the server-side registry; URLs, multiple providers, disabled providers, and manual-only providers are rejected before a run is created.
+
+The provider-scoped staging route remains disabled unless `STAGING_LIVE_PROVIDER_FETCH_ENABLED=true`; invoking it makes a live upstream request. Scoped runs share the normal lock, conditional-fetch, quality, lifecycle, and provider-health safeguards. They never treat unselected providers as absent, and any public snapshot is rebuilt from the complete stored eligible event set. The existing `/internal/refresh/beach-events` endpoint remains the explicit all-provider operation.
+
+iCalendar components are quarantined individually. An observation with at most five rejected components and no more than a one-percent rejected-component ratio is recorded as `quarantined`: valid components may update the full stored-event snapshot and provider health remains successful, but source-absence reconciliation stays disabled. Larger non-fatal rejection ratios remain `partial`, preserve the last public snapshot, and degrade provider health; the existing five-percent quality gate still fails closed.
 
 The latest normalized source facts remain nested for traceability while editable local fields control app presentation. When a source revision is material, the previously reviewed facts are retained in `sourceChange` and in the audit record. Event states are draft, discovered, pending review, approved, scheduled, published, disregarded, cancelled, expired, and hidden. Flags such as material source change, ambiguous match, possible duplicate, source missing/removed/restored, and normalization warning add attention without creating redundant states.
 
@@ -120,3 +125,17 @@ Manual records require a canonical beach, valid time range, known type and impac
 ## Legal and editorial notes
 
 Store normalized facts and app-authored summaries. Do not claim a beach is packed, quiet, not crowded, or has parking available. Event details can change; users should confirm with the organizer. Source names and official HTTPS links remain visible.
+
+## Refresh coordination decision (2026-08-17)
+
+The refresh-status read/write check in Workers KV is advisory, not a globally exclusive lock. KV is eventually consistent and concurrent Workers can both observe an available lock. Beach-event refreshes currently start only from the scheduled Worker handler and the Access-authenticated internal refresh route. Production should operationally nominate the scheduled handler as the single routine coordinator and restrict manual refreshes to exceptional operator use.
+
+Each run now records a `runId` and checks ownership before snapshot publication and again before final status publication. A run already known to be superseded stops stale publication. This narrows stale-write risk but does not make acquisition exclusive and cannot eliminate a race after the final ownership read.
+
+| Option | Failure recovery | Deployment and compatibility | Cost/complexity | Required before production? |
+| --- | --- | --- | --- | --- |
+| Operational single coordinator | Existing stale timeout and operator retry; overlapping manual runs remain possible | No new binding; fully compatible | Lowest | Recommended for the current staging checkpoint, with manual refresh access restricted |
+| Durable Object coordinator | Strong per-object serialization; alarms/retry can recover abandoned work | Requires a new binding, class migration, routing, and deployment review | Medium | Not required if operational single-coordinator discipline is acceptable; preferred if concurrent triggers become routine |
+| D1 transactional lease/job | Transactional lease ownership and queryable job history; explicit expiry/recovery | Requires D1 schema, binding, migration, and operational ownership | Highest | Not required for the current workload; consider only if durable job history or broader orchestration is needed |
+
+No Durable Object or D1 binding is introduced by this decision.

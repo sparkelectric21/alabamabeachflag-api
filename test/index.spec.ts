@@ -49,6 +49,8 @@ function adminEnv(outcome = "completed") {
 		env: {
 			REFRESH_SECRET: "migration-secret",
 			ALLOW_LEGACY_REFRESH_SECRET: "true",
+			VERIFICATION_ALERT_ENVIRONMENT: "production",
+			HISTORICAL_DATA_ENVIRONMENT: "production",
 			REFRESH_COORDINATOR: { idFromName, get },
 		} as unknown as Env,
 		coordinatorFetch,

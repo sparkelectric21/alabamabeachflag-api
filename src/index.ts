@@ -22,8 +22,9 @@ import { handleVerificationAdminRequest } from "./routes/verificationAdmin";
 import { handleProviderCatalogUpdate } from "./providerHealth/catalog";
 import { handleAppConfiguration, handleOperationalControlAudit, handleOperationalControlGet, handleOperationalControlPatch, handleOperationalControlRollback } from "./routes/operationalControl";
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
-import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
+import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventHistory, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
+import { handleProviderScopedBeachEventRefresh } from "./routes/refreshBeachEventsProvider";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
 import { readProviderHealthNotificationConfig, readProviderHealthNotificationState, sendProviderHealthNotificationTest, updateProviderHealthNotificationConfig } from "./providerHealth/notifications";
@@ -32,6 +33,7 @@ import { handleHistoricalObservations } from "./history/observations";
 import { handleInformationReportCreate, handleInformationReportsAdmin, isInformationReportSubmissionHost } from "./routes/informationReports";
 import { handleOfficialAlertHealthRequest, handleOfficialAlertsRequest } from "./routes/officialAlerts";
 import { refreshOfficialAlerts } from "./officialAlerts/refresh";
+import { liveProviderFetchAllowed, providerFetchDisabledResponse, stagingIsolationDiagnostics } from "./config/stagingIsolation";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -164,6 +166,12 @@ export default {
 			if (request.method !== "GET") return methodNotAllowed("GET");
 			return await handleProviderHealthAdminRequest(env);
 		}
+		if (pathname === "/admin/environment-diagnostics") {
+			const identity = await authenticateAdminRequest(request, env);
+			if (!identity) return forbiddenAdminResponse();
+			if (request.method !== "GET") return methodNotAllowed("GET");
+			return jsonResponse({ ...stagingIsolationDiagnostics(env), apiVersion: API_VERSION }, { headers: { "Cache-Control": "no-store" } });
+		}
 		if (pathname === "/admin/official-alerts/health") {
 			const identity = await authenticateAdminRequest(request, env);
 			if (!identity) return forbiddenAdminResponse();
@@ -269,6 +277,8 @@ export default {
 		if (pathname.startsWith("/admin/beach-events/")) {
 			const identity = await authenticateAdminRequest(request, env);
 			if (!identity) return forbiddenAdminResponse();
+			const historyMatch = pathname.match(/^\/admin\/beach-events\/([^/]+)\/history$/);
+			if (historyMatch) return request.method === "GET" ? await handleBeachEventHistory(request, env, decodeURIComponent(historyMatch[1])) : methodNotAllowed("GET");
 			const id = decodeURIComponent(pathname.slice("/admin/beach-events/".length));
 			if (request.method === "PATCH") return await handleBeachEventsAdminUpdate(request, env, identity, id);
 			if (request.method === "DELETE") return await handleBeachEventsAdminDelete(env, identity, id);
@@ -321,10 +331,12 @@ export default {
 
 				if (pathname === "/internal/verification/run") {
 					if (request.method !== "POST") return methodNotAllowed("POST");
+					if (!liveProviderFetchAllowed(env)) return providerFetchDisabledResponse();
 					return await dispatchVerification(env);
 				}
 
 				if (request.method !== "POST") return methodNotAllowed("POST");
+				if (pathname.startsWith("/internal/refresh/") && !liveProviderFetchAllowed(env)) return providerFetchDisabledResponse();
 
 				if (pathname === "/internal/refresh/water-quality") {
 					return await handleRefreshWaterQualityRequest(request, env, identity);
@@ -342,6 +354,7 @@ export default {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
 				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env, new Date(), fetch, { trigger: "admin", identity }));
+				if (pathname === "/internal/refresh/beach-events/provider") return await handleProviderScopedBeachEventRefresh(request, env, identity);
 				if (pathname === "/internal/refresh/official-alerts") return jsonResponse(await refreshOfficialAlerts(env));
 				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
@@ -408,7 +421,11 @@ export default {
 		);
 	},
 
-		async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+	async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
+		if (!liveProviderFetchAllowed(env)) {
+			console.info("[Staging isolation] staging provider fetch disabled");
+			return;
+		}
 			const cron = controller.cron;
 			const runScheduled = async (job: RefreshJob): Promise<void> => {
 				const heartbeat = await recordJobAttempt(env, job, new Date(controller.scheduledTime));

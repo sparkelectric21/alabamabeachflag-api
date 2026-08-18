@@ -5,6 +5,7 @@ import { evaluateBeachActivityNotificationsControl, readOperationalControl } fro
 import { processProviderHealthObservations } from "../providerHealth/process";
 import { AUDIT_PREFIX, eventNeedsReview, listEvents, listExcludedCandidates } from "./store";
 import { BEACH_EVENT_REFRESH_STATUS_KEY, type BeachEvent, type BeachEventRefreshStatus, type ExcludedEventCandidate } from "./types";
+import { externalEmailAllowed } from "../config/stagingIsolation";
 
 export const BEACH_ACTIVITY_NOTIFICATION_CONFIG_KEY = "beach-events:v1:notification-config";
 export const BEACH_ACTIVITY_NOTIFICATION_STATE_KEY = "beach-events:v1:notification-state";
@@ -251,12 +252,14 @@ async function recordHealth(env: Env, now: Date, error?: string): Promise<void> 
 	await processProviderHealthObservations(env, [{ provider: "beach_activity_notifications", domain: "beach_events", affectedBeachCount: error ? 1 : 0, expectedBeachCount: 1, ...(error ? { errorReason: error } : {}) }], now.toISOString());
 }
 
-async function sendEmail(env: Env, config: BeachActivityNotificationConfig, message: BeachActivityEmail): Promise<void> {
+async function sendEmail(env: Env, config: BeachActivityNotificationConfig, message: BeachActivityEmail): Promise<"sent" | "delivery_suppressed"> {
+	if (!externalEmailAllowed(env)) return "delivery_suppressed";
 	if (!env.VERIFICATION_ALERT_EMAIL?.send) throw new Error("notification_email_binding_not_configured");
 	if (config.recipients.length === 0) throw new Error("notification_recipients_not_configured");
 	for (const recipient of config.recipients) {
 		await env.VERIFICATION_ALERT_EMAIL.send({ from: SENDER, to: recipient, subject: message.subject, text: message.text, html: message.html });
 	}
+	return "sent";
 }
 
 async function persistState(env: Pick<Env, "BEACH_DATA">, state: BeachActivityNotificationState): Promise<void> {
@@ -293,7 +296,11 @@ export async function evaluateBeachActivityNotifications(
 		let error: unknown;
 		for (let attempt = 1; attempt <= 2; attempt += 1) {
 			try {
-				await sendEmail(env, config, message);
+				const delivery = await sendEmail(env, config, message);
+				if (delivery === "delivery_suppressed") {
+					await writeAudit(env, actor, method, "notification_delivery_suppressed", { kind: options.kind }, now);
+					return { outcome: "disabled", queue, state: prior };
+				}
 				await writeAudit(env, actor, method, "notification_test", { recipients: config.recipients, attempt }, now);
 				return { outcome: "sent", queue, state: prior };
 			} catch (caught) {
@@ -339,7 +346,13 @@ export async function evaluateBeachActivityNotifications(
 	let error: unknown;
 	for (let attempt = 1; attempt <= 2; attempt += 1) {
 		try {
-			await sendEmail(env, config, message);
+			const delivery = await sendEmail(env, config, message);
+			if (delivery === "delivery_suppressed") {
+				state = { ...state, lastOutcome: "disabled" };
+				await persistState(env, state);
+				await writeAudit(env, actor, method, "notification_delivery_suppressed", { kind: options.kind, revision: queue.revision }, now);
+				return { outcome: "disabled", queue, state };
+			}
 			const sentAt = now.toISOString();
 			state = { ...state, lastNotificationAt: sentAt, lastSuccessAt: sentAt, lastFailureAt: null, lastProviderError: null, lastNotificationRevision: queue.revision, lastNotificationKind: options.kind, lastOutcome: "sent", ...(options.kind === "reminder" ? { lastReminderAt: sentAt } : {}) };
 			await persistState(env, state);
