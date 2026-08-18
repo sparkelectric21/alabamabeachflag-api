@@ -15,10 +15,15 @@ import type { ProviderFetchDiagnostics } from "../providerHealth/types";
 export const REFRESH_STATUS_KEY = BEACH_EVENT_REFRESH_STATUS_KEY;
 const RUN_LOCK_MS = 10 * 60 * 1000;
 
+export type BeachEventRefreshScope =
+	| { mode: "all" }
+	| { mode: "provider"; providerId: string };
+
 interface RefreshOptions {
 	trigger?: "scheduled" | "admin";
 	identity?: AdminIdentity;
 	icalFetch?: ICalendarFetchOptions;
+	scope?: BeachEventRefreshScope;
 }
 
 interface ICalendarConditionalState {
@@ -55,6 +60,13 @@ export async function readBeachEventRefreshStatus(env: Pick<Env, "BEACH_DATA">, 
 
 export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: typeof fetch = fetch, options: RefreshOptions = {}) {
 	const trigger = options.trigger ?? "scheduled";
+	const scope = options.scope ?? { mode: "all" as const };
+	const selectedProvider = scope.mode === "provider"
+		? BEACH_EVENT_PROVIDERS.find((provider) => provider.id === scope.providerId)
+		: undefined;
+	if (scope.mode === "provider" && (!selectedProvider || selectedProvider.mode === "disabled" || selectedProvider.mode === "manualOnly")) {
+		return { outcome: "providerUnavailable" as const, providers: [], snapshot: null, refresh: null };
+	}
 	const runId = crypto.randomUUID();
 	const prior = await env.BEACH_DATA.get<BeachEventRefreshStatus>(REFRESH_STATUS_KEY, "json");
 	const priorSnapshot = await env.BEACH_DATA.get(SNAPSHOT_KEY, "json") as { revision?: string } | null;
@@ -62,6 +74,13 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		return { outcome: "duplicate" as const, providers: prior.providers, snapshot: null, refresh: prior };
 	}
 	const operational = evaluateBeachEventsControl(await readOperationalControl(env, now), now);
+	if (selectedProvider) {
+		const selectedControl = evaluateBeachEventsControl(await readOperationalControl(env, now), now, selectedProvider.controlId);
+		if (operational.state === "disabled" || selectedControl.state === "disabled") {
+			return { outcome: "providerUnavailable" as const, providers: [], snapshot: null, refresh: null };
+		}
+	}
+	const providersToRun = selectedProvider ? [selectedProvider] : BEACH_EVENT_PROVIDERS;
 	const running: BeachEventRefreshStatus = {
 		schemaVersion: 1, runId, status: "running", trigger, lastAttempt: now.toISOString(),
 		...(prior?.lastSuccess ? { lastSuccess: prior.lastSuccess } : {}),
@@ -69,6 +88,12 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 		nextScheduledRefresh: nextBeachEventRefresh(now),
 		scheduleDescription: BEACH_EVENT_SCHEDULE_DESCRIPTION,
 		operationalState: operational.state,
+		scope: {
+			mode: scope.mode,
+			...(selectedProvider ? { selectedProviderId: selectedProvider.id } : {}),
+			requestedProviderCount: selectedProvider ? 1 : providersToRun.length,
+			attemptedProviderCount: 0,
+		},
 		providers: [],
 		counts: emptyCounts(),
 	};
@@ -83,7 +108,7 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 
 	const observations = [], providerResults: BeachEventProviderRefresh[] = [];
 	const conditionalCommits: Array<{ key: string; state: ICalendarConditionalState }> = [];
-	for (const provider of BEACH_EVENT_PROVIDERS) {
+	for (const provider of providersToRun) {
 		const priorProvider = prior?.providers.find((item) => item.providerId === provider.id);
 		let diagnostics: ProviderFetchDiagnostics | undefined;
 		if (provider.mode === "disabled" || provider.mode === "manualOnly") {
@@ -181,9 +206,9 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 			observations.push({ provider: provider.id, domain: "beach_events", affectedBeachCount: 1, expectedBeachCount: 1, errorReason: message, ingestionMode: provider.mode, ...(diagnostics ? { diagnostics } : {}) });
 		}
 	}
-	await reconcileProviderHealthModes(env, new Map(BEACH_EVENT_PROVIDERS.map((provider) => [`${provider.id}:beach_events`, provider.mode])), now.toISOString());
+	await reconcileProviderHealthModes(env, new Map(providersToRun.map((provider) => [`${provider.id}:beach_events`, provider.mode])), now.toISOString());
 	await processProviderHealthObservations(env, observations, now.toISOString());
-	const archival = await archiveCompletedEvents(env, now, trigger);
+	const archival = scope.mode === "provider" ? { archived: 0 } : await archiveCompletedEvents(env, now, trigger);
 	// KV makes this an advisory ownership check, not an exclusive lock. It prevents
 	// a run already known to be superseded from publishing final status/snapshot.
 	const ownership = await env.BEACH_DATA.get<BeachEventRefreshStatus>(REFRESH_STATUS_KEY, "json");
@@ -231,6 +256,7 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 	const completedAt = new Date().toISOString();
 	const refresh: BeachEventRefreshStatus = {
 		...running, status, completedAt, providers: providerResults, counts, publicRevisionChanged,
+		scope: { ...running.scope!, attemptedProviderCount: attempted.length },
 		...(failures.length ? { lastFailure: completedAt, lastFailureMessage: failures.map((item) => `${item.providerId}: ${item.error}`).join("; ") } : {}),
 		...(status === "healthy" || status === "warning" ? { lastSuccess: completedAt } : {}),
 		...(snapshot ? { snapshotGeneratedAt: snapshot.generatedAt, staleUntil: snapshot.staleUntil } : {}),
@@ -238,6 +264,6 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 	const finalOwnership = await env.BEACH_DATA.get<BeachEventRefreshStatus>(REFRESH_STATUS_KEY, "json");
 	if (finalOwnership?.runId && finalOwnership.runId !== runId) return { outcome: "duplicate" as const, providers: providerResults, snapshot: null, refresh: finalOwnership };
 	await env.BEACH_DATA.put(REFRESH_STATUS_KEY, JSON.stringify(refresh));
-	if (options.identity) await audit(env, options.identity, "refresh_event_sources", "beach-events", refresh, now, { changedFields: ["refresh"], publicOutputAffected: publicRevisionChanged, reason: trigger });
+	if (options.identity) await audit(env, options.identity, "refresh_event_sources", "beach-events", refresh, now, { changedFields: ["refresh"], publicOutputAffected: publicRevisionChanged, reason: scope.mode === "provider" ? `${trigger}:provider:${scope.providerId}` : trigger });
 	return { outcome: status === "failed" ? "failed" as const : status === "warning" ? "partial" as const : "completed" as const, providers: providerResults, snapshot, refresh };
 }

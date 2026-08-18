@@ -280,6 +280,13 @@ export interface BeachEventRefreshStatus {
 	nextScheduledRefresh: string;
 	scheduleDescription: string;
 	operationalState: "enabled" | "disabled" | "monitorOnly";
+	scope?: {
+		mode: "all" | "provider";
+		selectedProviderId?: string;
+		requestedProviderCount: number;
+		attemptedProviderCount: number;
+		skipReason?: string;
+	};
 	providers: BeachEventProviderRefresh[];
 	counts: {
 		raw: number;

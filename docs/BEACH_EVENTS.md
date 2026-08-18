@@ -14,6 +14,9 @@ This isolated domain answers whether a scheduled activity is physically happenin
 - `PATCH /admin/beach-events/notifications` updates the review-notification preferences.
 - `POST /admin/beach-events/notifications/send` sends the current pending-review summary; `/test` verifies delivery without changing event state.
 - `POST /internal/refresh/beach-events` performs an authenticated isolated refresh.
+- `POST /internal/refresh/beach-events/provider` performs an authenticated refresh of exactly one enabled automated provider. Its JSON body is `{"providerId":"gulfStatePark"}`. IDs are matched exactly against the server-side registry; URLs, multiple providers, disabled providers, and manual-only providers are rejected before a run is created.
+
+The provider-scoped staging route remains disabled unless `STAGING_LIVE_PROVIDER_FETCH_ENABLED=true`; invoking it makes a live upstream request. Scoped runs share the normal lock, conditional-fetch, quality, lifecycle, and provider-health safeguards. They never treat unselected providers as absent, and any public snapshot is rebuilt from the complete stored eligible event set. The existing `/internal/refresh/beach-events` endpoint remains the explicit all-provider operation.
 
 The latest normalized source facts remain nested for traceability while editable local fields control app presentation. When a source revision is material, the previously reviewed facts are retained in `sourceChange` and in the audit record. Event states are draft, discovered, pending review, approved, scheduled, published, disregarded, cancelled, expired, and hidden. Flags such as material source change, ambiguous match, possible duplicate, source missing/removed/restored, and normalization warning add attention without creating redundant states.
 

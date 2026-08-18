@@ -24,6 +24,7 @@ import { handleAppConfiguration, handleOperationalControlAudit, handleOperationa
 import { recordJobAttempt, recordJobCompletion } from "./monitoring/jobHealth";
 import { handleBeachActivityNotificationPreferences, handleBeachActivityNotificationSend, handleBeachEventHistory, handleBeachEventRuleCreate, handleBeachEventSuggest, handleBeachEventsAdminCreate, handleBeachEventsAdminDelete, handleBeachEventsAdminGet, handleBeachEventsAdminNormalize, handleBeachEventsAdminUpdate, handleBeachEventsRequest, handleExcludedEventAssign } from "./routes/beachEvents";
 import { refreshBeachEvents } from "./beachEvents/refresh";
+import { handleProviderScopedBeachEventRefresh } from "./routes/refreshBeachEventsProvider";
 import { isBeachEventRefreshHour } from "./beachEvents/schedule";
 import { evaluateBeachActivityNotifications, isBeachActivityReminderTime, readBeachActivityNotificationConfig } from "./beachEvents/notifications";
 import { readProviderHealthNotificationConfig, readProviderHealthNotificationState, sendProviderHealthNotificationTest, updateProviderHealthNotificationConfig } from "./providerHealth/notifications";
@@ -353,6 +354,7 @@ export default {
 					return await handleRefreshBeachFlagsRequest(request, env, identity);
 				}
 				if (pathname === "/internal/refresh/beach-events") return jsonResponse(await refreshBeachEvents(env, new Date(), fetch, { trigger: "admin", identity }));
+				if (pathname === "/internal/refresh/beach-events/provider") return await handleProviderScopedBeachEventRefresh(request, env, identity);
 				if (pathname === "/internal/refresh/official-alerts") return jsonResponse(await refreshOfficialAlerts(env));
 				if (pathname === "/internal/refresh/rip-current-outlook") return await handleAdminRefreshRequest(request, env, "rip-current-outlook", identity);
 
