@@ -35,6 +35,7 @@ export const VENUE_MAPPINGS: VenueMapping[] = [
 		addresses: ["22250 East Beach Blvd, Gulf Shores, AL 36542", "22250 E Beach Blvd, Gulf Shores, AL 36542"],
 		sourceAliases: { gulfStatePark: [
 			"Gulf State Park Beach Pavillion",
+			"Gulf State Park Pavillion",
 			"Gulf State Park Pavillion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
 			"Gulf State Park Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
 			"Beach Pavilion, 22250 E Beach Blvd, Gulf Shores, AL 36542, USA",
@@ -91,6 +92,7 @@ export const normalizeMatchAddress = (value = "") => normalizeMatchText(value)
 	.replace(/\b(east|west|north|south)\b/g, (word) => word[0])
 	.replace(/\b(boulevard|avenue|street|road|highway|drive|lane|parkway)\b/g, (word) => ({ boulevard: "blvd", avenue: "ave", street: "st", road: "rd", highway: "hwy", drive: "dr", lane: "ln", parkway: "pkwy" })[word]!)
 	.replace(/\balabama\b/g, "al")
+	.replace(/\busa\b$/g, "")
 	.replace(/\s+/g, " ")
 	.trim();
 

@@ -264,7 +264,7 @@ export interface BeachEventProviderRefresh {
 	lastFailure?: string;
 	error?: string;
 	diagnostics?: import("../providerHealth/types").ProviderFetchDiagnostics;
-	completeness?: "complete" | "partial" | "confirmedUnchanged";
+	completeness?: "complete" | "quarantined" | "partial" | "confirmedUnchanged";
 }
 
 export interface BeachEventRefreshStatus {

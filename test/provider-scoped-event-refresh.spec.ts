@@ -115,7 +115,7 @@ describe("provider-scoped beach-event refresh", () => {
 
 	it("keeps partial, rejected, and 304 outcomes local to Gulf State Park", async () => {
 		const partial = memoryEnv();
-		const partialResult = await refreshBeachEvents(partial.env, new Date("2026-08-17T12:00:00Z"), vi.fn(async () => new Response(mixedCalendar(19, 1), { headers: { "Content-Type": "text/calendar", ETag: "partial" } })) as unknown as typeof fetch, { scope: { mode: "provider", providerId: "gulfStatePark" } });
+		const partialResult = await refreshBeachEvents(partial.env, new Date("2026-08-17T12:00:00Z"), vi.fn(async () => new Response(mixedCalendar(49, 1), { headers: { "Content-Type": "text/calendar", ETag: "partial" } })) as unknown as typeof fetch, { scope: { mode: "provider", providerId: "gulfStatePark" } });
 		expect(partialResult).toMatchObject({ outcome: "partial", refresh: { providers: [{ providerId: "gulfStatePark", status: "partial", completeness: "partial" }] }, snapshot: null });
 		expect([...partial.values.keys()].filter((key) => key.includes("ical-state:"))).toEqual(["beach-events:v1:ical-state:gulfStatePark"]);
 
@@ -128,6 +128,14 @@ describe("provider-scoped beach-event refresh", () => {
 		unchanged.values.set("beach-events:v1:ical-state:gulfStatePark", JSON.stringify({ schemaVersion: 2, validators: { etag: "same" }, lastAcceptedCompleteness: "complete", lastCompleteValidCount: 1 }));
 		const unchangedResult = await refreshBeachEvents(unchanged.env, new Date("2026-08-17T12:00:00Z"), vi.fn(async () => new Response(null, { status: 304 })) as unknown as typeof fetch, { scope: { mode: "provider", providerId: "gulfStatePark" } });
 		expect(unchangedResult).toMatchObject({ outcome: "completed", refresh: { providers: [{ providerId: "gulfStatePark", completeness: "confirmedUnchanged" }] } });
+	});
+
+	it("publishes valid events and records a healthy bounded quarantine without absence reconciliation", async () => {
+		const h = memoryEnv();
+		const result = await refreshBeachEvents(h.env, new Date("2026-08-17T12:00:00Z"), vi.fn(async () => new Response(mixedCalendar(199, 1), { headers: { "Content-Type": "text/calendar", ETag: "quarantined" } })) as unknown as typeof fetch, { scope: { mode: "provider", providerId: "gulfStatePark" } });
+		expect(result).toMatchObject({ outcome: "completed", refresh: { providers: [{ providerId: "gulfStatePark", status: "ok", completeness: "quarantined", missingFromSource: 0 }] } });
+		expect(result.snapshot).not.toBeNull();
+		expect(JSON.parse(h.values.get("beach-events:v1:ical-state:gulfStatePark")!)).toMatchObject({ lastAcceptedCompleteness: "quarantined", lastPartialValidCount: 199 });
 	});
 
 	it("protects the route and retains the staging live-fetch gate", async () => {

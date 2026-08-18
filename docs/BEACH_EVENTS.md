@@ -18,6 +18,8 @@ This isolated domain answers whether a scheduled activity is physically happenin
 
 The provider-scoped staging route remains disabled unless `STAGING_LIVE_PROVIDER_FETCH_ENABLED=true`; invoking it makes a live upstream request. Scoped runs share the normal lock, conditional-fetch, quality, lifecycle, and provider-health safeguards. They never treat unselected providers as absent, and any public snapshot is rebuilt from the complete stored eligible event set. The existing `/internal/refresh/beach-events` endpoint remains the explicit all-provider operation.
 
+iCalendar components are quarantined individually. An observation with at most five rejected components and no more than a one-percent rejected-component ratio is recorded as `quarantined`: valid components may update the full stored-event snapshot and provider health remains successful, but source-absence reconciliation stays disabled. Larger non-fatal rejection ratios remain `partial`, preserve the last public snapshot, and degrade provider health; the existing five-percent quality gate still fails closed.
+
 The latest normalized source facts remain nested for traceability while editable local fields control app presentation. When a source revision is material, the previously reviewed facts are retained in `sourceChange` and in the audit record. Event states are draft, discovered, pending review, approved, scheduled, published, disregarded, cancelled, expired, and hidden. Flags such as material source change, ambiguous match, possible duplicate, source missing/removed/restored, and normalization warning add attention without creating redundant states.
 
 ## Exact-beach matching policy

@@ -32,7 +32,7 @@ interface ICalendarConditionalState {
 	lastGoodValidCount?: number;
 	lastCompleteValidCount?: number;
 	lastPartialValidCount?: number;
-	lastAcceptedCompleteness?: "complete" | "partial";
+	lastAcceptedCompleteness?: "complete" | "quarantined" | "partial";
 }
 
 export function sanitizeStoredRefreshError(error: unknown): string {
@@ -141,7 +141,7 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 					if (fetched.status === "notModified") {
 						const priorCompleteness = priorICalendar?.lastAcceptedCompleteness ?? "complete";
 						unchangedConfirmation = priorCompleteness === "complete";
-						completeness = priorCompleteness === "complete" ? "confirmedUnchanged" : "partial";
+						completeness = priorCompleteness === "complete" ? "confirmedUnchanged" : priorCompleteness;
 						return [];
 					}
 					const parsed = parseICalendarResult(fetched.body!, provider);
@@ -152,7 +152,11 @@ export async function refreshBeachEvents(env: Env, now = new Date(), fetcher: ty
 						diagnostics = sanitizeProviderDiagnostics({ ...diagnostics, failureCategory: qualityFailure });
 						throw new Error(diagnostics?.failureCategory ?? "calendar_quality_gate");
 					}
-					completeness = parsed.complete ? "complete" : "partial";
+					const safelyQuarantined = !parsed.complete
+						&& parsed.validVEventCount > 0
+						&& parsed.rejectedVEventCount <= 5
+						&& parsed.rejectedVEventCount / parsed.totalVEventCount <= 0.01;
+					completeness = parsed.complete ? "complete" : safelyQuarantined ? "quarantined" : "partial";
 					conditionalCommit = {
 						schemaVersion: 2,
 						validators: fetched.validators,
