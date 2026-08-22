@@ -6,12 +6,29 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
 	"preview_urls": false,
+	"routes": [
+		{
+			"pattern": "REPLACE_WITH_STAGING_HOST/admin/service/*",
+			"zone_name": "REPLACE_WITH_ZONE_NAME"
+		},
+		{
+			"pattern": "REPLACE_WITH_STAGING_HOST/v1/information-reports*",
+			"zone_name": "REPLACE_WITH_ZONE_NAME"
+		}
+	],
 	"observability": { "enabled": true },
 	"upload_source_maps": true,
 	"kv_namespaces": [
 		{
 			"binding": "BEACH_DATA",
 			"id": "REPLACE_WITH_STAGING_KV_NAMESPACE_ID"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "HISTORICAL_DATA",
+			"database_name": "REPLACE_WITH_STAGING_D1_DATABASE_NAME",
+			"database_id": "REPLACE_WITH_STAGING_D1_DATABASE_ID"
 		}
 	],
 	"durable_objects": {
@@ -25,16 +42,28 @@
 		{ "tag": "v2-verification-coordinator", "new_sqlite_classes": ["VerificationCoordinator"] }
 	],
 	"vars": {
-		"APP_ENVIRONMENT": "staging",
-		"STAGING_LIVE_PROVIDER_FETCH_ENABLED": "false",
-		"STAGING_EXTERNAL_EMAIL_ENABLED": "false",
-		"STAGING_SYNTHETIC_FIXTURES_ENABLED": "false",
+		"ACCESS_ALLOWED_SERVICE_TOKENS": "REPLACE_WITH_STAGING_SERVICE_TOKEN_CLIENT_ID",
+		"ACCESS_AUD": "REPLACE_WITH_WORKERS_DEV_ACCESS_AUDIENCE,REPLACE_WITH_CUSTOM_HOST_ACCESS_AUDIENCE",
+		"ACCESS_ALLOWED_IDENTITIES": "REPLACE_WITH_ALLOWED_STAGING_IDENTITY",
+		"ACCESS_TEAM_DOMAIN": "https://REPLACE_WITH_ACCESS_TEAM_DOMAIN",
 		"ALLOW_LEGACY_REFRESH_SECRET": "false",
+		"APP_ENVIRONMENT": "staging",
+		"HISTORICAL_DATA_ENVIRONMENT": "staging",
+		"STAGING_EXTERNAL_EMAIL_ENABLED": "false",
+		"STAGING_LIVE_PROVIDER_FETCH_ENABLED": "false",
+		"STAGING_SYNTHETIC_FIXTURES_ENABLED": "false",
 		"VERIFICATION_API_BASE_URL": "https://REPLACE_WITH_STAGING_WORKER_HOST",
 		"VERIFICATION_ALERTS_ENABLED": "false",
 		"VERIFICATION_ALERT_ENVIRONMENT": "staging",
-		"HISTORICAL_DATA_ENVIRONMENT": "staging",
-		"VIBRIO_CONDITIONS_ENABLED": "true"
+		"VIBRIO_CONDITIONS_ENABLED": "true",
+		"IPAWS_INGESTION_ENABLED": "false",
+		"IPAWS_ENVIRONMENT": "staging",
+		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false",
+		"IPAWS_HEALTH_TTL_SECONDS": "604800",
+		"IPAWS_RECORD_TTL_SECONDS": "604800",
+		"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800",
+		"IPAWS_PARSE_BYTE_LIMIT": "262144"
 	},
+	// Staging has no schedules by default. Adding one requires separate authorization.
 	"triggers": { "crons": [] }
 }

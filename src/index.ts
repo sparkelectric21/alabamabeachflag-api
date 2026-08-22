@@ -34,6 +34,7 @@ import { handleInformationReportCreate, handleInformationReportsAdmin, isInforma
 import { handleOfficialAlertHealthRequest, handleOfficialAlertsRequest } from "./routes/officialAlerts";
 import { refreshOfficialAlerts } from "./officialAlerts/refresh";
 import { liveProviderFetchAllowed, providerFetchDisabledResponse, stagingIsolationDiagnostics } from "./config/stagingIsolation";
+import { handleIpawsPubSubRequest } from "./ipaws/handler";
 
 export { RefreshCoordinator } from "./services/refresh/coordinator";
 export { VerificationCoordinator } from "./verification/coordinator";
@@ -309,6 +310,13 @@ export default {
 			}
 
 			return methodNotAllowed("GET, HEAD");
+		}
+
+		if (pathname === "/v1/ipaws/pubsub") {
+			if (request.method !== "POST") {
+				return methodNotAllowed("POST");
+			}
+			return await handleIpawsPubSubRequest(request, env);
 		}
 
 			if (pathname.startsWith("/internal/")) {

@@ -7,6 +7,7 @@ import type { Env } from "../types";
 import { evaluateJobHealth, JOB_HEALTH_CONFIG, jobHealthKey, type JobHeartbeat, type MonitoredJob } from "../monitoring/jobHealth";
 import { BEACH_CONDITIONS_CACHE_KEY, BEACH_FLAGS_CACHE_KEY, RIP_CURRENT_OUTLOOK_CACHE_KEY, WATER_QUALITY_CACHE_KEY } from "../services/cache/kv";
 import { PROVIDER_HEALTH_DELIVERY_PREFIX } from "../providerHealth/notifications";
+import { readIpawsHealthSnapshot } from "../ipaws/health";
 
 const text = (value: unknown, max = 240): string | null => typeof value === "string" && value.length > 0 ? value.slice(0, max) : null;
 const iso = (value: unknown): string | null => { const parsed = text(value, 64); return parsed && !Number.isNaN(Date.parse(parsed)) ? new Date(parsed).toISOString() : null; };
@@ -101,6 +102,7 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 	const providerFreshness: Array<{ dataset: string; observedAt: string | null; freshForMs: number; status: string; ageMs: number | null; precision: string }> = freshnessSources.map(([dataset, , freshForMs], index) => { const payload = freshnessPayloads[index]; const observedAt = iso(payload?.observedAt ?? payload?.generatedAt); const ageMs = observedAt ? Math.max(0, Date.parse(now) - Date.parse(observedAt)) : null; return { dataset, observedAt, freshForMs, status: ageMs === null ? "unknown" : ageMs <= freshForMs ? "fresh" : "stale", ageMs, precision: payload?.observedAt ? "provider_observation" : "publication_or_refresh" }; });
 	const waterTemperatureObservedAt = freshnessPayloads[1]?.beachConditions?.map((item) => iso(item.waterTemperature?.observedAt)).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
 	const waterTemperatureAgeMs = waterTemperatureObservedAt ? Math.max(0, Date.parse(now) - Date.parse(waterTemperatureObservedAt)) : null;
+	const ipawsHealth = await readIpawsHealthSnapshot(env);
 	providerFreshness.push({ dataset: "water-temperature observation", observedAt: waterTemperatureObservedAt, freshForMs: 7_200_000, status: waterTemperatureAgeMs === null ? "unknown" : waterTemperatureAgeMs <= 7_200_000 ? "fresh" : "stale", ageMs: waterTemperatureAgeMs, precision: "provider_observation" });
 	return Response.json({ status: "ok", schemaVersion: 2, generatedAt: now, overall: {
 		status: activeIncidents.some((item) => item.severity === "critical") ? "critical" : degradedProviderCount > 0 ? "degraded" : "healthy",
@@ -111,5 +113,5 @@ export async function handleProviderHealthAdminRequest(env: Pick<Env, "BEACH_DAT
 		monitoringOnlyProviderCount: catalog.filter((item) => item.role === "Monitoring Only").length,
 		internalProtectionCount: catalog.filter((item) => item.role === "Internal Protection").length,
 		officialProviderCount: catalog.filter((item) => item.officialSource).length,
-	}, jobHealth, providerFreshness, providerCatalog, catalogAudit, providers, activeIncidents, recentAlerts, recentQualityGateRejections, emailPreviews }, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
+	}, jobHealth, providerFreshness, providerCatalog, catalogAudit, providers, activeIncidents, recentAlerts, recentQualityGateRejections, emailPreviews, ipawsReceiver: ipawsHealth }, { headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
 }

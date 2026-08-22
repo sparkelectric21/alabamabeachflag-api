@@ -100,6 +100,13 @@
 		"PROVIDER_HEALTH_NOTIFICATION_RECIPIENTS": "operations@alabamabeachflag.com",
 		// Temporary: App Store 1.2.0 decodes "double-red", but not canonical "doubleRed".
 		"IOS_1_2_DOUBLE_RED_COMPATIBILITY": "true"
+		,"IPAWS_INGESTION_ENABLED": "false"
+		,"IPAWS_ENVIRONMENT": "production"
+		,"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false"
+		,"IPAWS_HEALTH_TTL_SECONDS": "604800"
+		,"IPAWS_RECORD_TTL_SECONDS": "604800"
+		,"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800"
+		,"IPAWS_PARSE_BYTE_LIMIT": "262144"
 	},
 	// Scheduled refreshes are based on how frequently each data source changes.
 	// The app serves cached data from Workers KV, allowing fast responses without

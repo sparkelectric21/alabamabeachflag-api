@@ -51,11 +51,18 @@
 		"ACCESS_ALLOWED_IDENTITIES": "sparkelectricalservicesllc@gmail.com",
 		"ACCESS_TEAM_DOMAIN": "https://green-term-7fb3.cloudflareaccess.com",
 		"ALLOW_LEGACY_REFRESH_SECRET": "false",
+		"HISTORICAL_DATA_ENVIRONMENT": "staging",
 		"VERIFICATION_API_BASE_URL": "https://alabamabeachflag-api-staging.sparkelectricalservicesllc.workers.dev",
 		"VERIFICATION_ALERTS_ENABLED": "false",
 		"VERIFICATION_ALERT_ENVIRONMENT": "staging",
-		"HISTORICAL_DATA_ENVIRONMENT": "staging",
-		"VIBRIO_CONDITIONS_ENABLED": "true"
+		"VIBRIO_CONDITIONS_ENABLED": "true",
+		"IPAWS_INGESTION_ENABLED": "false",
+		"IPAWS_ENVIRONMENT": "staging",
+		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false",
+		"IPAWS_HEALTH_TTL_SECONDS": "604800",
+		"IPAWS_RECORD_TTL_SECONDS": "604800",
+		"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800",
+		"IPAWS_PARSE_BYTE_LIMIT": "262144"
 	},
 	// Staging has no schedules by default. Adding one requires separate authorization.
 	"triggers": { "crons": [] }
