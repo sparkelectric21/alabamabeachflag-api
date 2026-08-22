@@ -1,0 +1,26 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "alabamabeachflag-ipaws-staging",
+	"main": "src/ipaws/worker.ts",
+	"compatibility_date": "2026-06-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"preview_urls": false,
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "60f732dff736438bbb53edb2815059bb"
+		}
+	],
+	"vars": {
+		"IPAWS_INGESTION_ENABLED": "false",
+		"IPAWS_ENVIRONMENT": "staging",
+		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false",
+		"IPAWS_HEALTH_TTL_SECONDS": "604800",
+		"IPAWS_RECORD_TTL_SECONDS": "604800",
+		"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800",
+		"IPAWS_PARSE_BYTE_LIMIT": "262144"
+	}
+}
