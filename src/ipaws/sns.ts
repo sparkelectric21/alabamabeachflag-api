@@ -170,12 +170,17 @@ type CertificateReadResult =
 	| { ok: true; pem: string }
 	| { ok: false; reason: string; retryable: boolean };
 
+function cancelBody(body: ReadableStream<Uint8Array> | null, reason: string): void {
+	if (!body) return;
+	void body.cancel(reason).catch(() => undefined);
+}
+
 async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise<CertificateReadResult> {
 	const declaredLength = response.headers.get("content-length");
 	if (declaredLength) {
 		const parsedLength = Number.parseInt(declaredLength, 10);
 		if (Number.isFinite(parsedLength) && parsedLength > MAX_CERT_BYTES) {
-			await response.body?.cancel("certificate_too_large");
+			cancelBody(response.body, "certificate_too_large");
 			return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
 		}
 	}
@@ -183,8 +188,14 @@ async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise
 	const reader = response.body.getReader();
 	let rejectAborted: (reason: unknown) => void = () => undefined;
 	const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
-	const abortReader = () => rejectAborted(new DOMException("SNS certificate download timed out.", "AbortError"));
+	let abortTriggered = false;
+	const abortReader = () => {
+		if (abortTriggered) return;
+		abortTriggered = true;
+		rejectAborted(new DOMException("SNS certificate download timed out.", "AbortError"));
+	};
 	signal.addEventListener("abort", abortReader, { once: true });
+	if (signal.aborted) abortReader();
 	const chunks: Uint8Array[] = [];
 	let total = 0;
 	try {
@@ -200,8 +211,8 @@ async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise
 		}
 	} finally {
 		signal.removeEventListener("abort", abortReader);
-		if (signal.aborted) await reader.cancel("certificate_timeout").catch(() => undefined);
-		reader.releaseLock();
+		if (abortTriggered) void reader.cancel("certificate_timeout").catch(() => undefined);
+		try { reader.releaseLock(); } catch { /* Do not replace the primary read or timeout result. */ }
 	}
 	if (total === 0) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
 	const bytes = new Uint8Array(total);
@@ -229,6 +240,7 @@ async function readCertificate(url: string): Promise<CertificateReadResult> {
 	try {
 		const certResponse = await fetch(certUrl.toString(), { method: "GET", redirect: "manual", signal: controller.signal });
 		if (!certResponse.ok) {
+			cancelBody(certResponse.body, "certificate_http_error");
 			return {
 				ok: false,
 				reason: "ipaws_cert_fetch_failed",

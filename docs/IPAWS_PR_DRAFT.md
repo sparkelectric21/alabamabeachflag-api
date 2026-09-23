@@ -33,7 +33,7 @@ The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS 
 
 ### Test evidence
 
-Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 75/75 focused IPAWS tests, 791/791 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
+Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 80/80 focused IPAWS tests, 796/796 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
 
 ### Staging evidence
 

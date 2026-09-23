@@ -32,6 +32,24 @@ function certificateFetch() {
 	return vi.fn(async () => new Response(CERTIFICATE, { status: 200 }));
 }
 
+function observeAbortListeners(signal: AbortSignal, afterAdd?: () => void): () => number {
+	const add = signal.addEventListener.bind(signal);
+	const remove = signal.removeEventListener.bind(signal);
+	let active = 0;
+	signal.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+		add(type, listener, options);
+		if (type === "abort") {
+			active += 1;
+			afterAdd?.();
+		}
+	}) as typeof signal.addEventListener;
+	signal.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean) => {
+		remove(type, listener, options);
+		if (type === "abort") active -= 1;
+	}) as typeof signal.removeEventListener;
+	return () => active;
+}
+
 function environment(): Env {
 	let claimed = false;
 	const token = "internal-test-claim-token";
@@ -89,59 +107,189 @@ describe("AWS SNS signature verification", () => {
 		await expect(verifySnsSignature(message("2"))).resolves.toEqual({ valid: false, reason: "ipaws_invalid_cert" });
 	});
 
-	it("does not follow certificate URL redirects", async () => {
-		const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://example.com/cert.pem" } }));
+	it("does not follow redirects and cancels their response bodies", async () => {
+		vi.useFakeTimers();
+		let cancelled = false;
+		const body = new ReadableStream({
+			start(controller) { controller.enqueue(new TextEncoder().encode("redirect body")); },
+			cancel() { cancelled = true; },
+		});
+		const fetchMock = vi.fn(async () => new Response(body, { status: 302, headers: { location: "https://example.com/cert.pem" } }));
 		vi.stubGlobal("fetch", fetchMock);
 		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_failed" });
 		expect(fetchMock).toHaveBeenCalledWith(CERT_URL, expect.objectContaining({ redirect: "manual" }));
+		expect(cancelled).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it("classifies transient certificate retrieval as retryable", async () => {
-		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 503 })));
+	it("classifies transient certificate retrieval as retryable and cancels its body", async () => {
+		vi.useFakeTimers();
+		let cancellationCount = 0;
+		const bodies: ReadableStream[] = [];
+		vi.stubGlobal("fetch", vi.fn(async () => {
+			const body = new ReadableStream({
+				start(controller) { controller.enqueue(new TextEncoder().encode("upstream error")); },
+				cancel() { cancellationCount += 1; },
+			});
+			bodies.push(body);
+			return new Response(body, { status: 503 });
+		}));
 		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_failed", retryable: true });
+		expect(cancellationCount).toBe(1);
+		expect(bodies[0]?.locked).toBe(false);
 		const response = await handleIpawsPubSubRequest(new Request("https://example.test/v1/ipaws/pubsub", {
 			method: "POST", body: JSON.stringify(message("2")),
 		}), environment());
 		expect(response.status).toBe(503);
+		expect(cancellationCount).toBe(2);
+		expect(bodies.every((body) => !body.locked)).toBe(true);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("contains response-body cancellation failures without masking the HTTP result", async () => {
+		vi.useFakeTimers();
+		let cancellationAttempted = false;
+		const body = new ReadableStream({
+			start(controller) { controller.enqueue(new TextEncoder().encode("redirect body")); },
+			cancel() { cancellationAttempted = true; return Promise.reject(new Error("cancel failed")); },
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 302 })));
+		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_failed", retryable: false });
+		expect(cancellationAttempted).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it("rejects oversized declared and streamed certificate bodies", async () => {
+		vi.useFakeTimers();
 		vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { headers: { "content-length": "96001" } })));
 		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_too_large" });
+		expect(vi.getTimerCount()).toBe(0);
 		let cancelled = false;
+		let activeListeners = () => -1;
 		const body = new ReadableStream({
 			pull(controller) { controller.enqueue(new Uint8Array(48_001)); controller.enqueue(new Uint8Array(48_001)); },
 			cancel() { cancelled = true; },
 		});
-		vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			activeListeners = observeAbortListeners(init?.signal as AbortSignal);
+			return new Response(body);
+		}));
 		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_too_large" });
 		expect(cancelled).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it.each([false, true])("times out and cancels a stalled certificate body (partial=%s)", async (partial) => {
 		vi.useFakeTimers();
 		let cancelled = false;
-		vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+		const body = new ReadableStream({
 			start(controller) { if (partial) controller.enqueue(new TextEncoder().encode("partial")); },
 			pull() { return new Promise(() => undefined); },
 			cancel() { cancelled = true; },
-		}))));
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
 		const pending = verifySnsSignature(message("2"));
 		await vi.advanceTimersByTimeAsync(5_001);
 		await expect(pending).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
 		expect(cancelled).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("cancels, unlocks, and leaves no pending first read when the signal is already aborted before body consumption", async () => {
+		vi.useFakeTimers();
+		let cancelled = false;
+		let activeListeners = () => -1;
+		const body = new ReadableStream({
+			pull() { return new Promise(() => undefined); },
+			cancel() { cancelled = true; },
+		});
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			activeListeners = observeAbortListeners(init?.signal as AbortSignal);
+			await new Promise((resolve) => setTimeout(resolve, 5_001));
+			return new Response(body);
+		}));
+		const pending = verifySnsSignature(message("2"));
+		await vi.advanceTimersByTimeAsync(5_001);
+		await expect(pending).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
+		expect(cancelled).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("contains reader-cancellation rejection without masking a timeout", async () => {
+		vi.useFakeTimers();
+		let cancellationAttempted = false;
+		const body = new ReadableStream({
+			pull() { return new Promise(() => undefined); },
+			cancel() { cancellationAttempted = true; return Promise.reject(new Error("cancel failed")); },
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+		const pending = verifySnsSignature(message("2"));
+		await vi.advanceTimersByTimeAsync(5_001);
+		await expect(pending).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
+		expect(cancellationAttempted).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("handles an abort delivered between listener registration and the initial state check", async () => {
+		vi.useFakeTimers();
+		let cancelled = false;
+		let activeListeners = () => -1;
+		const body = new ReadableStream({
+			pull() { return new Promise(() => undefined); },
+			cancel() { cancelled = true; },
+		});
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			const signal = init?.signal as AbortSignal;
+			activeListeners = observeAbortListeners(signal, () => signal.dispatchEvent(new Event("abort")));
+			return new Response(body);
+		}));
+		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
+		expect(cancelled).toBe(true);
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("releases the lock and clears listener and timer state after a read failure", async () => {
+		vi.useFakeTimers();
+		let activeListeners = () => -1;
+		const body = new ReadableStream({ pull(controller) { controller.error(new Error("read failed")); } });
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			activeListeners = observeAbortListeners(init?.signal as AbortSignal);
+			return new Response(body);
+		}));
+		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it("accepts a valid certificate body that completes just within the deadline", async () => {
 		vi.useFakeTimers();
-		vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+		let activeListeners = () => -1;
+		const body = new ReadableStream({
 			start(controller) {
 				setTimeout(() => { controller.enqueue(new TextEncoder().encode(CERTIFICATE)); controller.close(); }, 4_999);
 			},
-		}))));
+		});
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			activeListeners = observeAbortListeners(init?.signal as AbortSignal);
+			return new Response(body);
+		}));
 		const pending = verifySnsSignature(message("2"));
 		await vi.advanceTimersByTimeAsync(4_999);
 		await expect(pending).resolves.toEqual({ valid: true, algorithm: "SHA-256" });
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it("returns HTTP 503 when certificate body download times out", async () => {
