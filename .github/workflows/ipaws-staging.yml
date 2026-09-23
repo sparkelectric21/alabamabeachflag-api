@@ -1,0 +1,43 @@
+name: IPAWS staging receiver
+
+on:
+  pull_request:
+    paths:
+      - "src/ipaws/**"
+      - "src/types.ts"
+      - "test/ipaws-*.spec.ts"
+      - "test/fixtures/sns-*"
+      - "docs/IPAWS_STAGING_RECEIVER.md"
+      - "wrangler.ipaws.staging.jsonc"
+      - "worker-configuration.d.ts"
+      - ".github/workflows/ipaws-staging.yml"
+  push:
+    branches:
+      - "codex/ipaws-staging-receiver"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - name: Whitespace lint
+        run: git diff --check
+      - name: Type check
+        run: npm run typecheck
+      - name: Focused IPAWS tests
+        run: npm test -- test/ipaws-sns.spec.ts test/ipaws-ingestion.spec.ts test/ipaws-worker.spec.ts
+      - name: Full test suite
+        run: npm test
+      - name: Check generated Worker types
+        run: npx wrangler types --check --config wrangler.ipaws.staging.jsonc
+      - name: Validate staging bundle and bindings
+        run: npx wrangler deploy --dry-run --outdir /tmp/ipaws-staging-dry-run --config wrangler.ipaws.staging.jsonc
