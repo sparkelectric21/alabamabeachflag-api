@@ -68,7 +68,7 @@ The Durable Object claim and KV outputs are not one transaction. Every post-clai
 - No IPAWS user-facing alert publication is added in this phase.
 - No notification push integration is added in this phase.
 - No FEMA endpoint is contacted from this code.
-- Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature payloads remain bounded, TTL-limited staging diagnostics and need a separate retention/rate-control decision before production.
+- Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature records retain only envelope metadata and a SHA-256 digest of the untrusted message body; the raw body is not stored or parsed.
 - Geographic filtering and relevance routing are intentionally deferred.
 
 ## Before FEMA production onboarding

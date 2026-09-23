@@ -70,5 +70,5 @@ After the safe upgrades, the full audit reports two moderate development-only fi
 
 - The committed PEM private key is a generated test fixture used only to create deterministic signatures. It is not trusted externally and is not a production secret.
 - The staging Wrangler file names only the staging Worker, staging KV namespace, staging Durable Object, and staging variables. It has no production route, queue, service, user store, notification binding, or production secret.
-- Invalid-signature bodies are currently retained in staging KV for diagnostics until TTL expiry. They are size bounded, but this permits unauthenticated storage consumption. Production should retain only bounded metadata/digests for invalid deliveries or apply a rate/storage control.
+- Invalid-signature records retain bounded envelope metadata and a SHA-256 digest until TTL expiry. Their untrusted message bodies are neither parsed nor stored, preventing unauthenticated payloads from consuming raw-body storage.
 - The idempotency coordinator and KV are not one transaction. See the production consumer design for the required downstream constraints.

@@ -344,6 +344,17 @@ describe("IPAWS pub/sub handler", () => {
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({ code: "ipaws_signature_mismatch" });
 		expect(verify).toHaveBeenCalled();
+		const record = JSON.parse(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`) ?? "{}");
+		expect(record).toMatchObject({
+			processingState: "signature_invalid",
+			signatureResult: "failure",
+			parseStatus: "parse_failed",
+			parseError: "invalid_signature_untrusted_payload",
+			rawMessage: "",
+			messageBody: null,
+		});
+		expect(record.rawMessageDigestSha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(JSON.stringify(record)).not.toContain(baseNotification.Message);
 	});
 
 	it("retains a signed malformed CAP payload as parse_failed without normalized output", async () => {

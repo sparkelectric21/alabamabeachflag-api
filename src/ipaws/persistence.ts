@@ -45,6 +45,7 @@ export async function upsertIngestionRecord(
 	parseResult: IpawsCapParseResult,
 	messageTopicArn: string,
 	recordTtlSeconds: number,
+	rawMessageDigestSha256: string | null = null,
 ): Promise<IpawsIngressReceipt> {
 	const existing = await readIngestionRecord(env, message.MessageId);
 	if (existing) return { duplicate: true, record: existing };
@@ -63,6 +64,7 @@ export async function upsertIngestionRecord(
 		signatureResult,
 		parseStatus: parseResult.status,
 		rawMessage,
+		rawMessageDigestSha256,
 		messageBody: parseResult.message ?? null,
 		parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
 		parseResultSummary: parseResult.status,

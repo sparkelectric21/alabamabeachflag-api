@@ -106,6 +106,7 @@ export interface IpawsIngestionRecord {
 	signatureResult: "success" | "failure" | "not_attempted";
 	parseStatus: IpawsCapParseResult["status"];
 	rawMessage: string;
+	rawMessageDigestSha256: string | null;
 	messageBody: IpawsRawCapPayload | null;
 	parseError: string | null;
 	parseResultSummary: string | null;

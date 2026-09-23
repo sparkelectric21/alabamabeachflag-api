@@ -33,7 +33,7 @@ The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS 
 
 ### Test evidence
 
-Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 80/80 focused IPAWS tests, 796/796 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
+Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 82/82 focused IPAWS tests, 798/798 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
 
 ### Staging evidence
 
@@ -50,7 +50,7 @@ Wrangler was upgraded within major version 4 and safe transitive fixes were appl
 - Durable Object and KV writes are not a cross-system transaction; downstream effecting consumers must be independently idempotent.
 - The actual SNS delivery policy must be recorded before selecting the production timestamp window.
 - CAP lifecycle projection, geographic authorization, production transport, DLQ/reconciliation, and notification authorization are deliberately not implemented.
-- Invalid-signature payload retention should be reduced to bounded metadata before production.
+- Invalid-signature records retain bounded envelope metadata and a SHA-256 digest only; their untrusted message bodies are neither stored nor parsed.
 
 ### Reviewer checklist
 

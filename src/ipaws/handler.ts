@@ -80,6 +80,11 @@ function responseError(code: string, message: string, status: number) {
 	return response({ status: "error", code, message }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+async function sha256Hex(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function handleIpawsPubSubRequest(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "POST") {
 		return response({ error: "Method Not Allowed" }, { status: 405, headers: { Allow: "POST" } });
@@ -152,16 +157,22 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 		if (signatureResult.retryable) {
 			return responseError(signatureResult.reason ?? "ipaws_certificate_unavailable", "SNS certificate retrieval is temporarily unavailable.", 503);
 		}
-		const parseResult = parseCapPayload(message.Message, config.parseByteLimit);
+		const parseResult: IpawsCapParseResult = {
+			status: "parse_failed",
+			message: null,
+			reason: "invalid_signature_untrusted_payload",
+		};
+		const messageDigest = await sha256Hex(message.Message);
 		await upsertIngestionRecord(
 			env,
 			message,
 			"signature_invalid",
-			message.Message,
+			"",
 			"failure",
 			parseResult,
 			message.TopicArn,
 			config.recordTtlSeconds,
+			messageDigest,
 		);
 		await recordIpawsHealthEvent(env, `signature_failed:${signatureResult.reason ?? "unknown"}`, config.healthTtlSeconds);
 		return responseError(signatureResult.reason ?? "ipaws_signature_invalid", "SNS signature verification failed.", 400);
