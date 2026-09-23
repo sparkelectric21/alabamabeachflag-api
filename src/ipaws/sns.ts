@@ -92,8 +92,10 @@ export function validateSnsCertificate(pem: string, nowMs = Date.now()): X509Cer
 		throw new IpawsSnsError("ipaws_cert_expired", "SNS signing certificate has expired.");
 	}
 	if (certificate.ca) throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must be a leaf certificate.");
-	if (!/(^|[=,\s])(sns(?:\.[a-z0-9-]+)?\.amazonaws\.com|Amazon Simple Notification Service)($|[,\s])/i.test(certificate.subject)) {
-		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate subject is not an Amazon SNS identity.");
+	const snsSubject = /sns(?:\.[a-z0-9-]+)?\.amazonaws\.com|Amazon Simple Notification Service|SimpleNotificationService/i.test(certificate.subject);
+	const awsIssuer = /Amazon|Starfield/i.test(certificate.issuer);
+	if (!snsSubject && !awsIssuer) {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate identity is not attributable to AWS SNS.");
 	}
 	if (certificate.publicKey.asymmetricKeyType !== "rsa") {
 		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must use an RSA public key.");

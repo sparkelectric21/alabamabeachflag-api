@@ -85,7 +85,7 @@ The receiver accepts an SNS envelope only after all of the following checks succ
 - the signed timestamp is no more than 3,600 seconds old and no more than 300 seconds in the future;
 - the certificate URL is HTTPS on an exact `sns.<region>.amazonaws.com` host, uses the AWS SNS certificate path shape, contains no credentials, non-default port, fragment, or query, and does not redirect;
 - Cloudflare's outbound TLS stack authenticates that AWS hostname before returning the certificate;
-- the returned X.509 object is a currently valid, non-CA RSA leaf whose subject identifies Amazon SNS;
+- the returned X.509 object is a currently valid, non-CA RSA leaf whose subject identifies SNS or whose issuer identifies the Amazon/Starfield AWS trust family;
 - the SNS PKCS#1 v1.5 signature verifies using SHA-1 for SignatureVersion 1 or SHA-256 for SignatureVersion 2.
 
 This certificate strategy deliberately combines platform TLS trust and a pinned AWS origin with explicit leaf validity and SNS identity checks. AWS has used both CA-issued and self-issued SNS message-signing certificates, so issuer-name heuristics are not treated as a trust anchor; trust is anchored to the authenticated AWS HTTPS origin that supplies the certificate. The Worker never accepts a certificate supplied from another origin and never follows a redirect. If AWS changes the documented SNS certificate identity, the receiver fails closed and this policy must be reviewed before widening it.
