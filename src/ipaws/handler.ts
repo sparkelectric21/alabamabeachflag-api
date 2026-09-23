@@ -169,6 +169,8 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 	if (message.Type === "Notification") {
 		try {
 			if (parseResult.status === "parsed") await stageNormalizedAlert(env, receipt.record, config.recordTtlSeconds);
+			// SNS delivers notifications only after the HTTPS subscription is confirmed.
+			await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
 		} catch (error) {
 			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 			throw error;

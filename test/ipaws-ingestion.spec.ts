@@ -202,6 +202,7 @@ describe("IPAWS pub/sub handler", () => {
 		expect(normalizedWrites).toHaveLength(1);
 		const normalized = JSON.parse(String(normalizedWrites[0]?.[1]));
 		expect(normalized).toMatchObject({ source: "fema-ipaws", environment: "staging", handoffState: "staged", notificationsEnabled: false });
+		expect(env.BEACH_DATA.put).toHaveBeenCalledWith("ipaws:subscription:state", "confirmed", expect.any(Object));
 	});
 
 	it("fails closed on invalid signatures", async () => {
