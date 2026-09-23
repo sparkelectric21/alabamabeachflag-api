@@ -181,9 +181,12 @@ describe("AWS SNS signature verification", () => {
 		expect(() => validateSubscribeUrl(url, TOPIC_ARN, "test-token-not-a-real-subscription-token")).toThrowError(IpawsSnsError);
 	});
 
-	it("preserves the exact signed timestamp spelling", () => {
+	it("preserves and verifies the exact signed timestamp spelling", async () => {
 		const value = message("2");
 		value.Timestamp = "2026-09-23T12:00:00+00:00";
+		value.Signature = sign("RSA-SHA256", Buffer.from(parseSigningString(value)), PRIVATE_KEY).toString("base64");
 		expect(parseSigningString(value)).toContain("Timestamp\n2026-09-23T12:00:00+00:00\n");
+		vi.stubGlobal("fetch", certificateFetch());
+		await expect(verifySnsSignature(value)).resolves.toEqual({ valid: true, algorithm: "SHA-256" });
 	});
 });

@@ -46,15 +46,24 @@ const baseNotification = {
 function createStore() {
 	const map = new Map<string, string>();
 	const failNextPut = new Set<string>();
+	const failPutNumber = new Map<string, number>();
+	const putCounts = new Map<string, number>();
 	return {
 		get: vi.fn(async (key: string) => map.get(key) ?? null),
 		put: vi.fn(async (key: string, value: string) => {
 			if ([...failNextPut].some((prefix) => key.startsWith(prefix))) { failNextPut.clear(); throw new Error("injected_kv_failure"); }
+			for (const [prefix, failureNumber] of failPutNumber) {
+				if (!key.startsWith(prefix)) continue;
+				const count = (putCounts.get(prefix) ?? 0) + 1;
+				putCounts.set(prefix, count);
+				if (count === failureNumber) throw new Error("injected_kv_failure");
+			}
 			map.set(key, value);
 		}),
 		delete: vi.fn(async (key: string) => map.delete(key)),
 		map,
 		failNextPut,
+		failPutNumber,
 	};
 }
 
@@ -248,6 +257,23 @@ describe("IPAWS pub/sub handler", () => {
 		const retry = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
 		expect(retry.status).toBe(200);
 		expect(await retry.json()).toMatchObject({ outcome: "accepted" });
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(true);
+	});
+
+	it.each([
+		["second ingestion write", "ipaws:ingest:", 2],
+		["health write", "ipaws:health:v1", 1],
+		["subscription-state write", "ipaws:subscription:state", 1],
+	] as const)("recovers after a %s failure", async (_label, prefix, failureNumber) => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		env.BEACH_DATA.failPutNumber.set(prefix, failureNumber);
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		const first = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(first.status).toBe(503);
+		env.BEACH_DATA.failPutNumber.clear();
+		const retry = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(retry.status).toBe(200);
 		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(true);
 	});
 
