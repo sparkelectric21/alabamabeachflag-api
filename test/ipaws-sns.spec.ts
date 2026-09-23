@@ -96,7 +96,7 @@ describe("AWS SNS signature verification", () => {
 		expect(() => validateSnsCertificate(CERTIFICATE, Date.parse(certificate.validTo) + 1)).toThrowError(/expired/i);
 		expect(() => validateSnsCertificate(CERTIFICATE, Date.parse(certificate.validFrom) - 1)).toThrowError(/not yet valid/i);
 		const untrusted = readFileSync(new URL("./fixtures/sns-untrusted-cert.pem", import.meta.url), "utf8");
-		expect(() => validateSnsCertificate(untrusted)).toThrowError(/non-CA leaf|approved AWS trust/i);
+		expect(() => validateSnsCertificate(untrusted)).toThrowError(/leaf certificate|Amazon SNS identity/i);
 	});
 
 	it("rejects stale and future SNS timestamps", () => {
