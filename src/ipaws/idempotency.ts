@@ -3,6 +3,8 @@ interface ClaimState {
 	leaseUntil: number;
 }
 
+export type IpawsClaimResult = "acquired" | "processing" | "complete";
+
 const PROCESSING_LEASE_MS = 60_000;
 
 export class IpawsIdempotencyCoordinator {
@@ -12,13 +14,24 @@ export class IpawsIdempotencyCoordinator {
 		const action = new URL(request.url).pathname;
 		if (action === "/claim") {
 			const now = Date.now();
-			const claimed = await this.state.storage.transaction(async (transaction) => {
+			const result = await this.state.storage.transaction(async (transaction): Promise<IpawsClaimResult> => {
 				const current = await transaction.get<ClaimState>("state");
-				if (current?.status === "complete" || (current?.status === "processing" && current.leaseUntil > now)) return false;
+				if (current?.status === "complete") return "complete";
+				if (current?.status === "processing" && current.leaseUntil > now) return "processing";
 				await transaction.put("state", { status: "processing", leaseUntil: now + PROCESSING_LEASE_MS } satisfies ClaimState);
-				return true;
+				return "acquired";
 			});
-			return Response.json({ claimed });
+			return Response.json({ result });
+		}
+		if (action === "/recover") {
+			const now = Date.now();
+			const result = await this.state.storage.transaction(async (transaction): Promise<IpawsClaimResult> => {
+				const current = await transaction.get<ClaimState>("state");
+				if (current?.status === "processing" && current.leaseUntil > now) return "processing";
+				await transaction.put("state", { status: "processing", leaseUntil: now + PROCESSING_LEASE_MS } satisfies ClaimState);
+				return "acquired";
+			});
+			return Response.json({ result });
 		}
 		if (action === "/complete") {
 			await this.state.storage.put("state", { status: "complete", leaseUntil: 0 } satisfies ClaimState);
@@ -36,10 +49,20 @@ function stub(namespace: DurableObjectNamespace, messageId: string): DurableObje
 	return namespace.get(namespace.idFromName(messageId));
 }
 
-export async function claimIpawsDelivery(namespace: DurableObjectNamespace, messageId: string): Promise<boolean> {
-	const response = await stub(namespace, messageId).fetch("https://idempotency.internal/claim", { method: "POST" });
+async function claim(namespace: DurableObjectNamespace, messageId: string, path: "/claim" | "/recover"): Promise<IpawsClaimResult> {
+	const response = await stub(namespace, messageId).fetch(`https://idempotency.internal${path}`, { method: "POST" });
 	if (!response.ok) throw new Error("ipaws_idempotency_unavailable");
-	return (await response.json<{ claimed: boolean }>()).claimed;
+	const result = (await response.json<{ result: IpawsClaimResult }>()).result;
+	if (!(["acquired", "processing", "complete"] as const).includes(result)) throw new Error("ipaws_idempotency_unavailable");
+	return result;
+}
+
+export function claimIpawsDelivery(namespace: DurableObjectNamespace, messageId: string): Promise<IpawsClaimResult> {
+	return claim(namespace, messageId, "/claim");
+}
+
+export function recoverIpawsDelivery(namespace: DurableObjectNamespace, messageId: string): Promise<IpawsClaimResult> {
+	return claim(namespace, messageId, "/recover");
 }
 
 export async function completeIpawsDelivery(namespace: DurableObjectNamespace, messageId: string): Promise<void> {
@@ -48,5 +71,6 @@ export async function completeIpawsDelivery(namespace: DurableObjectNamespace, m
 }
 
 export async function releaseIpawsDelivery(namespace: DurableObjectNamespace, messageId: string): Promise<void> {
-	await stub(namespace, messageId).fetch("https://idempotency.internal/release", { method: "POST" });
+	const response = await stub(namespace, messageId).fetch("https://idempotency.internal/release", { method: "POST" });
+	if (!response.ok) throw new Error("ipaws_idempotency_unavailable");
 }

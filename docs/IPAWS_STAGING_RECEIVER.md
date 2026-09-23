@@ -11,7 +11,7 @@ This document covers the staging-first IPAWS receiver implementation currently d
 - Accepts AWS SNS HTTPS delivery envelopes for:
 	- `Notification`
 	- `SubscriptionConfirmation`
-	- `UnsubscribeConfirmation` (treated as subscription-style message)
+	- `UnsubscribeConfirmation` (recorded only; its URL is never fetched)
 - Verifies SNS signature using certificate URL and signed payload rules.
 - Strictly validates SNS certificate URLs and SubscribeURL URLs:
 	- HTTPS only
@@ -19,8 +19,9 @@ This document covers the staging-first IPAWS receiver implementation currently d
 	- hostname under `amazonaws.com`
 	- SubscribeURL must be an SNS endpoint path `/`
 - Persists ingestion records in KV (`BEACH_DATA`) before user-facing work.
-- Supports duplicate-message handling for the same SNS `MessageId` (idempotent acknowledgement).
-- CAP parsing is separated in `src/ipaws/parser.ts` and supports raw XML or JSON CAP-like payloads.
+- Uses strongly serialized `acquired`, `processing`, and `complete` states. In-progress duplicates receive 503; a 200 duplicate acknowledgement requires verified persisted output.
+- Recovers released/expired partial work and reconstructs missing normalized output behind a completed marker.
+- CAP parsing is bounded and namespace-aware for CAP 1.2 XML. DTDs, custom entities, processing instructions, malformed structure, incorrect namespaces, excessive complexity, and missing/invalid required fields fail closed and cannot create normalized output.
 - Parser extracts lifecycle-related fields used for future planning:
 	- `identifier`, `references`, `sender`, `status`, `msgType`, `event`, `urgency`, `severity`, `certainty`, `effective`, `onset`, `expires`, `headline`, `description`, `instruction`, and area geometry/geocode fields.
 - Health snapshot is merged into provider-health admin output at `ipawsReceiver`.
@@ -44,6 +45,8 @@ All staging controls are environment-driven and set in Wrangler files:
 - Unknown/unsupported SNS types are rejected.
 - `SubscriptionConfirmation` is **not** auto-confirmed unless `IPAWS_AUTO_CONFIRM_SUBSCRIPTION=true`.
 - Confirmation requests are never fetched from untrusted URLs due strict URL checks.
+- `SubscribeURL` must contain exactly one case-sensitive `Action=ConfirmSubscription`, `TopicArn`, and `Token`; the latter two must match the signed envelope.
+- Transient certificate/confirmation network errors, 429s, and upstream 5xx responses return 503; permanent validation failures return 4xx.
 
 ## Persistence and idempotency
 
@@ -58,14 +61,14 @@ The persistence key uses `ipaws:ingest:<MessageId>` and stores:
 - parsed CAP summary fields
 - lifecycle outcome and duplicate tracking
 
+The Durable Object claim and KV outputs are not one transaction. Every post-claim failure attempts release, expired leases are recoverable, and completion occurs only after expected ingestion, subscription, and normalized outputs can be read back. This is safe at-least-once recovery, not globally atomic exactly-once effects; future consumers need their own transactional idempotency.
+
 ## Current limitations
 
 - No IPAWS user-facing alert publication is added in this phase.
 - No notification push integration is added in this phase.
 - No FEMA endpoint is contacted from this code.
-- CAP parsing is intentionally tolerant and non-authoritative:
-	- only supported/recognized fields are persisted
-	- malformed payloads are stored as parse failures
+- Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature payloads remain bounded, TTL-limited staging diagnostics and need a separate retention/rate-control decision before production.
 - Geographic filtering and relevance routing are intentionally deferred.
 
 ## Before FEMA production onboarding

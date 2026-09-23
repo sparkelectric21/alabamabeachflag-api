@@ -15,9 +15,13 @@ on:
       - "package-lock.json"
       - "wrangler.ipaws.staging.jsonc"
       - "worker-configuration.d.ts"
+      - "worker-configuration.ipaws-staging.d.ts"
+      - "tsconfig.ipaws-staging.json"
       - ".github/workflows/ipaws-staging.yml"
   push:
     branches:
+      - "main"
+      - "codex/events-intelligence-checkpoint"
       - "codex/ipaws-staging-receiver"
 
 permissions:
@@ -28,10 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.19.0"
           cache: npm
@@ -41,14 +45,22 @@ jobs:
       - name: Reject critical development dependency advisories
         run: npm audit --audit-level=critical
       - name: Changed-file whitespace check
-        run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before }}" -- . ':!worker-configuration.d.ts'
+        run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before }}" -- . ':!worker-configuration.d.ts' ':!worker-configuration.ipaws-staging.d.ts'
       - name: Type check
         run: npm run typecheck
+      - name: Staging Worker type check
+        run: npm run typecheck:staging
+      - name: Static lint checks
+        run: npm run lint
       - name: Focused IPAWS tests
         run: npm test -- test/ipaws-sns.spec.ts test/ipaws-ingestion.spec.ts test/ipaws-worker.spec.ts
       - name: Full test suite
         run: npm test
-      - name: Check generated Worker types
-        run: npx wrangler types --check --config wrangler.ipaws.staging.jsonc
+      - name: Check production-generated Worker types
+        run: npx wrangler types --check --config wrangler.jsonc
+      - name: Check staging-generated Worker types
+        run: npx wrangler types worker-configuration.ipaws-staging.d.ts --check --config wrangler.ipaws.staging.jsonc
+      - name: Validate production bundle and bindings without deploying
+        run: npx wrangler deploy --dry-run --outdir /tmp/production-dry-run --config wrangler.jsonc
       - name: Validate staging bundle and bindings
         run: npx wrangler deploy --dry-run --outdir /tmp/ipaws-staging-dry-run --config wrangler.ipaws.staging.jsonc

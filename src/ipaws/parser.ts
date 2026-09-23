@@ -1,4 +1,17 @@
 import type { IpawsCapParseResult, IpawsRawCapDetails, IpawsRawCapPayload } from "./types";
+import { SaxesParser, type SaxesTagNS } from "saxes";
+
+const CAP_NAMESPACE = "urn:oasis:names:tc:emergency:cap:1.2";
+const MAX_XML_DEPTH = 32;
+const MAX_XML_NODES = 4_096;
+const MAX_XML_TEXT_BYTES = 262_144;
+
+interface XmlNode {
+	local: string;
+	uri: string;
+	text: string;
+	children: XmlNode[];
+}
 
 function sanitizeText(value: string): string {
 	return value
@@ -7,66 +20,80 @@ function sanitizeText(value: string): string {
 		.trim();
 }
 
-function matchFirst(xml: string, tag: string): string | undefined {
-	const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
-	const match = regex.exec(xml);
-	if (!match?.[1]) return undefined;
-	return sanitizeText(match[1]);
+function child(node: XmlNode, local: string): XmlNode | undefined {
+	return node.children.find((entry) => entry.uri === CAP_NAMESPACE && entry.local === local);
 }
 
-function matchAll(xml: string, tag: string): string[] {
-	const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "ig");
-	return [...xml.matchAll(regex)]
-		.map((match) => sanitizeText(match[1] ?? ""))
-		.filter(Boolean);
+function children(node: XmlNode, local: string): XmlNode[] {
+	return node.children.filter((entry) => entry.uri === CAP_NAMESPACE && entry.local === local);
 }
 
-function parseArea(xml: string): IpawsRawCapDetails["area"] {
-	const polygon = matchFirst(xml, "polygon");
-	const circle = matchFirst(xml, "circle");
-	const description = matchFirst(xml, "areaDesc") || matchFirst(xml, "areaDescription");
-	const geocodeEntries: string[] = [];
-	for (const block of [...xml.matchAll(new RegExp("<geocode[^>]*>([\\s\\S]*?)</geocode>", "gi"))]) {
-		const values = matchAll(block[1] ?? "", "value");
-		const names = matchAll(block[1] ?? "", "valueName");
-		for (let index = 0; index < Math.min(values.length, names.length); index++) {
-			if (names[index] || values[index]) geocodeEntries.push(`${names[index] ?? ""}:${values[index] ?? ""}`);
-		}
-	}
-	const geocode = geocodeEntries.map((entry) => {
-		const [valueName, value] = entry.split(":", 2);
-		return { valueName, value };
-	});
+function nodeText(node: XmlNode | undefined): string | undefined {
+	if (!node) return undefined;
+	const value = sanitizeText(node.text);
+	return value || undefined;
+}
+
+function parseArea(node: XmlNode | undefined): IpawsRawCapDetails["area"] {
+	if (!node) return undefined;
+	const geocode = children(node, "geocode").map((entry) => ({
+		valueName: nodeText(child(entry, "valueName")),
+		value: nodeText(child(entry, "value")),
+	})).filter((entry) => entry.valueName || entry.value);
 	return {
-		...(description ? { description } : {}),
-		...(polygon ? { polygon } : {}),
-		...(circle ? { circle } : {}),
+		...(nodeText(child(node, "areaDesc")) ? { description: nodeText(child(node, "areaDesc")) } : {}),
+		...(nodeText(child(node, "polygon")) ? { polygon: nodeText(child(node, "polygon")) } : {}),
+		...(nodeText(child(node, "circle")) ? { circle: nodeText(child(node, "circle")) } : {}),
 		...(geocode.length > 0 ? { geocode } : {}),
 	};
 }
 
-function parseInfoBlock(xml: string): NonNullable<IpawsRawCapDetails["info"]>[number] {
+function parseInfoBlock(node: XmlNode): NonNullable<IpawsRawCapDetails["info"]>[number] {
 	return {
-		event: matchFirst(xml, "event") || undefined,
-		headline: matchFirst(xml, "headline") || undefined,
-		description: matchFirst(xml, "description") || undefined,
-		instruction: matchFirst(xml, "instruction") || undefined,
-		references: matchFirst(xml, "references") || undefined,
-		urgency: matchFirst(xml, "urgency") || undefined,
-		severity: matchFirst(xml, "severity") || undefined,
-		certainty: matchFirst(xml, "certainty") || undefined,
-		effective: matchFirst(xml, "effective") || undefined,
-		onset: matchFirst(xml, "onset") || undefined,
-		expires: matchFirst(xml, "expires") || undefined,
-		area: parseArea(xml),
+		event: nodeText(child(node, "event")), headline: nodeText(child(node, "headline")),
+		description: nodeText(child(node, "description")), instruction: nodeText(child(node, "instruction")),
+		references: nodeText(child(node, "references")), urgency: nodeText(child(node, "urgency")),
+		severity: nodeText(child(node, "severity")), certainty: nodeText(child(node, "certainty")),
+		effective: nodeText(child(node, "effective")), onset: nodeText(child(node, "onset")),
+		expires: nodeText(child(node, "expires")), area: parseArea(child(node, "area")),
 	};
 }
 
-function parseInfoBlocks(xml: string): NonNullable<IpawsRawCapDetails["info"]> {
-	const blocks = [...xml.matchAll(new RegExp("<info\\b([\\s\\S]*?)</info>", "gi"))];
-	return blocks
-		.map((block) => parseInfoBlock(block[0] ?? ""))
+function parseInfoBlocks(root: XmlNode): NonNullable<IpawsRawCapDetails["info"]> {
+	return children(root, "info").map(parseInfoBlock)
 		.filter((info) => Object.values(info).some((value) => Boolean(value && (!Array.isArray(value) || value.length > 0))));
+}
+
+function parseXml(raw: string): XmlNode {
+	let root: XmlNode | undefined;
+	const stack: XmlNode[] = [];
+	let nodes = 0;
+	let textBytes = 0;
+	let failure: Error | undefined;
+	const parser = new SaxesParser({ xmlns: true });
+	parser.on("doctype", () => { failure = new Error("unsafe_xml_doctype"); });
+	parser.on("processinginstruction", () => { failure = new Error("unsafe_xml_processing_instruction"); });
+	parser.on("opentag", (tag: SaxesTagNS) => {
+		if (failure) return;
+		if (++nodes > MAX_XML_NODES || stack.length >= MAX_XML_DEPTH) { failure = new Error("xml_complexity_limit"); return; }
+		const node: XmlNode = { local: tag.local, uri: tag.uri, text: "", children: [] };
+		if (stack.length) stack[stack.length - 1].children.push(node); else if (root) failure = new Error("multiple_xml_roots"); else root = node;
+		stack.push(node);
+	});
+	const addText = (value: string) => {
+		if (!stack.length || failure) return;
+		textBytes += new TextEncoder().encode(value).byteLength;
+		if (textBytes > MAX_XML_TEXT_BYTES) { failure = new Error("xml_text_limit"); return; }
+		stack[stack.length - 1].text += value;
+	};
+	parser.on("text", addText);
+	parser.on("cdata", addText);
+	parser.on("closetag", () => { stack.pop(); });
+	parser.on("error", (error) => { failure = error; });
+	parser.write(raw).close();
+	if (failure) throw failure;
+	if (!root) throw new Error("xml_missing_root");
+	return root;
 }
 
 function toAreaFromObject(value: unknown): IpawsRawCapDetails["area"] | undefined {
@@ -142,38 +169,34 @@ export function parseCapPayload(raw: string, byteLimit = 262_144): IpawsCapParse
 	if (!raw.trim()) {
 		return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "empty_message" };
 	}
-	if (raw.length > byteLimit) {
+	if (new TextEncoder().encode(raw).byteLength > byteLimit) {
 		return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "payload_too_large" };
 	}
 	if (raw.trim().startsWith("<")) {
-		if (raw.includes("<!DOCTYPE")) {
-			return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "unsafe_xml_doctype" };
+		try {
+			const root = parseXml(raw);
+			if (root.local !== "alert" || root.uri !== CAP_NAMESPACE) throw new Error("cap_invalid_root_or_namespace");
+			const required = ["identifier", "sender", "sent", "status", "msgType", "scope"] as const;
+			const values = Object.fromEntries(required.map((name) => [name, nodeText(child(root, name))]));
+			if (required.some((name) => !values[name])) throw new Error("cap_missing_required_field");
+			if (Number.isNaN(Date.parse(values.sent!))) throw new Error("cap_invalid_sent");
+			if (!["Actual", "Exercise", "System", "Test", "Draft"].includes(values.status!)) throw new Error("cap_invalid_status");
+			if (!["Alert", "Update", "Cancel", "Ack", "Error"].includes(values.msgType!)) throw new Error("cap_invalid_msg_type");
+			if (!["Public", "Restricted", "Private"].includes(values.scope!)) throw new Error("cap_invalid_scope");
+			const info = parseInfoBlocks(root);
+			const firstInfo = info[0];
+			const details: IpawsRawCapDetails = {
+				...values,
+				references: nodeText(child(root, "references")),
+				event: firstInfo?.event, urgency: firstInfo?.urgency, severity: firstInfo?.severity,
+				certainty: firstInfo?.certainty, effective: firstInfo?.effective, onset: firstInfo?.onset,
+				expires: firstInfo?.expires, headline: firstInfo?.headline, description: firstInfo?.description,
+				instruction: firstInfo?.instruction, area: firstInfo?.area, info,
+			};
+			return { status: "parsed", message: { source: "cap", parsed: details } };
+		} catch (error) {
+			return { status: "parse_failed", message: { source: "cap", parsed: {} }, reason: error instanceof Error ? error.message : "cap_xml_invalid" };
 		}
-		const details: IpawsRawCapDetails = {
-			identifier: matchFirst(raw, "identifier"),
-			sender: matchFirst(raw, "sender"),
-			sent: matchFirst(raw, "sent"),
-			status: matchFirst(raw, "status"),
-			msgType: matchFirst(raw, "msgType"),
-			scope: matchFirst(raw, "scope"),
-			references: matchFirst(raw, "references"),
-			event: matchFirst(raw, "event"),
-			urgency: matchFirst(raw, "urgency"),
-			severity: matchFirst(raw, "severity"),
-			certainty: matchFirst(raw, "certainty"),
-			effective: matchFirst(raw, "effective"),
-			onset: matchFirst(raw, "onset"),
-			expires: matchFirst(raw, "expires"),
-			headline: matchFirst(raw, "headline"),
-			description: matchFirst(raw, "description"),
-			instruction: matchFirst(raw, "instruction"),
-			area: parseArea(raw),
-			info: parseInfoBlocks(raw),
-		};
-		if (!hasCapFields(details)) {
-			return { status: "parse_failed", message: { source: "cap", parsed: { parseWarnings: ["No expected CAP fields were found"] } }, reason: "cap_parse_no_fields" };
-		}
-		return { status: "parsed", message: { source: "cap", parsed: details } };
 	}
 
 	try {

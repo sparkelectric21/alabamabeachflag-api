@@ -87,6 +87,7 @@ export type IpawsProcessingState =
 	| "subscription_received"
 	| "subscription_confirmed"
 	| "subscription_skipped"
+	| "unsubscribe_received"
 	| "notification_parsed"
 	| "notification_parse_failed"
 	| "notification_done"
@@ -124,6 +125,7 @@ export interface IpawsSignatureResult {
 	valid: boolean;
 	reason?: string;
 	algorithm?: string;
+	retryable?: boolean;
 }
 
 export interface IpawsSnsMessage {

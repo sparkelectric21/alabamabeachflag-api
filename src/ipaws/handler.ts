@@ -2,12 +2,12 @@ import type { Env } from "../types";
 import { loadIpawsConfig } from "./config";
 import { parseCapPayload } from "./parser";
 import type { IpawsCapParseResult } from "./types";
-import { updateIngestionRecord, upsertIngestionRecord, writeSubscriptionState } from "./persistence";
+import { readIngestionRecord, readNormalizedAlert, readSubscriptionState, updateIngestionRecord, upsertIngestionRecord, writeSubscriptionState } from "./persistence";
 import { recordIpawsHealthEvent } from "./health";
 import { IpawsSnsError, parseSnsMessage, validateSnsTimestamp, validateSubscribeUrl, verifySnsSignature } from "./sns";
 import { logWarn } from "../utils/logger";
 import { stageNormalizedAlert } from "./domain";
-import { claimIpawsDelivery, completeIpawsDelivery, releaseIpawsDelivery } from "./idempotency";
+import { claimIpawsDelivery, completeIpawsDelivery, recoverIpawsDelivery, releaseIpawsDelivery } from "./idempotency";
 
 const MAX_ENVELOPE_BYTE_LIMIT = 512 * 1024;
 const SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 5_000;
@@ -32,15 +32,44 @@ async function readRequestText(body: ReadableStream<Uint8Array>, byteLimit: numb
 	return decoder.decode(combined);
 }
 
-async function confirmSubscription(url: string): Promise<boolean> {
+class IpawsRetryableError extends Error {
+	constructor(public readonly code: string, message: string) {
+		super(message);
+	}
+}
+
+async function confirmSubscription(url: string): Promise<void> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
 	try {
 		const confirm = await fetch(url, { method: "GET", redirect: "manual", signal: controller.signal });
-		return confirm.ok;
+		if (confirm.ok) return;
+		if (confirm.status === 429 || confirm.status >= 500) {
+			throw new IpawsRetryableError("ipaws_subscription_confirmation_unavailable", `SNS confirmation returned ${confirm.status}.`);
+		}
+		throw new IpawsSnsError("ipaws_subscription_confirmation_rejected", `SNS confirmation returned ${confirm.status}.`);
+	} catch (error) {
+		if (error instanceof IpawsRetryableError || error instanceof IpawsSnsError) throw error;
+		throw new IpawsRetryableError("ipaws_subscription_confirmation_unavailable", "SNS confirmation request failed temporarily.");
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+async function deliveryOutputsComplete(env: Env, messageId: string): Promise<boolean> {
+	const record = await readIngestionRecord(env, messageId);
+	if (!record) return false;
+	if (record.type === "Notification") {
+		if (record.processingState === "notification_parse_failed") return await readSubscriptionState(env) === "confirmed";
+		if (record.processingState !== "notification_done") return false;
+		return Boolean(await readNormalizedAlert(env, messageId)) && await readSubscriptionState(env) === "confirmed";
+	}
+	if (record.type === "SubscriptionConfirmation") {
+		if (record.processingState === "subscription_confirmed") return await readSubscriptionState(env) === "confirmed";
+		if (record.processingState === "subscription_skipped") return await readSubscriptionState(env) === "skipped";
+		return false;
+	}
+	return record.processingState === "unsubscribe_received";
 }
 
 function response(body: unknown, init: ResponseInit = {}): Response {
@@ -112,8 +141,17 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 		return responseError("ipaws_invalid_timestamp", "SNS Timestamp is invalid.", 400);
 	}
 
-	const signatureResult = await verifySnsSignature(message);
+	let signatureResult;
+	try {
+		signatureResult = await verifySnsSignature(message);
+	} catch (error) {
+		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		return responseError("ipaws_signature_validation_unavailable", "SNS signature validation is temporarily unavailable.", 503);
+	}
 	if (!signatureResult.valid) {
+		if (signatureResult.retryable) {
+			return responseError(signatureResult.reason ?? "ipaws_certificate_unavailable", "SNS certificate retrieval is temporarily unavailable.", 503);
+		}
 		const parseResult = parseCapPayload(message.Message, config.parseByteLimit);
 		await upsertIngestionRecord(
 			env,
@@ -131,15 +169,40 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 	if (!env.IPAWS_IDEMPOTENCY) {
 		return responseError("ipaws_idempotency_misconfigured", "Strongly consistent IPAWS idempotency is not configured.", 503);
 	}
-	let claimed: boolean;
+	if (message.Type === "SubscriptionConfirmation") {
+		try {
+			validateSubscribeUrl(message.SubscribeURL ?? "", message.TopicArn, message.Token ?? "");
+		} catch (error) {
+			if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+			return responseError("ipaws_invalid_subscribe_url", "SubscribeURL is invalid.", 400);
+		}
+	}
+
+	let claimResult;
 	try {
-		claimed = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		claimResult = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 	} catch {
 		return responseError("ipaws_idempotency_unavailable", "IPAWS idempotency coordinator is unavailable.", 503);
 	}
-	if (!claimed) {
-		await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
-		return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId }, { headers: { "Cache-Control": "no-store" } });
+	if (claimResult === "processing") {
+		return response({ status: "error", code: "ipaws_delivery_in_progress", message: "Delivery processing is still in progress." }, {
+			status: 503,
+			headers: { "Cache-Control": "no-store", "Retry-After": "2" },
+		});
+	}
+	if (claimResult === "complete") {
+		try {
+			if (await deliveryOutputsComplete(env, message.MessageId)) {
+				await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
+				return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId }, { headers: { "Cache-Control": "no-store" } });
+			}
+			claimResult = await recoverIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		} catch {
+			return responseError("ipaws_recovery_unavailable", "Delivery recovery is temporarily unavailable.", 503);
+		}
+		if (claimResult !== "acquired") {
+			return responseError("ipaws_delivery_in_progress", "Delivery recovery is already in progress.", 503);
+		}
 	}
 
 	const parseResult: IpawsCapParseResult = message.Type === "Notification"
@@ -150,127 +213,90 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 			reason: "not_notification",
 		};
 
-	const receipt = await upsertIngestionRecord(
-		env,
-		message,
-		"signature_verified",
-		message.Message,
-		"success",
-		parseResult,
-		message.TopicArn,
-		config.recordTtlSeconds,
-	);
-	if (receipt.duplicate) {
-		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
-		await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
-		return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
-	}
+	try {
+		const receipt = await upsertIngestionRecord(
+			env,
+			message,
+			"signature_verified",
+			message.Message,
+			"success",
+			parseResult,
+			message.TopicArn,
+			config.recordTtlSeconds,
+		);
 
-	if (message.Type === "Notification") {
-		try {
+		if (message.Type === "Notification") {
 			if (parseResult.status === "parsed") await stageNormalizedAlert(env, receipt.record, config.recordTtlSeconds);
 			// SNS delivers notifications only after the HTTPS subscription is confirmed.
 			await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
-		} catch (error) {
-			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
-			throw error;
-		}
-		await updateIngestionRecord(
-			env,
-			message.MessageId,
-			{
+			await recordIpawsHealthEvent(env, parseResult.status === "parsed" ? "delivery_notification_parsed" : "delivery_notification_parse_failed", config.healthTtlSeconds, {
+				environment: config.environment,
+				stagingEnabled: config.enabled,
+			});
+			await updateIngestionRecord(env, message.MessageId, {
 				processingState: parseResult.status === "parsed" ? "notification_done" : "notification_parse_failed",
 				parseStatus: parseResult.status,
 				parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
 				parseResultSummary: parseResult.status,
-			},
-			config.recordTtlSeconds,
-		);
-		await recordIpawsHealthEvent(env, parseResult.status === "parsed" ? "delivery_notification_parsed" : "delivery_notification_parse_failed", config.healthTtlSeconds, {
-			environment: config.environment,
-			stagingEnabled: config.enabled,
-		});
-		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
-		return response({ status: "ok", outcome: "accepted", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
-	}
-
-	if ((message.Type === "SubscriptionConfirmation" || message.Type === "UnsubscribeConfirmation") && !message.SubscribeURL) {
-		await updateIngestionRecord(env, message.MessageId, {
-			processingState: "subscription_received",
-			parseStatus: "parse_failed",
-			parseError: "missing_subscribe_url",
-		}, config.recordTtlSeconds);
-		return responseError("ipaws_missing_subscribe_url", "SubscribeURL is required.", 400);
-	}
-
-	if (message.Type === "SubscriptionConfirmation" || message.Type === "UnsubscribeConfirmation") {
-		try {
-			validateSubscribeUrl(message.SubscribeURL!);
-			const url = new URL(message.SubscribeURL!);
-			if (url.searchParams.get("TopicArn") !== message.TopicArn) {
-				return responseError("ipaws_invalid_subscribe_url", "SubscribeURL TopicArn does not match message TopicArn.", 400);
-			}
-		} catch (error) {
-			if (error instanceof IpawsSnsError) {
-				await updateIngestionRecord(env, message.MessageId, {
-					processingState: "subscription_skipped",
-					parseStatus: "parse_failed",
-					parseError: error.message,
-				}, config.recordTtlSeconds);
-				return responseError(error.code, error.message, 400);
-			}
+			}, config.recordTtlSeconds);
+			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required notification outputs are not yet visible.");
+			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			return response({ status: "ok", outcome: "accepted", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
+
+		if (message.Type === "UnsubscribeConfirmation") {
+			await recordIpawsHealthEvent(env, "unsubscribe_confirmation_received", config.healthTtlSeconds, {
+				environment: config.environment,
+				stagingEnabled: config.enabled,
+			});
+			await updateIngestionRecord(env, message.MessageId, {
+				processingState: "unsubscribe_received",
+				parseStatus: "parse_failed",
+				parseError: "unsubscribe_confirmation_no_action",
+			}, config.recordTtlSeconds);
+			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required unsubscribe output is not yet visible.");
+			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			return response({ status: "ok", outcome: "unsubscribe_recorded", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+		}
+
 		if (!config.autoConfirmSubscription) {
 			await writeSubscriptionState(env, "skipped", config.subscriptionStateTtlSeconds);
+			await recordIpawsHealthEvent(env, "subscription_confirmation_disabled", config.healthTtlSeconds, {
+				environment: config.environment,
+				stagingEnabled: config.enabled,
+			});
 			await updateIngestionRecord(env, message.MessageId, {
 				processingState: "subscription_skipped",
 				parseStatus: "parse_failed",
 				parseError: "subscription_confirmation_disabled",
 			}, config.recordTtlSeconds);
-			await recordIpawsHealthEvent(env, "subscription_confirmation_disabled", config.healthTtlSeconds, {
-				environment: config.environment,
-				stagingEnabled: config.enabled,
-			});
+			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
 			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 			return response({ status: "ok", outcome: "subscription_confirmation_skipped", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
+		await confirmSubscription(message.SubscribeURL ?? "");
+		await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
+		await recordIpawsHealthEvent(env, "subscription_confirmed", config.healthTtlSeconds, {
+			environment: config.environment,
+			stagingEnabled: config.enabled,
+		});
+		await updateIngestionRecord(env, message.MessageId, {
+			processingState: "subscription_confirmed",
+			parseStatus: "parse_failed",
+			parseError: null,
+		}, config.recordTtlSeconds);
+		if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
+		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		return response({ status: "ok", outcome: "subscription_confirmed", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+	} catch (error) {
 		try {
-			if (!(await confirmSubscription(message.SubscribeURL ?? ""))) {
-				throw new Error("ipaws_subscription_confirm_failed");
-			}
-			await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
-			await updateIngestionRecord(env, message.MessageId, {
-				processingState: "subscription_confirmed",
-				parseStatus: "parse_failed",
-				parseError: null,
-			}, config.recordTtlSeconds);
-			await recordIpawsHealthEvent(env, "subscription_confirmed", config.healthTtlSeconds, {
-				environment: config.environment,
-				stagingEnabled: config.enabled,
-			});
-			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
-			return response({ status: "ok", outcome: "subscription_confirmed", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
-		} catch (error) {
-			await writeSubscriptionState(env, "unknown", config.subscriptionStateTtlSeconds);
-			await updateIngestionRecord(env, message.MessageId, {
-				processingState: "subscription_skipped",
-				parseStatus: "parse_failed",
-				parseError: error instanceof Error ? error.message : "subscription_confirmation_failed",
-			}, config.recordTtlSeconds);
-			logWarn("IPAWS", "Subscription confirmation failed", { reason: error instanceof Error ? error.message : "unknown", messageId: message.MessageId });
-			return responseError("ipaws_subscription_confirmation_failed", "Unable to confirm subscription URL.", 400);
+			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		} catch (releaseError) {
+			logWarn("IPAWS", "Unable to release failed delivery claim", { messageId: message.MessageId, reason: releaseError instanceof Error ? releaseError.message : "unknown" });
 		}
+		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		logWarn("IPAWS", "Retryable IPAWS processing failure", { messageId: message.MessageId, reason: error instanceof Error ? error.message : "unknown" });
+		return responseError(error instanceof IpawsRetryableError ? error.code : "ipaws_processing_unavailable", "IPAWS processing is temporarily unavailable.", 503);
 	}
-
-	await recordIpawsHealthEvent(env, "unsupported_type", config.healthTtlSeconds, {
-		environment: config.environment,
-		stagingEnabled: config.enabled,
-	});
-	await updateIngestionRecord(env, message.MessageId, {
-		processingState: "unsupported_type",
-		parseStatus: "parse_failed",
-		parseError: `Unsupported SNS Type: ${message.Type}`,
-	}, config.recordTtlSeconds);
-	return responseError("ipaws_unsupported_type", "Unsupported SNS message type.", 400);
 }

@@ -10,7 +10,7 @@ The receiver does not build and validate an X.509 chain itself. It accepts an SN
 
 1. `SigningCertURL` is HTTPS, contains no user information, non-default port, query, or fragment, and uses the exact host form `sns.<region>.amazonaws.com`.
 2. Its path matches `/SimpleNotificationService-<token>.pem`.
-3. `fetch` uses `redirect: "manual"`, so redirects are not followed. The response must be successful and at most 96,000 bytes.
+3. `fetch` uses `redirect: "manual"`, so redirects are not followed. The response must be successful and at most 96,000 bytes. Both declared length and streamed bytes are bounded, and an over-limit stream is cancelled.
 4. Cloudflare's outbound TLS implementation authenticates the HTTPS server name and its normal public PKI chain before returning the certificate body.
 5. The downloaded object parses as X.509, is currently within `notBefore`/`notAfter`, is not a CA certificate, has an RSA public key, and has an SNS subject or Amazon/Starfield issuer identity.
 6. The SNS canonical signing string verifies with RSA PKCS#1 v1.5. SignatureVersion 1 uses SHA-1, as required for AWS SNS compatibility; SignatureVersion 2 uses SHA-256. Other versions fail closed.
@@ -35,6 +35,18 @@ SHA-1 remains enabled only for SNS SignatureVersion 1 interoperability. It is no
 AWS documents three default HTTP/S retries with 20-second delays and permits custom HTTP/S delivery policies with no more than 3,600 seconds total retry time. The current one-hour maximum age is bounded and configurable, but it leaves no margin for initial queueing, retry jitter, or clock disagreement. Before production, obtain the actual subscription `DeliveryPolicy` and set `IPAWS_SNS_MAX_AGE_SECONDS` to the documented retry horizon plus an explicit margin. A two-hour value is the conservative recommendation when the policy is unknown; retain the five-minute future-skew limit. Strong MessageId idempotency limits replay effects, but does not make freshness checks optional.
 
 Returning 400 for stale messages is intentionally permanent: AWS retries 5xx and 429 responses, while other errors are treated as permanent. Operations must therefore monitor stale rejections and use a DLQ or source replay procedure if the subscription supports one.
+
+The exact signed timestamp spelling is preserved for canonical verification; freshness parsing never normalizes the signed value.
+
+## Delivery recovery and confirmation safety
+
+The coordinator distinguishes acquired work, an active processing lease, and verified completion. It never acknowledges active work as a duplicate. A complete marker is acknowledged only after expected KV output is readable; otherwise recovery reacquires and reconstructs missing output. Post-claim failures attempt release and lease expiry covers interruption before release. Durable Object and KV writes are not atomic, so the downstream transactional inbox/outbox requirement in `IPAWS_PRODUCTION_CONSUMER.md` remains mandatory.
+
+Only `SubscriptionConfirmation` can cause an outbound GET. Its signed URL must contain exactly one case-sensitive `Action=ConfirmSubscription`, `TopicArn`, and `Token`, with topic and token equal to the signed envelope. `UnsubscribeConfirmation` is persisted and never fetched. Transient certificate or confirmation failures return 503; permanent validation failures return 4xx.
+
+## CI and generated types
+
+Production and staging Wrangler declarations are separate and checked independently. CI uses Node.js 24.19.0, pins actions by commit SHA, runs on pull requests and pushes to `main`, the integration branch, and this feature branch, and runs focused/full tests, both type checks, staging-surface linting, both Wrangler type checks, both dry runs, whitespace checks, and dependency audits. Dry runs do not upload or deploy versions.
 
 ## Dependency advisory disposition
 

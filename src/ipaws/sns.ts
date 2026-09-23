@@ -62,7 +62,7 @@ function requireString(value: unknown, label: string): string {
 function validateSignedDate(value: string): string {
 	const parsed = Date.parse(value);
 	if (Number.isNaN(parsed)) throw new IpawsSnsError("ipaws_invalid_timestamp", "Timestamp is not valid ISO-8601.");
-	return new Date(parsed).toISOString();
+	return value;
 }
 
 export function validateSnsTimestamp(value: string, maxAgeSeconds: number, maxFutureSkewSeconds: number, nowMs = Date.now()): void {
@@ -176,7 +176,52 @@ function decodeBase64(value: string): Uint8Array {
 	return bytes;
 }
 
-async function readCertificate(url: string): Promise<string | null> {
+type CertificateReadResult =
+	| { ok: true; pem: string }
+	| { ok: false; reason: string; retryable: boolean };
+
+async function readBoundedUtf8(response: Response): Promise<CertificateReadResult> {
+	const declaredLength = response.headers.get("content-length");
+	if (declaredLength) {
+		const parsedLength = Number.parseInt(declaredLength, 10);
+		if (Number.isFinite(parsedLength) && parsedLength > MAX_CERT_BYTES) {
+			await response.body?.cancel("certificate_too_large");
+			return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
+		}
+	}
+	if (!response.body) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > MAX_CERT_BYTES) {
+				await reader.cancel("certificate_too_large");
+				return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	if (total === 0) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
+	const bytes = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	try {
+		return { ok: true, pem: new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes) };
+	} catch {
+		return { ok: false, reason: "ipaws_invalid_cert", retryable: false };
+	}
+}
+
+async function readCertificate(url: string): Promise<CertificateReadResult> {
 	const certUrl = new URL(url);
 	validateAwsUrl(certUrl);
 	validateSigningCertPath(certUrl.pathname);
@@ -185,30 +230,35 @@ async function readCertificate(url: string): Promise<string | null> {
 	}
 	try {
 		const certResponse = await fetchWithTimeout(certUrl.toString(), { method: "GET", redirect: "manual" });
-		if (!certResponse.ok) return null;
-		const text = await certResponse.text();
-		if (text.length === 0 || text.length > MAX_CERT_BYTES) return null;
-		return text;
+		if (!certResponse.ok) {
+			return {
+				ok: false,
+				reason: "ipaws_cert_fetch_failed",
+				retryable: certResponse.status === 429 || certResponse.status >= 500,
+			};
+		}
+		return readBoundedUtf8(certResponse);
 	} catch (error) {
 		logWarn("IPAWS", "Signing certificate fetch failed", {
 			err: error instanceof Error ? error.name : "unknown",
 		});
-		return null;
+		return { ok: false, reason: "ipaws_cert_fetch_unavailable", retryable: true };
 	}
 }
 
 export async function verifySnsSignature(message: IpawsSnsMessage): Promise<IpawsSignatureResult> {
 	validateSnsRequired(message);
-	let pem: string | null;
+	let certificate: CertificateReadResult;
 	try {
-		pem = await readCertificate(message.SigningCertURL);
+		certificate = await readCertificate(message.SigningCertURL);
 	} catch (error) {
 		if (error instanceof IpawsSnsError) {
 			throw error;
 		}
-		return { valid: false, reason: "ipaws_invalid_cert" };
+		return { valid: false, reason: "ipaws_invalid_cert", retryable: false };
 	}
-	if (!pem) return { valid: false, reason: "ipaws_cert_fetch_failed" };
+	if (!certificate.ok) return { valid: false, reason: certificate.reason, retryable: certificate.retryable };
+	const pem = certificate.pem;
 	try {
 		validateSnsCertificate(pem);
 	} catch (error) {
@@ -266,7 +316,7 @@ export function parseSnsMessage(value: unknown): IpawsSnsMessage {
 	return parsed;
 }
 
-export function validateSubscribeUrl(value: string): void {
+export function validateSubscribeUrl(value: string, expectedTopicArn?: string, expectedToken?: string): URL {
 	let url: URL;
 	try {
 		url = new URL(value);
@@ -280,7 +330,19 @@ export function validateSubscribeUrl(value: string): void {
 	if (url.pathname !== "/") {
 		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL path is malformed.");
 	}
-	if (!url.searchParams.get("Action") || !url.searchParams.get("TopicArn") || !url.searchParams.get("Token")) {
-		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL query is malformed.");
+	for (const key of ["Action", "TopicArn", "Token"] as const) {
+		if (url.searchParams.getAll(key).length !== 1 || !url.searchParams.get(key)) {
+			throw new IpawsSnsError("ipaws_invalid_subscribe_url", `SubscribeURL must contain exactly one ${key} value.`);
+		}
 	}
+	if (url.searchParams.get("Action") !== "ConfirmSubscription") {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL Action must be ConfirmSubscription.");
+	}
+	if (expectedTopicArn !== undefined && url.searchParams.get("TopicArn") !== expectedTopicArn) {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL TopicArn does not match the signed envelope.");
+	}
+	if (expectedToken !== undefined && url.searchParams.get("Token") !== expectedToken) {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL Token does not match the signed envelope.");
+	}
+	return url;
 }

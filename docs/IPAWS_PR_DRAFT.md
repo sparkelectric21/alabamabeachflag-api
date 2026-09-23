@@ -12,7 +12,7 @@ Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonic
 
 ### Architecture
 
-`POST /v1/ipaws/pubsub` validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a tightly constrained AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a staging Durable Object, stores the receipt/CAP parse result in staging KV, and writes a storage-only normalized staging record. No queue, notification service, production user store, or production route is bound.
+`POST /v1/ipaws/pubsub` validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a size-bounded AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a staging Durable Object, safely parses CAP 1.2 XML, stores the receipt/parse result in staging KV, and writes a storage-only normalized staging record. Acquired, processing, and complete states support lease recovery and persisted-output repair. No queue, notification service, production user store, or production route is bound.
 
 ### Security controls
 
@@ -22,13 +22,17 @@ Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonic
 - Certificate date, leaf, identity, and RSA checks
 - SNS SignatureVersion 1/SHA-1 and Version 2/SHA-256 verification
 - Strongly consistent concurrent MessageId claim
+- No success acknowledgement for active processing; completion requires output read-back
+- Strict, namespace-aware CAP XML parsing with DTD/entity/complexity rejection
+- Exact subscription action/topic/token matching; unsubscribe URLs are never fetched
+- Retryable 503 classification for transient certificate and confirmation failures
 - Staging-only resources and `notificationsEnabled: false`
 
 The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS origin and does not independently build a full X.509 chain. Independent security approval is required before production use; see `docs/IPAWS_SECURITY_REVIEW.md`.
 
 ### Test evidence
 
-Local review on Node.js 24.19.0 passed TypeScript, generated Worker type checking, 45/45 focused IPAWS tests, 761/761 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated runtime declarations), the production/all-dependency audit policy checks, and a Wrangler staging dry run. One initial parallel full-suite attempt timed out an unrelated SQLite migration test at five seconds; that test passed alone and the complete rerun passed 761/761. Updated remote CI status should be recorded after the branch is pushed.
+Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 60/60 focused IPAWS tests, 775/775 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
 
 ### Staging evidence
 

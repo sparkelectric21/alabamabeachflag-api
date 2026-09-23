@@ -9,8 +9,11 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test",
-    "cf-typegen": "wrangler types"
+    "typecheck:staging": "tsc -p tsconfig.ipaws-staging.json --noEmit",
+    "lint": "tsc -p tsconfig.ipaws-staging.json --noEmit --noUnusedLocals --noUnusedParameters",
+    "check": "npm run typecheck && npm run typecheck:staging && npm test",
+    "cf-typegen": "wrangler types",
+    "cf-typegen:staging": "wrangler types worker-configuration.ipaws-staging.d.ts --config wrangler.ipaws.staging.jsonc"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
@@ -20,14 +23,15 @@
   },
   "dependencies": {
     "@e965/xlsx": "0.20.3",
-    "jose": "^6.2.3"
+    "jose": "^6.2.3",
+    "saxes": "6.0.0"
   },
   "allowScripts": {
-	"esbuild@0.28.1": true,
-	"esbuild@0.28.2": true,
-	"workerd@1.20260310.1": true,
-	"workerd@1.20260921.1": true,
-	"sharp@0.34.5": true,
-	"fsevents@2.3.3": true
+    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
+    "workerd@1.20260310.1": true,
+    "workerd@1.20260921.1": true,
+    "sharp@0.34.5": true,
+    "fsevents@2.3.3": true
   }
 }

@@ -1,0 +1,13 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"types": ["./worker-configuration.ipaws-staging.d.ts", "node"]
+	},
+	"include": [
+		"worker-configuration.ipaws-staging.d.ts",
+		"src/ipaws/**/*.ts",
+		"src/types.ts",
+		"src/utils/http.ts",
+		"src/utils/logger.ts"
+	]
+}

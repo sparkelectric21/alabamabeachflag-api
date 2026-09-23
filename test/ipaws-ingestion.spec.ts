@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleIpawsPubSubRequest } from "../src/ipaws/handler";
+import { IpawsIdempotencyCoordinator } from "../src/ipaws/idempotency";
 import { parseCapPayload } from "../src/ipaws/parser";
 import { parseSigningString, parseSnsMessage, validateSnsRequired, validateSubscribeUrl, validateType } from "../src/ipaws/sns";
 import type { Env } from "../src/types";
@@ -14,11 +15,12 @@ vi.mock("../src/ipaws/sns", async (importOriginal) => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 });
 
-const CAP_XML = `<?xml version="1.0"?><alert><identifier>CAP-TEST-1</identifier><sender>nws</sender><sent>2026-08-22T16:00:00Z</sent><status>Actual</status><msgType>Alert</msgType><scope>Public</scope><info><event>Test Event</event><headline>Wave Advisory</headline><description>Test</description><urgency>Immediate</urgency><severity>Moderate</severity></info></alert>`;
+const CAP_XML = `<?xml version="1.0"?><alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><identifier>CAP-TEST-1</identifier><sender>nws</sender><sent>2026-08-22T16:00:00Z</sent><status>Actual</status><msgType>Alert</msgType><scope>Public</scope><info><event>Test Event</event><headline>Wave Advisory</headline><description>Test</description><urgency>Immediate</urgency><severity>Moderate</severity></info></alert>`;
 const CAP_JSON = {
 	identifier: "CAP-TEST-JSON",
 	event: "Beach Warning",
@@ -27,7 +29,7 @@ const CAP_JSON = {
 	info: [{ event: "Beach Warning", severity: "Severe", certainty: "Likely" }],
 };
 const CAP_JSON_STRING = JSON.stringify(CAP_JSON);
-const validSubscribeUrl = "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=example-token&TopicArn=arn:aws:sns:us-east-1:123456789012:alabama-beachflag";
+const validSubscribeUrl = "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=token&TopicArn=arn:aws:sns:us-east-1:123456789012:alabama-beachflag";
 const defaultTopicArn = "arn:aws:sns:us-east-1:123456789012:alabama-beachflag";
 
 const baseNotification = {
@@ -43,11 +45,16 @@ const baseNotification = {
 
 function createStore() {
 	const map = new Map<string, string>();
+	const failNextPut = new Set<string>();
 	return {
 		get: vi.fn(async (key: string) => map.get(key) ?? null),
 		put: vi.fn(async (key: string, value: string) => {
+			if ([...failNextPut].some((prefix) => key.startsWith(prefix))) { failNextPut.clear(); throw new Error("injected_kv_failure"); }
 			map.set(key, value);
 		}),
+		delete: vi.fn(async (key: string) => map.delete(key)),
+		map,
+		failNextPut,
 	};
 }
 
@@ -60,10 +67,12 @@ function createEnv(overrides: Partial<Env> = {}) {
 			fetch: vi.fn(async (input: RequestInfo | URL) => {
 				const path = new URL(String(input)).pathname;
 				if (path === "/claim") {
-					if (claims.has(id)) return Response.json({ claimed: false });
+					if (claims.get(id) === "complete") return Response.json({ result: "complete" });
+					if (claims.has(id)) return Response.json({ result: "processing" });
 					claims.set(id, "processing");
-					return Response.json({ claimed: true });
+					return Response.json({ result: "acquired" });
 				}
+				if (path === "/recover") { claims.set(id, "processing"); return Response.json({ result: "acquired" }); }
 				if (path === "/complete") claims.set(id, "complete");
 				if (path === "/release") claims.delete(id);
 				return new Response(null, { status: 204 });
@@ -104,6 +113,15 @@ describe("IPAWS CAP parser", () => {
 	it("rejects malformed XML payloads safely", () => {
 		expect(parseCapPayload("<alert><identifier></alert>")).toMatchObject({ status: "parse_failed" });
 	});
+
+	it("rejects namespace confusion and entity-bearing documents", () => {
+		expect(parseCapPayload(CAP_XML.replace("urn:oasis:names:tc:emergency:cap:1.2", "https://attacker.example/cap"))).toMatchObject({ status: "parse_failed" });
+		expect(parseCapPayload(`<!DOCTYPE alert [<!ENTITY x "injected">]><alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><identifier>&x;</identifier></alert>`)).toMatchObject({ status: "parse_failed" });
+	});
+
+	it("enforces the CAP byte limit before parsing", () => {
+		expect(parseCapPayload(CAP_XML, 32)).toMatchObject({ status: "parse_failed", reason: "payload_too_large" });
+	});
 });
 
 describe("IPAWS SNS validation utilities", () => {
@@ -137,6 +155,21 @@ describe("IPAWS SNS validation utilities", () => {
 });
 
 describe("IPAWS pub/sub handler", () => {
+	it("allows one active claim and reacquires it only after lease expiry", async () => {
+		const values = new Map<string, unknown>();
+		const storage = {
+			get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); },
+			delete: async (key: string) => values.delete(key), transaction: async (callback: (transaction: unknown) => unknown) => callback(storage),
+		};
+		const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-09-23T12:00:00Z"));
+		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "acquired" });
+		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "processing" });
+		vi.advanceTimersByTime(60_001);
+		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "acquired" });
+		vi.useRealTimers();
+	});
 	it("fails closed when TopicArn allowlist is not configured", async () => {
 		const verify = vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, reason: undefined, algorithm: "SHA-1" });
 		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
@@ -195,14 +228,38 @@ describe("IPAWS pub/sub handler", () => {
 		const env = createEnv();
 		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
 		const responses = await Promise.all(Array.from({ length: 8 }, () => handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env)));
-		const outcomes = await Promise.all(responses.map((item) => item.json() as Promise<{ outcome: string }>));
+		const outcomes = await Promise.all(responses.map((item) => item.json() as Promise<{ outcome?: string; code?: string }>));
 		expect(outcomes.filter((item) => item.outcome === "accepted")).toHaveLength(1);
-		expect(outcomes.filter((item) => item.outcome === "duplicate")).toHaveLength(7);
+		expect(outcomes.filter((item) => item.code === "ipaws_delivery_in_progress")).toHaveLength(7);
 		const normalizedWrites = env.BEACH_DATA.put.mock.calls.filter(([key]) => String(key).startsWith("ipaws:normalized:"));
 		expect(normalizedWrites).toHaveLength(1);
 		const normalized = JSON.parse(String(normalizedWrites[0]?.[1]));
 		expect(normalized).toMatchObject({ source: "fema-ipaws", environment: "staging", handoffState: "staged", notificationsEnabled: false });
 		expect(env.BEACH_DATA.put).toHaveBeenCalledWith("ipaws:subscription:state", "confirmed", expect.any(Object));
+	});
+
+	it.each(["ipaws:ingest:", "ipaws:normalized:"])("releases the claim and recovers after a %s write failure", async (prefix) => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		env.BEACH_DATA.failNextPut.add(prefix);
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		const first = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(first.status).toBe(503);
+		const retry = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(retry.status).toBe(200);
+		expect(await retry.json()).toMatchObject({ outcome: "accepted" });
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(true);
+	});
+
+	it("reconstructs a missing normalized output behind a complete marker", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		expect((await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env)).status).toBe(200);
+		env.BEACH_DATA.map.delete(`ipaws:normalized:${baseNotification.MessageId}`);
+		const recovered = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(recovered.status).toBe(200);
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(true);
 	});
 
 	it("fails closed on invalid signatures", async () => {
@@ -215,6 +272,19 @@ describe("IPAWS pub/sub handler", () => {
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({ code: "ipaws_signature_mismatch" });
 		expect(verify).toHaveBeenCalled();
+	});
+
+	it("retains a signed malformed CAP payload as parse_failed without normalized output", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-1" });
+		const env = createEnv();
+		const malformed = "<alert><identifier>broken</alert>";
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, Message: malformed }),
+		}), env);
+		expect(response.status).toBe(200);
+		const record = JSON.parse(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`) ?? "{}");
+		expect(record).toMatchObject({ processingState: "notification_parse_failed", parseStatus: "parse_failed", rawMessage: malformed });
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(false);
 	});
 
 	it("safely handles subscription confirmations and respects auto-confirm flag", async () => {
@@ -284,5 +354,29 @@ describe("IPAWS pub/sub handler", () => {
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({ code: "ipaws_invalid_subscribe_url" });
 		expect(verify).toHaveBeenCalled();
+	});
+
+	it("records unsubscribe confirmations without following SubscribeURL", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-1" });
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const env = createEnv();
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body: JSON.stringify({
+			...baseNotification, Type: "UnsubscribeConfirmation", Message: "unsubscribe", Token: "token", SubscribeURL: validSubscribeUrl,
+		}) }), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ outcome: "unsubscribe_recorded" });
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("returns 503 for transient confirmation failures and permits retry", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-1" });
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 503 })));
+		const env = createEnv({ IPAWS_AUTO_CONFIRM_SUBSCRIPTION: "true" });
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body: JSON.stringify({
+			...baseNotification, Type: "SubscriptionConfirmation", Message: "subscribe", Token: "token", SubscribeURL: validSubscribeUrl,
+		}) }), env);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({ code: "ipaws_subscription_confirmation_unavailable" });
 	});
 });

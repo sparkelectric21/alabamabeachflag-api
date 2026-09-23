@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import type { IpawsCapParseResult, IpawsHealthState, IpawsIngressReceipt, IpawsIngestionRecord, IpawsProcessingState, IpawsSnsMessage } from "./types";
 
 const INTAKE_KEY_PREFIX = "ipaws:ingest:";
+const NORMALIZED_KEY_PREFIX = "ipaws:normalized:";
 const HEALTH_KEY = "ipaws:health:v1";
 const SUBSCRIPTION_STATE_KEY = "ipaws:subscription:state";
 
@@ -21,6 +22,10 @@ function safeParse<T>(value: string | null): T | null {
 
 export async function readIngestionRecord(env: Pick<Env, "BEACH_DATA">, messageId: string): Promise<IpawsIngestionRecord | null> {
 	return safeParse(await env.BEACH_DATA.get(toKey(messageId), "text"));
+}
+
+export async function readNormalizedAlert(env: Pick<Env, "BEACH_DATA">, messageId: string): Promise<Record<string, unknown> | null> {
+	return safeParse(await env.BEACH_DATA.get(`${NORMALIZED_KEY_PREFIX}${messageId}`, "text"));
 }
 
 export async function writeIngestionRecord(
