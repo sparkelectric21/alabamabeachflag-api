@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "alabamabeachflag-ipaws-staging",
+	"main": "src/ipaws/worker.ts",
+	"compatibility_date": "2026-06-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"preview_urls": false,
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "60f732dff736438bbb53edb2815059bb"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "IPAWS_IDEMPOTENCY", "class_name": "IpawsIdempotencyCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "ipaws-idempotency-v1", "new_sqlite_classes": ["IpawsIdempotencyCoordinator"] }
+	],
+	"vars": {
+		"IPAWS_INGESTION_ENABLED": "true",
+		"IPAWS_ENVIRONMENT": "staging",
+		"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws-us-gov:sns:us-gov-west-1:594897668655:EAS_PUBLIC_FEED",
+		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "true",
+		"IPAWS_HEALTH_TTL_SECONDS": "604800",
+		"IPAWS_RECORD_TTL_SECONDS": "604800",
+		"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800",
+		"IPAWS_PARSE_BYTE_LIMIT": "262144"
+		,"IPAWS_SNS_MAX_AGE_SECONDS": "3600"
+		,"IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS": "300"
+	}
+}
