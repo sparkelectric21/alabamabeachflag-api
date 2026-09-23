@@ -8,6 +8,11 @@ on:
       - "test/ipaws-*.spec.ts"
       - "test/fixtures/sns-*"
       - "docs/IPAWS_STAGING_RECEIVER.md"
+      - "docs/IPAWS_SECURITY_REVIEW.md"
+      - "docs/IPAWS_PRODUCTION_CONSUMER.md"
+      - "docs/IPAWS_PR_DRAFT.md"
+      - "package.json"
+      - "package-lock.json"
       - "wrangler.ipaws.staging.jsonc"
       - "worker-configuration.d.ts"
       - ".github/workflows/ipaws-staging.yml"
@@ -29,8 +34,12 @@ jobs:
           node-version: "24.19.0"
           cache: npm
       - run: npm ci
-      - name: Whitespace lint
-        run: git diff --check
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Reject critical development dependency advisories
+        run: npm audit --audit-level=critical
+      - name: Changed-file whitespace check
+        run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before }}" -- . ':!worker-configuration.d.ts'
       - name: Type check
         run: npm run typecheck
       - name: Focused IPAWS tests
