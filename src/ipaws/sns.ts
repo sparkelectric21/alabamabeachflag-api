@@ -186,6 +186,12 @@ async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise
 	}
 	if (!response.body) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
 	const reader = response.body.getReader();
+	let readerCancellationStarted = false;
+	const cancelReader = (reason: string) => {
+		if (readerCancellationStarted) return;
+		readerCancellationStarted = true;
+		try { void reader.cancel(reason).catch(() => undefined); } catch { /* Preserve the primary validation result. */ }
+	};
 	let rejectAborted: (reason: unknown) => void = () => undefined;
 	const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
 	let abortTriggered = false;
@@ -204,14 +210,14 @@ async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise
 			if (done) break;
 			total += value.byteLength;
 			if (total > MAX_CERT_BYTES) {
-				await reader.cancel("certificate_too_large");
+				cancelReader("certificate_too_large");
 				return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
 			}
 			chunks.push(value);
 		}
 	} finally {
 		signal.removeEventListener("abort", abortReader);
-		if (abortTriggered) void reader.cancel("certificate_timeout").catch(() => undefined);
+		if (abortTriggered) cancelReader("certificate_timeout");
 		try { reader.releaseLock(); } catch { /* Do not replace the primary read or timeout result. */ }
 	}
 	if (total === 0) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };

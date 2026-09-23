@@ -183,6 +183,32 @@ describe("AWS SNS signature verification", () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
+	it.each([
+		["rejects", () => Promise.reject(new Error("cancel failed"))],
+		["never settles", () => new Promise<void>(() => undefined)],
+	] as const)("preserves streamed oversize when reader cancellation %s", async (_behavior, cancelResult) => {
+		vi.useFakeTimers();
+		let cancellationCount = 0;
+		let activeListeners = () => -1;
+		const body = new ReadableStream({
+			pull(controller) { controller.enqueue(new Uint8Array(48_001)); controller.enqueue(new Uint8Array(48_001)); },
+			cancel() { cancellationCount += 1; return cancelResult(); },
+		});
+		vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			activeListeners = observeAbortListeners(init?.signal as AbortSignal);
+			return new Response(body);
+		}));
+
+		const verification = verifySnsSignature(message("2"));
+		await vi.advanceTimersByTimeAsync(0);
+		await expect(verification).resolves.toEqual({ valid: false, reason: "ipaws_cert_too_large", retryable: false });
+		expect(cancellationCount).toBe(1);
+		expect(body.locked).toBe(false);
+		expect(activeListeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+		await Promise.resolve();
+	});
+
 	it.each([false, true])("times out and cancels a stalled certificate body (partial=%s)", async (partial) => {
 		vi.useFakeTimers();
 		let cancelled = false;
