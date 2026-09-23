@@ -4,8 +4,10 @@ import { parseCapPayload } from "./parser";
 import type { IpawsCapParseResult } from "./types";
 import { updateIngestionRecord, upsertIngestionRecord, writeSubscriptionState } from "./persistence";
 import { recordIpawsHealthEvent } from "./health";
-import { IpawsSnsError, parseSnsMessage, validateSubscribeUrl, verifySnsSignature } from "./sns";
+import { IpawsSnsError, parseSnsMessage, validateSnsTimestamp, validateSubscribeUrl, verifySnsSignature } from "./sns";
 import { logWarn } from "../utils/logger";
+import { stageNormalizedAlert } from "./domain";
+import { claimIpawsDelivery, completeIpawsDelivery, releaseIpawsDelivery } from "./idempotency";
 
 const MAX_ENVELOPE_BYTE_LIMIT = 512 * 1024;
 const SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 5_000;
@@ -103,6 +105,12 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 	if (!config.allowedTopicArns.includes(message.TopicArn.trim())) {
 		return responseError("ipaws_unexpected_topic", "TopicArn is not configured as allowed.", 400);
 	}
+	try {
+		validateSnsTimestamp(message.Timestamp, config.snsMaxAgeSeconds, config.snsMaxFutureSkewSeconds);
+	} catch (error) {
+		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		return responseError("ipaws_invalid_timestamp", "SNS Timestamp is invalid.", 400);
+	}
 
 	const signatureResult = await verifySnsSignature(message);
 	if (!signatureResult.valid) {
@@ -119,6 +127,19 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 		);
 		await recordIpawsHealthEvent(env, `signature_failed:${signatureResult.reason ?? "unknown"}`, config.healthTtlSeconds);
 		return responseError(signatureResult.reason ?? "ipaws_signature_invalid", "SNS signature verification failed.", 400);
+	}
+	if (!env.IPAWS_IDEMPOTENCY) {
+		return responseError("ipaws_idempotency_misconfigured", "Strongly consistent IPAWS idempotency is not configured.", 503);
+	}
+	let claimed: boolean;
+	try {
+		claimed = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+	} catch {
+		return responseError("ipaws_idempotency_unavailable", "IPAWS idempotency coordinator is unavailable.", 503);
+	}
+	if (!claimed) {
+		await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
+		return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId }, { headers: { "Cache-Control": "no-store" } });
 	}
 
 	const parseResult: IpawsCapParseResult = message.Type === "Notification"
@@ -140,11 +161,18 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 		config.recordTtlSeconds,
 	);
 	if (receipt.duplicate) {
+		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 		await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
 		return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 	}
 
 	if (message.Type === "Notification") {
+		try {
+			if (parseResult.status === "parsed") await stageNormalizedAlert(env, receipt.record, config.recordTtlSeconds);
+		} catch (error) {
+			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			throw error;
+		}
 		await updateIngestionRecord(
 			env,
 			message.MessageId,
@@ -160,6 +188,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 			environment: config.environment,
 			stagingEnabled: config.enabled,
 		});
+		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 		return response({ status: "ok", outcome: "accepted", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 	}
 
@@ -200,6 +229,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 				environment: config.environment,
 				stagingEnabled: config.enabled,
 			});
+			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 			return response({ status: "ok", outcome: "subscription_confirmation_skipped", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
@@ -217,6 +247,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 				environment: config.environment,
 				stagingEnabled: config.enabled,
 			});
+			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 			return response({ status: "ok", outcome: "subscription_confirmed", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		} catch (error) {
 			await writeSubscriptionState(env, "unknown", config.subscriptionStateTtlSeconds);

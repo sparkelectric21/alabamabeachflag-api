@@ -70,6 +70,8 @@ export interface IpawsIngestionConfig {
 	recordTtlSeconds: number;
 	subscriptionStateTtlSeconds: number;
 	healthTtlSeconds: number;
+	snsMaxAgeSeconds: number;
+	snsMaxFutureSkewSeconds: number;
 }
 
 export interface IpawsCapParseResult {

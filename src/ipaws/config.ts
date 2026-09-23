@@ -5,6 +5,8 @@ const DEFAULT_PARSE_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_RECORD_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_SUBSCRIPTION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_HEALTH_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_SNS_MAX_AGE_SECONDS = 60 * 60;
+const DEFAULT_SNS_MAX_FUTURE_SKEW_SECONDS = 5 * 60;
 
 function envBoolean(value: string | undefined, fallback: boolean): boolean {
 	if (value === undefined) return fallback;
@@ -24,7 +26,7 @@ function parseTopicArns(value: string | undefined): string[] {
 		.filter(Boolean);
 }
 
-export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAWS_ENVIRONMENT" | "IPAWS_ALLOWED_TOPIC_ARNS" | "IPAWS_AUTO_CONFIRM_SUBSCRIPTION" | "IPAWS_PARSE_BYTE_LIMIT" | "IPAWS_RECORD_TTL_SECONDS" | "IPAWS_SUBSCRIPTION_TTL_SECONDS" | "IPAWS_HEALTH_TTL_SECONDS">
+export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAWS_ENVIRONMENT" | "IPAWS_ALLOWED_TOPIC_ARNS" | "IPAWS_AUTO_CONFIRM_SUBSCRIPTION" | "IPAWS_PARSE_BYTE_LIMIT" | "IPAWS_RECORD_TTL_SECONDS" | "IPAWS_SUBSCRIPTION_TTL_SECONDS" | "IPAWS_HEALTH_TTL_SECONDS" | "IPAWS_SNS_MAX_AGE_SECONDS" | "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS">
 ): IpawsIngestionConfig {
 	return {
 		enabled: envBoolean(env.IPAWS_INGESTION_ENABLED, false),
@@ -35,5 +37,7 @@ export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAW
 		recordTtlSeconds: parseNumber(env.IPAWS_RECORD_TTL_SECONDS, DEFAULT_RECORD_TTL_SECONDS),
 		subscriptionStateTtlSeconds: parseNumber(env.IPAWS_SUBSCRIPTION_TTL_SECONDS, DEFAULT_SUBSCRIPTION_TTL_SECONDS),
 		healthTtlSeconds: parseNumber(env.IPAWS_HEALTH_TTL_SECONDS, DEFAULT_HEALTH_TTL_SECONDS),
+		snsMaxAgeSeconds: parseNumber(env.IPAWS_SNS_MAX_AGE_SECONDS, DEFAULT_SNS_MAX_AGE_SECONDS),
+		snsMaxFutureSkewSeconds: parseNumber(env.IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS, DEFAULT_SNS_MAX_FUTURE_SKEW_SECONDS),
 	};
 }

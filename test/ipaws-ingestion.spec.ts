@@ -34,7 +34,7 @@ const baseNotification = {
 	Type: "Notification" as const,
 	MessageId: "11111111-1111-1111-1111-111111111111",
 	Message: CAP_XML,
-	Timestamp: "2026-08-22T16:10:00Z",
+	Timestamp: new Date().toISOString(),
 	TopicArn: "arn:aws:sns:us-east-1:123456789012:alabama-beachflag",
 	SigningCertURL: "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-PEM.pem",
 	Signature: "AAAA",
@@ -53,8 +53,26 @@ function createStore() {
 
 function createEnv(overrides: Partial<Env> = {}) {
 	const store = createStore();
+	const claims = new Map<string, "processing" | "complete">();
+	const idempotency = {
+		idFromName: (name: string) => name,
+		get: (id: string) => ({
+			fetch: vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				if (path === "/claim") {
+					if (claims.has(id)) return Response.json({ claimed: false });
+					claims.set(id, "processing");
+					return Response.json({ claimed: true });
+				}
+				if (path === "/complete") claims.set(id, "complete");
+				if (path === "/release") claims.delete(id);
+				return new Response(null, { status: 204 });
+			}),
+		}),
+	};
 	return {
 		BEACH_DATA: store,
+		IPAWS_IDEMPOTENCY: idempotency as unknown as DurableObjectNamespace,
 		IPAWS_INGESTION_ENABLED: "true",
 		IPAWS_ENVIRONMENT: "staging",
 		IPAWS_PARSE_BYTE_LIMIT: "262144",
@@ -170,6 +188,20 @@ describe("IPAWS pub/sub handler", () => {
 		expect(firstBody.outcome).toBe("accepted");
 		expect(secondBody.outcome).toBe("duplicate");
 		expect(verify).toHaveBeenCalled();
+	});
+
+	it("serializes concurrent duplicate deliveries and stages one normalized alert", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		const responses = await Promise.all(Array.from({ length: 8 }, () => handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env)));
+		const outcomes = await Promise.all(responses.map((item) => item.json() as Promise<{ outcome: string }>));
+		expect(outcomes.filter((item) => item.outcome === "accepted")).toHaveLength(1);
+		expect(outcomes.filter((item) => item.outcome === "duplicate")).toHaveLength(7);
+		const normalizedWrites = env.BEACH_DATA.put.mock.calls.filter(([key]) => String(key).startsWith("ipaws:normalized:"));
+		expect(normalizedWrites).toHaveLength(1);
+		const normalized = JSON.parse(String(normalizedWrites[0]?.[1]));
+		expect(normalized).toMatchObject({ source: "fema-ipaws", environment: "staging", handoffState: "staged", notificationsEnabled: false });
 	});
 
 	it("fails closed on invalid signatures", async () => {

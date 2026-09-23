@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { handleIpawsPubSubRequest } from "./handler";
+export { IpawsIdempotencyCoordinator } from "./idempotency";
 
 export type IpawsStandaloneEnv = Pick<
 	Env,
@@ -12,6 +13,9 @@ export type IpawsStandaloneEnv = Pick<
 	| "IPAWS_RECORD_TTL_SECONDS"
 	| "IPAWS_SUBSCRIPTION_TTL_SECONDS"
 	| "IPAWS_HEALTH_TTL_SECONDS"
+	| "IPAWS_SNS_MAX_AGE_SECONDS"
+	| "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS"
+	| "IPAWS_IDEMPOTENCY"
 >;
 
 function json(body: unknown, init: ResponseInit = {}): Response {

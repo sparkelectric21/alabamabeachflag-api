@@ -77,3 +77,19 @@ Before sharing an endpoint with FEMA Production, confirm at minimum:
 3. Payload schema is validated against real FEMA staging deliveries.
 4. CAP lifecycle correlation and update/cancel logic are implemented in a controlled follow-up phase.
 5. Staging and production routing, secret handling, and alerting workflows are approved.
+# Security and application handoff
+
+The receiver accepts an SNS envelope only after all of the following checks succeed:
+
+- the exact `TopicArn` is present in the staging allowlist;
+- the signed timestamp is no more than 3,600 seconds old and no more than 300 seconds in the future;
+- the certificate URL is HTTPS on an exact `sns.<region>.amazonaws.com` host, uses the AWS SNS certificate path shape, contains no credentials, non-default port, fragment, or query, and does not redirect;
+- Cloudflare's outbound TLS stack authenticates that AWS hostname before returning the certificate;
+- the returned X.509 object is a currently valid, non-CA RSA leaf whose subject identifies Amazon SNS and whose issuer belongs to the Amazon/Starfield trust family;
+- the SNS PKCS#1 v1.5 signature verifies using SHA-1 for SignatureVersion 1 or SHA-256 for SignatureVersion 2.
+
+This certificate strategy deliberately combines platform TLS trust and a pinned AWS origin with explicit leaf validity and identity checks. The Worker never accepts a certificate supplied from another origin and never follows a redirect. If AWS changes the documented SNS certificate identity or issuer family, the receiver fails closed and this policy must be reviewed before widening it.
+
+After validation, each `MessageId` is claimed by a dedicated Durable Object. This serializes concurrent deliveries globally and prevents the KV read-before-write race that existed in the deployed baseline. Failed application handoffs release the short processing lease for retry; completed deliveries remain claimed.
+
+Valid CAP notifications are normalized into `ipaws:normalized:<MessageId>` records. The normalized schema is explicitly staging-only (`environment: staging`, `handoffState: staged`, `notificationsEnabled: false`). This Worker has no production user, email, queue, service, or notification binding, so the handoff is storage-only and cannot send notifications.

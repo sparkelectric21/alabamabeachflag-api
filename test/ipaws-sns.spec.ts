@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { createPrivateKey, sign } from "node:crypto";
+import { createPrivateKey, sign, X509Certificate } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleIpawsPubSubRequest } from "../src/ipaws/handler";
-import { IpawsSnsError, parseSigningString, validateSubscribeUrl, verifySnsSignature } from "../src/ipaws/sns";
+import { IpawsSnsError, parseSigningString, validateSnsCertificate, validateSnsTimestamp, validateSubscribeUrl, verifySnsSignature } from "../src/ipaws/sns";
 import type { IpawsSnsSubscriptionConfirmation } from "../src/ipaws/types";
 import type { Env } from "../src/types";
 
@@ -16,7 +16,7 @@ function message(version: "1" | "2" = "1", topicArn = TOPIC_ARN): IpawsSnsSubscr
 		Type: "SubscriptionConfirmation",
 		MessageId: "c5e14a67-3a64-480f-9dd2-23f94599cb9f",
 		Message: `You have chosen to subscribe to the topic ${topicArn}.`,
-		Timestamp: "2026-09-17T21:04:07.000Z",
+		Timestamp: new Date().toISOString(),
 		TopicArn: topicArn,
 		SigningCertURL: CERT_URL,
 		Signature: "pending",
@@ -33,11 +33,23 @@ function certificateFetch() {
 }
 
 function environment(): Env {
+	let claimed = false;
 	return {
 		BEACH_DATA: {
 			get: vi.fn(async () => null),
 			put: vi.fn(async () => undefined),
 		} as unknown as KVNamespace,
+		IPAWS_IDEMPOTENCY: {
+			idFromName: (name: string) => name,
+			get: () => ({ fetch: vi.fn(async (input: RequestInfo | URL) => {
+				if (new URL(String(input)).pathname === "/claim") {
+					const result = !claimed;
+					claimed = true;
+					return Response.json({ claimed: result });
+				}
+				return new Response(null, { status: 204 });
+			}) }),
+		} as unknown as DurableObjectNamespace,
 		IPAWS_INGESTION_ENABLED: "true",
 		IPAWS_ENVIRONMENT: "staging",
 		IPAWS_ALLOWED_TOPIC_ARNS: TOPIC_ARN,
@@ -70,6 +82,28 @@ describe("AWS SNS signature verification", () => {
 	it("rejects a response that is not a valid X.509 certificate", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response("not a certificate", { status: 200 })));
 		await expect(verifySnsSignature(message("2"))).resolves.toEqual({ valid: false, reason: "ipaws_invalid_cert" });
+	});
+
+	it("does not follow certificate URL redirects", async () => {
+		const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://example.com/cert.pem" } }));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_failed" });
+		expect(fetchMock).toHaveBeenCalledWith(CERT_URL, expect.objectContaining({ redirect: "manual" }));
+	});
+
+	it("rejects expired, not-yet-valid, and untrusted certificates", () => {
+		const certificate = new X509Certificate(CERTIFICATE);
+		expect(() => validateSnsCertificate(CERTIFICATE, Date.parse(certificate.validTo) + 1)).toThrowError(/expired/i);
+		expect(() => validateSnsCertificate(CERTIFICATE, Date.parse(certificate.validFrom) - 1)).toThrowError(/not yet valid/i);
+		const untrusted = readFileSync(new URL("./fixtures/sns-untrusted-cert.pem", import.meta.url), "utf8");
+		expect(() => validateSnsCertificate(untrusted)).toThrowError(/non-CA leaf|approved AWS trust/i);
+	});
+
+	it("rejects stale and future SNS timestamps", () => {
+		const now = Date.parse("2026-09-23T12:00:00.000Z");
+		expect(() => validateSnsTimestamp("2026-09-23T10:59:59.000Z", 3600, 300, now)).toThrowError(/older/i);
+		expect(() => validateSnsTimestamp("2026-09-23T12:05:01.000Z", 3600, 300, now)).toThrowError(/future/i);
+		expect(() => validateSnsTimestamp("2026-09-23T11:00:00.000Z", 3600, 300, now)).not.toThrow();
 	});
 
 	it.each([

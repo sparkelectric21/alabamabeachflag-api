@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type IpawsStandaloneEnv } from "../src/ipaws/worker";
+import { readFileSync } from "node:fs";
 
 function createEnvironment(): IpawsStandaloneEnv & { BEACH_DATA: { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> } } {
 	const BEACH_DATA = {
@@ -62,5 +63,12 @@ describe("standalone IPAWS Worker", () => {
 		expect("VERIFICATION_COORDINATOR" in env).toBe(false);
 		expect("VERIFICATION_ALERT_EMAIL" in env).toBe(false);
 		expect(await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env)).toHaveProperty("status", 503);
+	});
+
+	it("keeps the deployed staging configuration isolated from notification infrastructure", () => {
+		const config = readFileSync(new URL("../wrangler.ipaws.staging.jsonc", import.meta.url), "utf8");
+		expect(config).toContain('"name": "alabamabeachflag-ipaws-staging"');
+		expect(config).toContain('"IPAWS_ENVIRONMENT": "staging"');
+		expect(config).not.toMatch(/send_email|notification_recipient|production/i);
 	});
 });

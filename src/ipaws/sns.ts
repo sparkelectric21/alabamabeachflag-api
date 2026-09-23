@@ -1,4 +1,5 @@
 import { importX509 } from "jose";
+import { X509Certificate } from "node:crypto";
 import { logWarn } from "../utils/logger";
 import { validateSafeHttpsUrl } from "../utils/http";
 import type { IpawsSnsMessage, IpawsSnsNotification, IpawsSnsSubscriptionConfirmation, IpawsSnsType, IpawsSignatureResult } from "./types";
@@ -62,6 +63,47 @@ function validateSignedDate(value: string): string {
 	const parsed = Date.parse(value);
 	if (Number.isNaN(parsed)) throw new IpawsSnsError("ipaws_invalid_timestamp", "Timestamp is not valid ISO-8601.");
 	return new Date(parsed).toISOString();
+}
+
+export function validateSnsTimestamp(value: string, maxAgeSeconds: number, maxFutureSkewSeconds: number, nowMs = Date.now()): void {
+	const timestampMs = Date.parse(value);
+	if (Number.isNaN(timestampMs)) throw new IpawsSnsError("ipaws_invalid_timestamp", "Timestamp is not valid ISO-8601.");
+	if (timestampMs < nowMs - maxAgeSeconds * 1_000) {
+		throw new IpawsSnsError("ipaws_stale_timestamp", "SNS Timestamp is older than the configured acceptance window.");
+	}
+	if (timestampMs > nowMs + maxFutureSkewSeconds * 1_000) {
+		throw new IpawsSnsError("ipaws_future_timestamp", "SNS Timestamp exceeds the configured future clock-skew allowance.");
+	}
+}
+
+export function validateSnsCertificate(pem: string, nowMs = Date.now()): X509Certificate {
+	let certificate: X509Certificate;
+	try {
+		certificate = new X509Certificate(pem);
+	} catch {
+		throw new IpawsSnsError("ipaws_invalid_cert", "Signing certificate is not valid X.509.");
+	}
+	const notBefore = Date.parse(certificate.validFrom);
+	const notAfter = Date.parse(certificate.validTo);
+	if (!Number.isFinite(notBefore) || !Number.isFinite(notAfter) || nowMs < notBefore) {
+		throw new IpawsSnsError("ipaws_cert_not_yet_valid", "SNS signing certificate is not yet valid.");
+	}
+	if (nowMs > notAfter) {
+		throw new IpawsSnsError("ipaws_cert_expired", "SNS signing certificate has expired.");
+	}
+	if (certificate.ca || certificate.checkIssued(certificate)) {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must be a non-CA leaf certificate.");
+	}
+	if (!/(^|[=,\s])(sns(?:\.[a-z0-9-]+)?\.amazonaws\.com|Amazon Simple Notification Service)($|[,\s])/i.test(certificate.subject)) {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate subject is not an Amazon SNS identity.");
+	}
+	if (!/(Amazon|Starfield)/i.test(certificate.issuer)) {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate issuer is not an approved AWS trust family.");
+	}
+	if (certificate.publicKey.asymmetricKeyType !== "rsa") {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must use an RSA public key.");
+	}
+	return certificate;
 }
 
 function validateAwsDomain(hostname: string): boolean {
@@ -170,6 +212,11 @@ export async function verifySnsSignature(message: IpawsSnsMessage): Promise<Ipaw
 		return { valid: false, reason: "ipaws_invalid_cert" };
 	}
 	if (!pem) return { valid: false, reason: "ipaws_cert_fetch_failed" };
+	try {
+		validateSnsCertificate(pem);
+	} catch (error) {
+		return { valid: false, reason: error instanceof IpawsSnsError ? error.code : "ipaws_invalid_cert" };
+	}
 
 	const algorithm = SIGNATURE_VERSION_ALGORITHMS[message.SignatureVersion];
 	let key: CryptoKey;
