@@ -7,7 +7,7 @@ import { recordIpawsHealthEvent } from "./health";
 import { IpawsSnsError, parseSnsMessage, validateSnsTimestamp, validateSubscribeUrl, verifySnsSignature } from "./sns";
 import { logWarn } from "../utils/logger";
 import { stageNormalizedAlert } from "./domain";
-import { claimIpawsDelivery, completeIpawsDelivery, recoverIpawsDelivery, releaseIpawsDelivery } from "./idempotency";
+import { claimIpawsDelivery, completeIpawsDelivery, recoverIpawsDelivery, releaseIpawsDelivery, renewIpawsDelivery } from "./idempotency";
 
 const MAX_ENVELOPE_BYTE_LIMIT = 512 * 1024;
 const SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 5_000;
@@ -178,32 +178,34 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 		}
 	}
 
-	let claimResult;
+	let claim;
 	try {
-		claimResult = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		claim = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 	} catch {
 		return responseError("ipaws_idempotency_unavailable", "IPAWS idempotency coordinator is unavailable.", 503);
 	}
-	if (claimResult === "processing") {
+	if (claim.result === "processing") {
 		return response({ status: "error", code: "ipaws_delivery_in_progress", message: "Delivery processing is still in progress." }, {
 			status: 503,
 			headers: { "Cache-Control": "no-store", "Retry-After": "2" },
 		});
 	}
-	if (claimResult === "complete") {
+	if (claim.result === "complete") {
 		try {
 			if (await deliveryOutputsComplete(env, message.MessageId)) {
 				await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
 				return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId }, { headers: { "Cache-Control": "no-store" } });
 			}
-			claimResult = await recoverIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			claim = await recoverIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 		} catch {
 			return responseError("ipaws_recovery_unavailable", "Delivery recovery is temporarily unavailable.", 503);
 		}
-		if (claimResult !== "acquired") {
+		if (claim.result !== "acquired") {
 			return responseError("ipaws_delivery_in_progress", "Delivery recovery is already in progress.", 503);
 		}
 	}
+	if (claim.result !== "acquired") return responseError("ipaws_idempotency_unavailable", "IPAWS delivery ownership was not acquired.", 503);
+	const claimToken = claim.token;
 
 	const parseResult: IpawsCapParseResult = message.Type === "Notification"
 		? parseCapPayload(message.Message, config.parseByteLimit)
@@ -224,6 +226,9 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 			message.TopicArn,
 			config.recordTtlSeconds,
 		);
+		if (!(await renewIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) {
+			throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership expired before processing completed.");
+		}
 
 		if (message.Type === "Notification") {
 			if (parseResult.status === "parsed") await stageNormalizedAlert(env, receipt.record, config.recordTtlSeconds);
@@ -240,7 +245,8 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 				parseResultSummary: parseResult.status,
 			}, config.recordTtlSeconds);
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required notification outputs are not yet visible.");
-			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			if (!(await renewIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership expired before completion.");
+			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			return response({ status: "ok", outcome: "accepted", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
@@ -255,7 +261,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 				parseError: "unsubscribe_confirmation_no_action",
 			}, config.recordTtlSeconds);
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required unsubscribe output is not yet visible.");
-			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			return response({ status: "ok", outcome: "unsubscribe_recorded", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
@@ -271,7 +277,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 				parseError: "subscription_confirmation_disabled",
 			}, config.recordTtlSeconds);
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
-			await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			return response({ status: "ok", outcome: "subscription_confirmation_skipped", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
@@ -287,11 +293,11 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env): Prom
 			parseError: null,
 		}, config.recordTtlSeconds);
 		if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
-		await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+		if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 		return response({ status: "ok", outcome: "subscription_confirmed", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		try {
-			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
+			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken);
 		} catch (releaseError) {
 			logWarn("IPAWS", "Unable to release failed delivery claim", { messageId: message.MessageId, reason: releaseError instanceof Error ? releaseError.message : "unknown" });
 		}

@@ -34,6 +34,7 @@ function certificateFetch() {
 
 function environment(): Env {
 	let claimed = false;
+	const token = "internal-test-claim-token";
 	return {
 		BEACH_DATA: {
 			get: vi.fn(async () => null),
@@ -41,12 +42,13 @@ function environment(): Env {
 		} as unknown as KVNamespace,
 		IPAWS_IDEMPOTENCY: {
 			idFromName: (name: string) => name,
-			get: () => ({ fetch: vi.fn(async (input: RequestInfo | URL) => {
+			get: () => ({ fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				if (new URL(String(input)).pathname === "/claim") {
 					const result = !claimed;
 					claimed = true;
-					return Response.json({ result: result ? "acquired" : "complete" });
+					return Response.json(result ? { result: "acquired", token } : { result: "complete" });
 				}
+				if (JSON.parse(String(init?.body ?? "{}"))?.token !== token) return Response.json({ result: "stale" }, { status: 409 });
 				return new Response(null, { status: 204 });
 			}) }),
 		} as unknown as DurableObjectNamespace,
@@ -61,7 +63,10 @@ function environment(): Env {
 	} as Env;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.useRealTimers();
+	vi.unstubAllGlobals();
+});
 
 describe("AWS SNS signature verification", () => {
 	it.each([
@@ -111,6 +116,44 @@ describe("AWS SNS signature verification", () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
 		await expect(verifySnsSignature(message("2"))).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_too_large" });
 		expect(cancelled).toBe(true);
+	});
+
+	it.each([false, true])("times out and cancels a stalled certificate body (partial=%s)", async (partial) => {
+		vi.useFakeTimers();
+		let cancelled = false;
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+			start(controller) { if (partial) controller.enqueue(new TextEncoder().encode("partial")); },
+			pull() { return new Promise(() => undefined); },
+			cancel() { cancelled = true; },
+		}))));
+		const pending = verifySnsSignature(message("2"));
+		await vi.advanceTimersByTimeAsync(5_001);
+		await expect(pending).resolves.toMatchObject({ valid: false, reason: "ipaws_cert_fetch_unavailable", retryable: true });
+		expect(cancelled).toBe(true);
+	});
+
+	it("accepts a valid certificate body that completes just within the deadline", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+			start(controller) {
+				setTimeout(() => { controller.enqueue(new TextEncoder().encode(CERTIFICATE)); controller.close(); }, 4_999);
+			},
+		}))));
+		const pending = verifySnsSignature(message("2"));
+		await vi.advanceTimersByTimeAsync(4_999);
+		await expect(pending).resolves.toEqual({ valid: true, algorithm: "SHA-256" });
+	});
+
+	it("returns HTTP 503 when certificate body download times out", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+			pull() { return new Promise(() => undefined); },
+		}))));
+		const pending = handleIpawsPubSubRequest(new Request("https://example.test/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify(message("2")),
+		}), environment());
+		await vi.advanceTimersByTimeAsync(5_001);
+		expect((await pending).status).toBe(503);
 	});
 
 	it("rejects expired, not-yet-valid, and untrusted certificates", () => {
@@ -175,7 +218,13 @@ describe("AWS SNS signature verification", () => {
 
 	it.each([
 		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&Action=Other&TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(TOPIC_ARN)}&TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=test-token-not-a-real-subscription-token&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(TOPIC_ARN)}`,
 		`https://sns.us-gov-west-1.amazonaws.com/?Action=confirmSubscription&TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=test-token-not-a-real-subscription-token`,
+		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(`${TOPIC_ARN}-wrong`)}&Token=test-token-not-a-real-subscription-token`,
 		`https://sns.us-gov-west-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(TOPIC_ARN)}&Token=wrong`,
 	])("rejects ambiguous or mismatched SubscribeURL %s", (url) => {
 		expect(() => validateSubscribeUrl(url, TOPIC_ARN, "test-token-not-a-real-subscription-token")).toThrowError(IpawsSnsError);

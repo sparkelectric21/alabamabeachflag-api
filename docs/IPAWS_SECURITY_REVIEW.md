@@ -10,7 +10,7 @@ The receiver does not build and validate an X.509 chain itself. It accepts an SN
 
 1. `SigningCertURL` is HTTPS, contains no user information, non-default port, query, or fragment, and uses the exact host form `sns.<region>.amazonaws.com`.
 2. Its path matches `/SimpleNotificationService-<token>.pem`.
-3. `fetch` uses `redirect: "manual"`, so redirects are not followed. The response must be successful and at most 96,000 bytes. Both declared length and streamed bytes are bounded, and an over-limit stream is cancelled.
+3. `fetch` uses `redirect: "manual"`, so redirects are not followed. One five-second AbortController deadline remains active from request initiation through complete streamed-body consumption. The response must be successful and at most 96,000 bytes. Both declared length and streamed bytes are bounded; timed-out and over-limit streams are cancelled.
 4. Cloudflare's outbound TLS implementation authenticates the HTTPS server name and its normal public PKI chain before returning the certificate body.
 5. The downloaded object parses as X.509, is currently within `notBefore`/`notAfter`, is not a CA certificate, has an RSA public key, and has an SNS subject or Amazon/Starfield issuer identity.
 6. The SNS canonical signing string verifies with RSA PKCS#1 v1.5. SignatureVersion 1 uses SHA-1, as required for AWS SNS compatibility; SignatureVersion 2 uses SHA-256. Other versions fail closed.
@@ -40,7 +40,7 @@ The exact signed timestamp spelling is preserved for canonical verification; fre
 
 ## Delivery recovery and confirmation safety
 
-The coordinator distinguishes acquired work, an active processing lease, and verified completion. It never acknowledges active work as a duplicate. A complete marker is acknowledged only after expected KV output is readable; otherwise recovery reacquires and reconstructs missing output. Post-claim failures attempt release and lease expiry covers interruption before release. Durable Object and KV writes are not atomic, so the downstream transactional inbox/outbox requirement in `IPAWS_PRODUCTION_CONSUMER.md` remains mandatory.
+The coordinator distinguishes acquired work, an active processing lease, and verified completion. Each acquisition has a unique owner token; renew, complete, and release require the matching unexpired token and perform the comparison and mutation atomically. Stale owners receive HTTP 409 and cannot mutate a replacement claim, while the public handler converts lost ownership into retryable HTTP 503. The token is internal ephemeral security state and is not logged, persisted in alert/domain records, or returned to SNS. The handler renews after its initial durable write and immediately before notification completion. It never acknowledges active work as a duplicate. A complete marker is acknowledged only after expected KV output is readable; otherwise recovery reacquires and reconstructs missing output. Post-claim failures attempt a fenced release and lease expiry covers interruption before release. Durable Object and KV writes are not atomic, so the downstream transactional inbox/outbox requirement in `IPAWS_PRODUCTION_CONSUMER.md` remains mandatory.
 
 Only `SubscriptionConfirmation` can cause an outbound GET. Its signed URL must contain exactly one case-sensitive `Action=ConfirmSubscription`, `TopicArn`, and `Token`, with topic and token equal to the signed envelope. `UnsubscribeConfirmation` is persisted and never fetched. Transient certificate or confirmation failures return 503; permanent validation failures return 4xx.
 

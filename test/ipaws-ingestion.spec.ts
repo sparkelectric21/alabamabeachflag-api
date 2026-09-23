@@ -69,20 +69,29 @@ function createStore() {
 
 function createEnv(overrides: Partial<Env> = {}) {
 	const store = createStore();
-	const claims = new Map<string, "processing" | "complete">();
+	const claims = new Map<string, { status: "processing"; token: string } | { status: "complete" }>();
 	const idempotency = {
 		idFromName: (name: string) => name,
 		get: (id: string) => ({
-			fetch: vi.fn(async (input: RequestInfo | URL) => {
+			fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const path = new URL(String(input)).pathname;
 				if (path === "/claim") {
-					if (claims.get(id) === "complete") return Response.json({ result: "complete" });
+					if (claims.get(id)?.status === "complete") return Response.json({ result: "complete" });
 					if (claims.has(id)) return Response.json({ result: "processing" });
-					claims.set(id, "processing");
-					return Response.json({ result: "acquired" });
+					const token = crypto.randomUUID();
+					claims.set(id, { status: "processing", token });
+					return Response.json({ result: "acquired", token });
 				}
-				if (path === "/recover") { claims.set(id, "processing"); return Response.json({ result: "acquired" }); }
-				if (path === "/complete") claims.set(id, "complete");
+				if (path === "/recover") {
+					if (claims.get(id)?.status === "processing") return Response.json({ result: "processing" });
+					const token = crypto.randomUUID();
+					claims.set(id, { status: "processing", token });
+					return Response.json({ result: "acquired", token });
+				}
+				const token = JSON.parse(String(init?.body ?? "{}"))?.token;
+				const current = claims.get(id);
+				if (current?.status !== "processing" || current.token !== token) return Response.json({ result: "stale" }, { status: 409 });
+				if (path === "/complete") claims.set(id, { status: "complete" });
 				if (path === "/release") claims.delete(id);
 				return new Response(null, { status: 204 });
 			}),
@@ -128,6 +137,16 @@ describe("IPAWS CAP parser", () => {
 		expect(parseCapPayload(`<!DOCTYPE alert [<!ENTITY x "injected">]><alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><identifier>&x;</identifier></alert>`)).toMatchObject({ status: "parse_failed" });
 	});
 
+	it("rejects excessive XML depth, node count, nesting, truncation, and a prohibited DTD", () => {
+		const namespace = "urn:oasis:names:tc:emergency:cap:1.2";
+		expect(parseCapPayload(`<alert xmlns="${namespace}">${"<x>".repeat(33)}${"</x>".repeat(33)}</alert>`)).toMatchObject({ status: "parse_failed", reason: "xml_complexity_limit" });
+		expect(parseCapPayload(`<alert xmlns="${namespace}">${"<x/>".repeat(4_097)}</alert>`)).toMatchObject({ status: "parse_failed", reason: "xml_complexity_limit" });
+		expect(parseCapPayload(CAP_XML.replace("<identifier>CAP-TEST-1</identifier>", "<wrapper><identifier>CAP-TEST-1</identifier></wrapper>"))).toMatchObject({ status: "parse_failed", reason: "cap_missing_required_field" });
+		expect(parseCapPayload(CAP_XML.slice(0, -8))).toMatchObject({ status: "parse_failed" });
+		const withDoctype = CAP_XML.replace("<?xml version=\"1.0\"?>", `<?xml version="1.0"?><!DOCTYPE alert [<!ENTITY capid "CAP-TEST-1">]>`).replace("CAP-TEST-1", "&capid;");
+		expect(parseCapPayload(withDoctype)).toMatchObject({ status: "parse_failed", reason: "unsafe_xml_doctype" });
+	});
+
 	it("enforces the CAP byte limit before parsing", () => {
 		expect(parseCapPayload(CAP_XML, 32)).toMatchObject({ status: "parse_failed", reason: "payload_too_large" });
 	});
@@ -164,7 +183,7 @@ describe("IPAWS SNS validation utilities", () => {
 });
 
 describe("IPAWS pub/sub handler", () => {
-	it("allows one active claim and reacquires it only after lease expiry", async () => {
+	it("fences stale owners after lease expiry and permits only the current owner to complete", async () => {
 		const values = new Map<string, unknown>();
 		const storage = {
 			get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); },
@@ -173,10 +192,24 @@ describe("IPAWS pub/sub handler", () => {
 		const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-09-23T12:00:00Z"));
-		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "acquired" });
+		const first = await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json() as { result: string; token: string };
+		expect(first).toMatchObject({ result: "acquired" });
 		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "processing" });
 		vi.advanceTimersByTime(60_001);
-		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "acquired" });
+		const second = await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json() as { result: string; token: string };
+		expect(second).toMatchObject({ result: "acquired" });
+		expect(second.token).not.toBe(first.token);
+		const mutate = (action: string, token: string) => coordinator.fetch(new Request(`https://idempotency.internal/${action}`, {
+			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
+		}));
+		expect((await mutate("release", first.token)).status).toBe(409);
+		expect((await mutate("complete", first.token)).status).toBe(409);
+		const beforeRenew = values.get("state");
+		expect((await mutate("renew", first.token)).status).toBe(409);
+		expect(values.get("state")).toEqual(beforeRenew);
+		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "processing" });
+		expect((await mutate("complete", second.token)).status).toBe(200);
+		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "complete" });
 		vi.useRealTimers();
 	});
 	it("fails closed when TopicArn allowlist is not configured", async () => {
@@ -245,6 +278,19 @@ describe("IPAWS pub/sub handler", () => {
 		const normalized = JSON.parse(String(normalizedWrites[0]?.[1]));
 		expect(normalized).toMatchObject({ source: "fema-ipaws", environment: "staging", handoffState: "staged", notificationsEnabled: false });
 		expect(env.BEACH_DATA.put).toHaveBeenCalledWith("ipaws:subscription:state", "confirmed", expect.any(Object));
+	});
+
+	it("does not expose internal ownership tokens in responses, persisted records, or logs", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const env = createEnv();
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		const responseText = await response.text();
+		const persisted = [...env.BEACH_DATA.map.values()].join("\n");
+		expect(responseText).not.toMatch(/token/i);
+		expect(persisted).not.toMatch(/token/i);
+		expect(JSON.stringify(warn.mock.calls)).not.toMatch(/token/i);
 	});
 
 	it.each(["ipaws:ingest:", "ipaws:normalized:"])("releases the claim and recovers after a %s write failure", async (prefix) => {

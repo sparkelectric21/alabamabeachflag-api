@@ -12,13 +12,13 @@ Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonic
 
 ### Architecture
 
-`POST /v1/ipaws/pubsub` validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a size-bounded AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a staging Durable Object, safely parses CAP 1.2 XML, stores the receipt/parse result in staging KV, and writes a storage-only normalized staging record. Acquired, processing, and complete states support lease recovery and persisted-output repair. No queue, notification service, production user store, or production route is bound.
+`POST /v1/ipaws/pubsub` validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a size- and time-bounded AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a staging Durable Object, safely parses CAP 1.2 XML, stores the receipt/parse result in staging KV, and writes a storage-only normalized staging record. Acquired, processing, and complete states use owner-token fencing for lease recovery and persisted-output repair. No queue, notification service, production user store, or production route is bound.
 
 ### Security controls
 
 - Exact staging TopicArn allowlist and bounded request/parser sizes
 - Configurable maximum message age and future clock skew
-- Exact SNS hostname and certificate-path rules, HTTPS only, redirect rejection
+- Exact SNS hostname and certificate-path rules, HTTPS only, redirect rejection, and one deadline spanning headers through complete bounded body consumption
 - Certificate date, leaf, identity, and RSA checks
 - SNS SignatureVersion 1/SHA-1 and Version 2/SHA-256 verification
 - Strongly consistent concurrent MessageId claim
@@ -26,13 +26,14 @@ Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonic
 - Strict, namespace-aware CAP XML parsing with DTD/entity/complexity rejection
 - Exact subscription action/topic/token matching; unsubscribe URLs are never fetched
 - Retryable 503 classification for transient certificate and confirmation failures
+- Token-fenced idempotency renew/complete/release operations; stale owners cannot mutate a replacement claim and produce a retryable 503 rather than a false acknowledgement
 - Staging-only resources and `notificationsEnabled: false`
 
 The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS origin and does not independently build a full X.509 chain. Independent security approval is required before production use; see `docs/IPAWS_SECURITY_REVIEW.md`.
 
 ### Test evidence
 
-Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 63/63 focused IPAWS tests, 779/779 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
+Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 75/75 focused IPAWS tests, 791/791 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
 
 ### Staging evidence
 

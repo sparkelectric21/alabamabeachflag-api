@@ -89,7 +89,7 @@ function parseXml(raw: string): XmlNode {
 	parser.on("text", addText);
 	parser.on("cdata", addText);
 	parser.on("closetag", () => { stack.pop(); });
-	parser.on("error", (error) => { failure = error; });
+	parser.on("error", (error) => { if (!failure) failure = error; });
 	parser.write(raw).close();
 	if (failure) throw failure;
 	if (!root) throw new Error("xml_missing_root");

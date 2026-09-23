@@ -19,7 +19,7 @@ This document covers the staging-first IPAWS receiver implementation currently d
 	- hostname under `amazonaws.com`
 	- SubscribeURL must be an SNS endpoint path `/`
 - Persists ingestion records in KV (`BEACH_DATA`) before user-facing work.
-- Uses strongly serialized `acquired`, `processing`, and `complete` states. In-progress duplicates receive 503; a 200 duplicate acknowledgement requires verified persisted output.
+- Uses strongly serialized `acquired`, `processing`, and `complete` states with an unpredictable owner token on every acquisition. In-progress duplicates receive 503; a 200 duplicate acknowledgement requires verified persisted output.
 - Recovers released/expired partial work and reconstructs missing normalized output behind a completed marker.
 - CAP parsing is bounded and namespace-aware for CAP 1.2 XML. DTDs, custom entities, processing instructions, malformed structure, incorrect namespaces, excessive complexity, and missing/invalid required fields fail closed and cannot create normalized output.
 - Parser extracts lifecycle-related fields used for future planning:
@@ -61,7 +61,7 @@ The persistence key uses `ipaws:ingest:<MessageId>` and stores:
 - parsed CAP summary fields
 - lifecycle outcome and duplicate tracking
 
-The Durable Object claim and KV outputs are not one transaction. Every post-claim failure attempts release, expired leases are recoverable, and completion occurs only after expected ingestion, subscription, and normalized outputs can be read back. This is safe at-least-once recovery, not globally atomic exactly-once effects; future consumers need their own transactional idempotency.
+The Durable Object claim and KV outputs are not one transaction. Every post-claim failure attempts a token-fenced release, expired leases are recoverable, and completion occurs only after expected ingestion, subscription, and normalized outputs can be read back. A stale owner receives a conflict and cannot renew, release, or complete a newer owner's lease. The receiver renews ownership after the initial durable write and again before completing a notification. This provides bounded at-least-once recovery for the verified staging outputs, not globally atomic exactly-once effects; future consumers need their own transactional idempotency.
 
 ## Current limitations
 
@@ -93,6 +93,6 @@ The receiver accepts an SNS envelope only after all of the following checks succ
 
 This certificate strategy deliberately combines platform TLS trust and a pinned AWS origin with explicit leaf validity and SNS identity checks. AWS has used both CA-issued and self-issued SNS message-signing certificates, so issuer-name heuristics are not treated as a trust anchor; trust is anchored to the authenticated AWS HTTPS origin that supplies the certificate. The Worker never accepts a certificate supplied from another origin and never follows a redirect. If AWS changes the documented SNS certificate identity, the receiver fails closed and this policy must be reviewed before widening it.
 
-After validation, each `MessageId` is claimed by a dedicated Durable Object. This serializes concurrent deliveries globally and prevents the KV read-before-write race that existed in the deployed baseline. Failed application handoffs release the short processing lease for retry; completed deliveries remain claimed.
+After validation, each `MessageId` is claimed by a dedicated Durable Object. Each acquisition or post-expiry reacquisition creates a unique owner token stored with the processing lease and returned only over the internal Durable Object call. Renew, complete, and release compare that token and mutate state in the same storage transaction; stale or expired owners receive HTTP 409 and the Worker returns 503 instead of falsely acknowledging completion. The token is ephemeral internal security state: it is not written to IPAWS records, logged, or returned to SNS. This serializes concurrent deliveries globally and prevents the KV read-before-write race that existed in the deployed baseline. Failed application handoffs attempt a fenced release, lease expiry permits retry after interruption, and completed deliveries remain claimed.
 
 Valid CAP notifications are normalized into `ipaws:normalized:<MessageId>` records. The normalized schema is explicitly staging-only (`environment: staging`, `handoffState: staged`, `notificationsEnabled: false`). This Worker has no production user, email, queue, service, or notification binding, so the handoff is storage-only and cannot send notifications.

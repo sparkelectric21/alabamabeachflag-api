@@ -30,16 +30,6 @@ async function importSnsVerificationKey(pem: string, hash: string): Promise<Cryp
 	);
 }
 
-async function fetchWithTimeout(input: string, init: RequestInit<RequestInitCfProperties>): Promise<Response> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), AWS_FETCH_TIMEOUT_MS);
-	try {
-		return await fetch(input, { ...init, signal: controller.signal });
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
 export class IpawsSnsError extends Error {
 	constructor(public readonly code: string, message: string) {
 		super(message);
@@ -180,7 +170,7 @@ type CertificateReadResult =
 	| { ok: true; pem: string }
 	| { ok: false; reason: string; retryable: boolean };
 
-async function readBoundedUtf8(response: Response): Promise<CertificateReadResult> {
+async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise<CertificateReadResult> {
 	const declaredLength = response.headers.get("content-length");
 	if (declaredLength) {
 		const parsedLength = Number.parseInt(declaredLength, 10);
@@ -191,11 +181,15 @@ async function readBoundedUtf8(response: Response): Promise<CertificateReadResul
 	}
 	if (!response.body) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
 	const reader = response.body.getReader();
+	let rejectAborted: (reason: unknown) => void = () => undefined;
+	const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
+	const abortReader = () => rejectAborted(new DOMException("SNS certificate download timed out.", "AbortError"));
+	signal.addEventListener("abort", abortReader, { once: true });
 	const chunks: Uint8Array[] = [];
 	let total = 0;
 	try {
 		while (true) {
-			const { done, value } = await reader.read();
+			const { done, value } = await Promise.race([reader.read(), aborted]);
 			if (done) break;
 			total += value.byteLength;
 			if (total > MAX_CERT_BYTES) {
@@ -205,6 +199,8 @@ async function readBoundedUtf8(response: Response): Promise<CertificateReadResul
 			chunks.push(value);
 		}
 	} finally {
+		signal.removeEventListener("abort", abortReader);
+		if (signal.aborted) await reader.cancel("certificate_timeout").catch(() => undefined);
 		reader.releaseLock();
 	}
 	if (total === 0) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
@@ -228,8 +224,10 @@ async function readCertificate(url: string): Promise<CertificateReadResult> {
 	if (certUrl.search) {
 		throw new IpawsSnsError("ipaws_invalid_cert_path", "SigningCertURL must not contain a query string.");
 	}
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), AWS_FETCH_TIMEOUT_MS);
 	try {
-		const certResponse = await fetchWithTimeout(certUrl.toString(), { method: "GET", redirect: "manual" });
+		const certResponse = await fetch(certUrl.toString(), { method: "GET", redirect: "manual", signal: controller.signal });
 		if (!certResponse.ok) {
 			return {
 				ok: false,
@@ -237,12 +235,14 @@ async function readCertificate(url: string): Promise<CertificateReadResult> {
 				retryable: certResponse.status === 429 || certResponse.status >= 500,
 			};
 		}
-		return readBoundedUtf8(certResponse);
+		return await readBoundedUtf8(certResponse, controller.signal);
 	} catch (error) {
 		logWarn("IPAWS", "Signing certificate fetch failed", {
 			err: error instanceof Error ? error.name : "unknown",
 		});
 		return { ok: false, reason: "ipaws_cert_fetch_unavailable", retryable: true };
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
