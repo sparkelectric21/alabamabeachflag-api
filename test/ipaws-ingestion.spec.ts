@@ -257,6 +257,10 @@ describe("IPAWS pub/sub handler", () => {
 		expect(empty.status).toBe(400);
 		const badJson = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body: "[{" }), env);
 		expect(badJson.status).toBe(400);
+		expect(env.metricsEvents).toEqual([
+			expect.objectContaining({ handlerOutcome: "invalid_request", rejection: "permanent" }),
+			expect.objectContaining({ handlerOutcome: "invalid_request", rejection: "permanent" }),
+		]);
 	});
 
 	it("persists duplicate notifications as successful idempotent acknowledgements", async () => {
@@ -298,11 +302,15 @@ describe("IPAWS pub/sub handler", () => {
 		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
 		const env = createEnv();
 		env.metricsControl.fail = true;
+		const background: Promise<unknown>[] = [];
+		const ctx = { waitUntil: vi.fn((promise: Promise<unknown>) => { background.push(promise); }) };
 		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
 			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING }),
-		}), env);
+		}), env, ctx);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ outcome: "accepted" });
+		expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+		await expect(Promise.all(background)).resolves.toEqual([undefined]);
 	});
 
 	it("returns a sanitized 503 and records an unexpected exception", async () => {
@@ -382,6 +390,9 @@ describe("IPAWS pub/sub handler", () => {
 		const recovered = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
 		expect(recovered.status).toBe(200);
 		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(true);
+		expect(env.metricsEvents.at(-1)).toEqual(expect.objectContaining({
+			idempotency: ["lease_recovery", "completion"], normalizedRecord: ["reconstruction"],
+		}));
 	});
 
 	it("fails closed on invalid signatures", async () => {

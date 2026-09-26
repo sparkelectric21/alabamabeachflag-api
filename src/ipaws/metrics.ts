@@ -1,7 +1,9 @@
 import type { IpawsCapParseResult, IpawsSnsType } from "./types";
+import { logWarn } from "../utils/logger";
 
 export const IPAWS_METRICS_OBJECT_NAME = "__ipaws_staging_metrics_v1__";
 export const IPAWS_METRICS_RETENTION_DAYS = 35;
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
 const COUNTER_DIMENSIONS = {
 	request: ["received"],
@@ -137,6 +139,14 @@ export function newMetricsBucket(day: string): IpawsMetricsBucket {
 	return { day, counters: emptyCounters(), latency: emptyLatency(), lastSuccessfulDeliveryAt: null };
 }
 
+export function retainedMetricsDays(days: string[], now: number): string[] {
+	const currentDay = new Date(now).toISOString().slice(0, 10);
+	const cutoffDay = new Date(Date.parse(`${currentDay}T00:00:00.000Z`) - (IPAWS_METRICS_RETENTION_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+	return [...new Set(days)]
+		.filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day) && day >= cutoffDay && day <= currentDay)
+		.sort();
+}
+
 function mergeBucket(report: IpawsSoakReport, bucket: IpawsMetricsBucket): void {
 	for (const dimension of Object.keys(COUNTER_DIMENSIONS) as MetricDimension[]) {
 		const target = report.counters[dimension] as Record<string, number>;
@@ -191,11 +201,13 @@ export function snsType(value: IpawsSnsType | undefined): CounterValue<"snsType"
 export async function recordIpawsMetrics(namespace: DurableObjectNamespace | undefined, event: IpawsMetricsEvent): Promise<void> {
 	if (!namespace) return;
 	try {
-		await namespace.get(namespace.idFromName(IPAWS_METRICS_OBJECT_NAME)).fetch("https://metrics.internal/metrics/record", {
+		const response = await namespace.get(namespace.idFromName(IPAWS_METRICS_OBJECT_NAME)).fetch("https://metrics.internal/metrics/record", {
 			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(event),
 		});
+		if (!response.ok) logWarn("IPAWS Metrics", "Durable metrics write rejected", { statusClass: response.status >= 500 ? "5xx" : "4xx" });
 	} catch {
-		// Observability must never determine acknowledgement of a valid FEMA delivery.
+		// Fixed text only: observability failures must not leak delivery data or recursively write metrics.
+		logWarn("IPAWS Metrics", "Durable metrics write unavailable");
 	}
 }
 

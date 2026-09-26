@@ -1,4 +1,4 @@
-import { applyMetricsEvent, buildSoakReport, IPAWS_METRICS_RETENTION_DAYS, isIpawsMetricsEvent, newMetricsBucket, type IpawsMetricsBucket } from "./metrics";
+import { applyMetricsEvent, buildSoakReport, isIpawsMetricsEvent, newMetricsBucket, retainedMetricsDays, type IpawsMetricsBucket } from "./metrics";
 
 type ClaimState =
 	| { status: "processing"; leaseUntil: number; token: string }
@@ -28,7 +28,7 @@ export class IpawsIdempotencyCoordinator {
 				const days = await transaction.get<string[]>("metrics:days") ?? [];
 				const bucket = await transaction.get<IpawsMetricsBucket>(`metrics:day:${day}`) ?? newMetricsBucket(day);
 				applyMetricsEvent(bucket, event, now);
-				const retained = [...new Set([...days, day])].sort().slice(-IPAWS_METRICS_RETENTION_DAYS);
+				const retained = retainedMetricsDays([...days, day], now);
 				const expired = days.filter((value) => !retained.includes(value));
 				await transaction.put({ "metrics:days": retained, [`metrics:day:${day}`]: bucket });
 				if (expired.length) await transaction.delete(expired.map((value) => `metrics:day:${value}`));
@@ -36,7 +36,7 @@ export class IpawsIdempotencyCoordinator {
 			return new Response(null, { status: 204 });
 		}
 		if (action === "/metrics/report") {
-			const days = await this.state.storage.get<string[]>("metrics:days") ?? [];
+			const days = retainedMetricsDays(await this.state.storage.get<string[]>("metrics:days") ?? [], Date.now());
 			const values = days.length ? await this.state.storage.get<IpawsMetricsBucket>(days.map((day) => `metrics:day:${day}`)) : new Map();
 			return Response.json(buildSoakReport(days.flatMap((day) => {
 				const bucket = values.get(`metrics:day:${day}`);

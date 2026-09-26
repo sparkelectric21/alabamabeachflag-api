@@ -96,6 +96,7 @@ function outcomeFor(responseBody: Record<string, unknown>): IpawsMetricsEvent["h
 	if (code === "ipaws_disabled") return "disabled";
 	if (code.includes("misconfigured")) return "misconfigured";
 	if (code === "ipaws_delivery_in_progress") return "delivery_in_progress";
+	if (["ipaws_request_too_large", "ipaws_missing_body", "ipaws_invalid_json", "ipaws_invalid_payload", "ipaws_invalid_sns_field", "ipaws_unsupported_sns_type"].includes(code)) return "invalid_request";
 	if (/signature|topic|timestamp|subscribe_url|certificate|unsafe/.test(code)) return "security_rejection";
 	if (code === "ipaws_unexpected_exception") return "unexpected_exception";
 	if (code.startsWith("ipaws_") && responseBody.status === "error") return "processing_failure";
@@ -279,9 +280,13 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 
 		if (message.Type === "Notification") {
 			if (parseResult.status === "parsed") {
+				let reconstructing = false;
+				if (receipt.duplicate) {
+					try { reconstructing = !(await readNormalizedAlert(env, message.MessageId)); } catch { /* Metrics classification must not affect delivery. */ }
+				}
 				try {
 					await stageNormalizedAlert(env, receipt.record, config.recordTtlSeconds);
-					metrics.normalizedRecord.push(metrics.idempotency.includes("lease_recovery") ? "reconstruction" : "success");
+					metrics.normalizedRecord.push(reconstructing ? "reconstruction" : "success");
 				} catch (error) {
 					metrics.normalizedRecord.push("failure");
 					throw error;

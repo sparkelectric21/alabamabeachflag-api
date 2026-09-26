@@ -27,6 +27,7 @@ const executionContext = { waitUntil: vi.fn(), passThroughOnException: vi.fn(), 
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.clearAllMocks();
 });
 
 describe("standalone IPAWS Worker", () => {
@@ -76,18 +77,31 @@ describe("standalone IPAWS Worker", () => {
 
 	it("serves only a sanitized staging metrics report with no-store caching", async () => {
 		const env = createEnvironment();
+		const reportFetch = vi.fn(async () => Response.json({
+			schemaVersion: 1, environment: "staging", retentionDays: 35, windowStart: null, windowEnd: null,
+			counters: {}, latency: { count: 0, sumMs: 0, maxMs: 0, buckets: {}, averageMs: null },
+			lastSuccessfulDeliveryAt: null, limitations: [],
+		}));
 		env.IPAWS_IDEMPOTENCY = {
 			idFromName: vi.fn(() => "metrics-id"),
-			get: vi.fn(() => ({ fetch: vi.fn(async () => Response.json({
-				schemaVersion: 1, environment: "staging", retentionDays: 35, windowStart: null, windowEnd: null,
-				counters: {}, latency: { count: 0, sumMs: 0, maxMs: 0, buckets: {}, averageMs: null },
-				lastSuccessfulDeliveryAt: null, limitations: [],
-			})) })),
+			get: vi.fn(() => ({ fetch: reportFetch })),
 		} as unknown as DurableObjectNamespace;
+		let cached: Response | undefined;
+		const cache = {
+			match: vi.fn(async () => cached?.clone()),
+			put: vi.fn(async (_key: RequestInfo | URL, value: Response) => { cached = value.clone(); }),
+		};
+		vi.stubGlobal("caches", { default: cache });
 		const response = await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(response.headers.get("X-IPAWS-Metrics-Cache")).toBe("miss");
 		expect(await response.json()).toMatchObject({ schemaVersion: 1, environment: "staging", retentionDays: 35 });
+		const cachedResponse = await worker.fetch(request("/v1/ipaws/metrics?attacker=cache-bypass"), env, executionContext);
+		expect(cachedResponse.headers.get("X-IPAWS-Metrics-Cache")).toBe("hit");
+		expect(reportFetch).toHaveBeenCalledTimes(1);
+		expect(cache.match).toHaveBeenNthCalledWith(1, "https://ipaws-metrics.internal/v1/report");
+		expect(cache.match).toHaveBeenNthCalledWith(2, "https://ipaws-metrics.internal/v1/report");
 	});
 
 	it("does not expose the metrics route outside staging", async () => {
