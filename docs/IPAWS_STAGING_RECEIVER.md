@@ -29,7 +29,7 @@ This document covers the staging-first IPAWS receiver implementation currently d
 
 ## Durable operational metrics and soak reports
 
-Every callback attempt that reaches the handler makes one best-effort metrics write to the existing `IPAWS_IDEMPOTENCY` Durable Object namespace. A reserved deterministic object name keeps aggregate state separate from per-`MessageId` claim objects. No new binding, migration, route, queue, recipient, secret, or Cloudflare resource is required. The object transactionally updates one UTC-day bucket, so concurrent requests do not use unsafe KV read-modify-write counters.
+Every callback attempt that reaches the handler makes one best-effort metrics write to the existing `IPAWS_IDEMPOTENCY` Durable Object namespace. A reserved deterministic object name keeps aggregate state separate from per-`MessageId` claim objects. No new binding, migration, Cloudflare route configuration, queue, recipient, secret, or Cloudflare resource is required; the Worker itself adds only the staging-gated read endpoint documented below. The object transactionally updates one UTC-day bucket, so concurrent requests do not use unsafe KV read-modify-write counters.
 
 The metrics schema contains only fixed, low-cardinality dimensions:
 
