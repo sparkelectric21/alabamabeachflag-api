@@ -25,6 +25,38 @@ This document covers the staging-first IPAWS receiver implementation currently d
 - Parser extracts lifecycle-related fields used for future planning:
 	- `identifier`, `references`, `sender`, `status`, `msgType`, `event`, `urgency`, `severity`, `certainty`, `effective`, `onset`, `expires`, `headline`, `description`, `instruction`, and area geometry/geocode fields.
 - Health snapshot is merged into provider-health admin output at `ipawsReceiver`.
+- Privacy-preserving operational metrics are stored in strongly consistent UTC-day aggregates and exposed as a sanitized staging-only soak report.
+
+## Durable operational metrics and soak reports
+
+Every callback attempt that reaches the handler makes one best-effort metrics write to the existing `IPAWS_IDEMPOTENCY` Durable Object namespace. A reserved deterministic object name keeps aggregate state separate from per-`MessageId` claim objects. No new binding, migration, route, queue, recipient, secret, or Cloudflare resource is required. The object transactionally updates one UTC-day bucket, so concurrent requests do not use unsafe KV read-modify-write counters.
+
+The metrics schema contains only fixed, low-cardinality dimensions:
+
+- request count; HTTP `2xx`/`4xx`/`5xx`; and bounded handler outcome;
+- SNS type (`Notification`, `SubscriptionConfirmation`, `UnsubscribeConfirmation`, or `unknown`);
+- signature result plus TopicArn and timestamp validation-failure counts;
+- CAP parse result and lifecycle (`Alert`, `Update`, `Cancel`, `Test`, `other`, or `not_applicable`);
+- idempotency acquisition, processing/completed duplicates, lease recovery, completion, and failure;
+- normalized-record success, reconstruction, failure, or not-applicable;
+- retryable/permanent rejection, unexpected exceptions, bounded latency totals/max/histogram, and the latest successful-delivery timestamp.
+
+Metrics never accept or persist raw SNS/CAP bodies, arbitrary error text, personal information, message or CAP identifiers, ownership tokens, signatures, certificates, URLs, TopicArns, or secrets. An event with extra fields is reduced to the allowlisted counters before storage. Latency is clamped to five minutes and reported in fixed buckets.
+
+Storage is bounded to the latest **35 UTC daily buckets**. On each update the Durable Object transaction evicts older buckets. The report aggregates only this retained window; it is not a lifetime counter. This gives a five-week window for a planned soak while bounding keys and values independently of request volume.
+
+Retrieve a sanitized report without Cloudflare management APIs:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  https://<staging-ipaws-host>/v1/ipaws/metrics | jq .
+```
+
+`GET /v1/ipaws/metrics` exists only when `IPAWS_ENVIRONMENT=staging`, is read-only, returns `Cache-Control: no-store`, and contains aggregate operational data only. It returns `503 ipaws_metrics_unavailable` if the Durable Object report cannot be read.
+
+Metrics are deliberately fail-open relative to observability: the Worker schedules the write with `waitUntil`, and a metrics write or report failure never delays or changes a valid FEMA delivery response. Consequently, the report is evidence for successfully recorded observations, not an independent request ledger. Compare `counters.request.received` with Cloudflare Worker request analytics for the same UTC window. A receiver `4xx`/`5xx`, bounded handler failure, or unexpected-exception counter indicates a receiver outcome. A failed Wrangler/API/dashboard query with a healthy direct report is a Cloudflare management/API observation failure. A direct-report `503` or a gap between Worker analytics and recorded requests indicates a metrics path or platform/storage observation failure and must not be labeled a FEMA or receiver-processing failure without corroborating request outcomes.
+
+For a soak, capture the report at start and end, record the exact UTC window and deployed version, and compare counter deltas. Daily buckets are intentionally not reset: reset operations would be destructive and are not exposed.
 
 ## Safe configuration
 
@@ -70,6 +102,7 @@ The Durable Object claim and KV outputs are not one transaction. Every post-clai
 - No FEMA endpoint is contacted from this code.
 - Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature records retain only envelope metadata and a SHA-256 digest of the untrusted message body; the raw body is not stored or parsed.
 - Geographic filtering and relevance routing are intentionally deferred.
+- Best-effort metrics can undercount if the metrics Durable Object call fails after the receiver has determined its response. Cloudflare request analytics are the independent denominator; neither source proves what FEMA attempted before Cloudflare accepted a request.
 
 ## Before FEMA production onboarding
 

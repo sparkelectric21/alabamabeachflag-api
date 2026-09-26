@@ -70,11 +70,18 @@ function createStore() {
 function createEnv(overrides: Partial<Env> = {}) {
 	const store = createStore();
 	const claims = new Map<string, { status: "processing"; token: string } | { status: "complete" }>();
+	const metricsEvents: unknown[] = [];
+	const metricsControl = { fail: false };
 	const idempotency = {
 		idFromName: (name: string) => name,
 		get: (id: string) => ({
 			fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const path = new URL(String(input)).pathname;
+				if (path === "/metrics/record") {
+					if (metricsControl.fail) throw new Error("injected_metrics_failure");
+					metricsEvents.push(JSON.parse(String(init?.body ?? "{}")));
+					return new Response(null, { status: 204 });
+				}
 				if (path === "/claim") {
 					if (claims.get(id)?.status === "complete") return Response.json({ result: "complete" });
 					if (claims.has(id)) return Response.json({ result: "processing" });
@@ -109,7 +116,9 @@ function createEnv(overrides: Partial<Env> = {}) {
 		IPAWS_AUTO_CONFIRM_SUBSCRIPTION: "false",
 		IPAWS_ALLOWED_TOPIC_ARNS: defaultTopicArn,
 		...overrides,
-	} as Env & { BEACH_DATA: ReturnType<typeof createStore> };
+		metricsEvents,
+		metricsControl,
+	} as Env & { BEACH_DATA: ReturnType<typeof createStore>; metricsEvents: unknown[]; metricsControl: { fail: boolean } };
 }
 
 describe("IPAWS CAP parser", () => {
@@ -197,7 +206,7 @@ describe("IPAWS pub/sub handler", () => {
 		expect(await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json()).toEqual({ result: "processing" });
 		vi.advanceTimersByTime(60_001);
 		const second = await (await coordinator.fetch(new Request("https://idempotency.internal/claim"))).json() as { result: string; token: string };
-		expect(second).toMatchObject({ result: "acquired" });
+		expect(second).toMatchObject({ result: "acquired", recovered: true });
 		expect(second.token).not.toBe(first.token);
 		const mutate = (action: string, token: string) => coordinator.fetch(new Request(`https://idempotency.internal/${action}`, {
 			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
@@ -263,6 +272,47 @@ describe("IPAWS pub/sub handler", () => {
 		expect(firstBody.outcome).toBe("accepted");
 		expect(secondBody.outcome).toBe("duplicate");
 		expect(verify).toHaveBeenCalled();
+		expect(env.metricsEvents).toEqual([
+			expect.objectContaining({ handlerOutcome: "accepted", idempotency: ["acquired", "completion"], normalizedRecord: ["success"] }),
+			expect.objectContaining({ handlerOutcome: "duplicate", idempotency: ["completed_duplicate"], normalizedRecord: ["not_applicable"] }),
+		]);
+	});
+
+	it("records validation failures using only bounded metric dimensions", async () => {
+		const env = createEnv();
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, TopicArn: "arn:aws:sns:us-east-1:000000000000:secret-topic" }),
+		}), env);
+		expect(response.status).toBe(400);
+		expect(env.metricsEvents).toEqual([expect.objectContaining({
+			httpStatus: "4xx", handlerOutcome: "security_rejection", topicArnValidation: "failure", rejection: "permanent",
+			signature: "not_attempted", idempotency: ["not_reached"],
+		})]);
+		const serialized = JSON.stringify(env.metricsEvents);
+		expect(serialized).not.toContain("secret-topic");
+		expect(serialized).not.toContain(baseNotification.MessageId);
+		expect(serialized).not.toContain(baseNotification.Signature);
+	});
+
+	it("does not fail an otherwise valid delivery when the metrics write fails", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		env.metricsControl.fail = true;
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING }),
+		}), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ outcome: "accepted" });
+	});
+
+	it("returns a sanitized 503 and records an unexpected exception", async () => {
+		const env = createEnv();
+		Object.defineProperty(env, "IPAWS_ALLOWED_TOPIC_ARNS", { get: () => { throw new Error("secret-config-value"); } });
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body: "{}" }), env);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_unexpected_exception", message: "IPAWS processing is temporarily unavailable." });
+		expect(env.metricsEvents).toEqual([expect.objectContaining({ handlerOutcome: "unexpected_exception", unexpectedException: true })]);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain("secret-config-value");
 	});
 
 	it("serializes concurrent duplicate deliveries and stages one normalized alert", async () => {

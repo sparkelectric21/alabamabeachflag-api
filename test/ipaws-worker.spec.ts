@@ -23,25 +23,27 @@ function request(path: string, method = "GET", body?: string): Request {
 	return new Request(`https://ipaws.example${path}`, { method, body });
 }
 
+const executionContext = { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as unknown as ExecutionContext;
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
 describe("standalone IPAWS Worker", () => {
 	it("routes callback POST requests to the disabled receiver", async () => {
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), createEnvironment());
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), createEnvironment(), executionContext);
 		expect(response.status).toBe(503);
 		expect(await response.json()).toMatchObject({ code: "ipaws_disabled" });
 	});
 
 	it.each(["GET", "PUT"])("rejects %s callback requests with Allow: POST", async (method) => {
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", method), createEnvironment());
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", method), createEnvironment(), executionContext);
 		expect(response.status).toBe(405);
 		expect(response.headers.get("Allow")).toBe("POST");
 	});
 
 	it.each(["/unknown", "/v1/beaches", "/admin/provider-health", "/v1/information-reports"])("does not expose %s", async (path) => {
-		const response = await worker.fetch(request(path), createEnvironment());
+		const response = await worker.fetch(request(path), createEnvironment(), executionContext);
 		expect(response.status).toBe(404);
 	});
 
@@ -49,7 +51,7 @@ describe("standalone IPAWS Worker", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const env = createEnvironment();
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env);
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env, executionContext);
 		expect(response.status).toBe(503);
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
@@ -62,7 +64,7 @@ describe("standalone IPAWS Worker", () => {
 		expect("REFRESH_COORDINATOR" in env).toBe(false);
 		expect("VERIFICATION_COORDINATOR" in env).toBe(false);
 		expect("VERIFICATION_ALERT_EMAIL" in env).toBe(false);
-		expect(await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env)).toHaveProperty("status", 503);
+		expect(await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env, executionContext)).toHaveProperty("status", 503);
 	});
 
 	it("keeps the deployed staging configuration isolated from notification infrastructure", () => {
@@ -70,5 +72,27 @@ describe("standalone IPAWS Worker", () => {
 		expect(config).toContain('"name": "alabamabeachflag-ipaws-staging"');
 		expect(config).toContain('"IPAWS_ENVIRONMENT": "staging"');
 		expect(config).not.toMatch(/send_email|notification_recipient|production/i);
+	});
+
+	it("serves only a sanitized staging metrics report with no-store caching", async () => {
+		const env = createEnvironment();
+		env.IPAWS_IDEMPOTENCY = {
+			idFromName: vi.fn(() => "metrics-id"),
+			get: vi.fn(() => ({ fetch: vi.fn(async () => Response.json({
+				schemaVersion: 1, environment: "staging", retentionDays: 35, windowStart: null, windowEnd: null,
+				counters: {}, latency: { count: 0, sumMs: 0, maxMs: 0, buckets: {}, averageMs: null },
+				lastSuccessfulDeliveryAt: null, limitations: [],
+			})) })),
+		} as unknown as DurableObjectNamespace;
+		const response = await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toMatchObject({ schemaVersion: 1, environment: "staging", retentionDays: 35 });
+	});
+
+	it("does not expose the metrics route outside staging", async () => {
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		expect(await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext)).toHaveProperty("status", 404);
 	});
 });
