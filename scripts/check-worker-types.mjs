@@ -1,6 +1,6 @@
-import { readFile, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, rmdir, unlink } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 const allowedTargets = new Map([
 	["worker-configuration.d.ts", "wrangler.jsonc"],
@@ -15,8 +15,10 @@ if (!config) {
 }
 
 const targetPath = resolve(target);
-const generatedTarget = `.generated-${process.pid}-${target}`;
 const original = await readFile(targetPath);
+const lockPath = await mkdtemp(resolve(".worker-types-check-"));
+const generatedTarget = `${basename(lockPath)}-${target}`;
+const generatedPath = resolve(generatedTarget);
 let generationStatus = 1;
 let generated;
 
@@ -32,13 +34,14 @@ try {
 	], { stdio: "inherit" });
 	generationStatus = result.status ?? 1;
 	if (generationStatus === 0) {
-		const output = await readFile(resolve(generatedTarget), "utf8");
+		const output = await readFile(generatedPath, "utf8");
 		const generatedArgument = ` ${generatedTarget}\` (hash:`;
 		const expectedArgument = target === "worker-configuration.d.ts" ? "` (hash:" : ` ${target}\` (hash:`;
 		generated = Buffer.from(output.replace(generatedArgument, expectedArgument));
 	}
 } finally {
-	await unlink(resolve(generatedTarget)).catch(() => undefined);
+	await unlink(generatedPath).catch(() => undefined);
+	await rmdir(lockPath).catch(() => undefined);
 }
 
 if (generationStatus !== 0) process.exit(generationStatus);
