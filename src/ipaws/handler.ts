@@ -8,7 +8,7 @@ import { IpawsSnsError, parseSnsMessage, validateSnsTimestamp, validateSubscribe
 import { logWarn } from "../utils/logger";
 import { stageNormalizedAlert } from "./domain";
 import { claimIpawsDelivery, completeIpawsDelivery, recoverIpawsDelivery, releaseIpawsDelivery, renewIpawsDelivery } from "./idempotency";
-import { capLifecycle, recordIpawsMetrics, snsType, type IpawsMetricsEvent } from "./metrics";
+import { capLifecycle, recordIpawsMetrics, snsType, type IpawsFailureClass, type IpawsMetricsEvent, type IpawsProcessingStage } from "./metrics";
 
 const MAX_ENVELOPE_BYTE_LIMIT = 512 * 1024;
 const SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 5_000;
@@ -86,7 +86,29 @@ async function sha256Hex(value: string): Promise<string> {
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type MetricsTracker = Omit<IpawsMetricsEvent, "httpStatus" | "handlerOutcome" | "latencyMs" | "rejection">;
+type MetricsTracker = Omit<IpawsMetricsEvent, "httpStatus" | "handlerOutcome" | "latencyMs" | "rejection"> & { currentStage?: IpawsProcessingStage; correlationMessageId?: string; correlationAction?: "preclaim_failure" | "accepted" };
+
+function enterStage(metrics: MetricsTracker, stage: IpawsProcessingStage): void {
+	metrics.currentStage = stage;
+	if (!metrics.processingStages.includes(stage)) metrics.processingStages.push(stage);
+}
+
+function failureClass(code: string, stage: IpawsProcessingStage, retryable: boolean): IpawsFailureClass {
+	if (/disabled|misconfigured/.test(code)) return "configuration";
+	if (/topic/.test(code)) return "topic_validation";
+	if (/timestamp/.test(code)) return "timestamp_validation";
+	if (/cert|certificate/.test(code)) return "certificate_unavailable";
+	if (/signature/.test(code)) return "signature_invalid";
+	if (/idempotency|recovery/.test(code) || stage === "initial_idempotency_claim") return "idempotency_unavailable";
+	if (/in_progress/.test(code)) return "delivery_in_progress";
+	if (/output_verification/.test(code)) return "output_verification";
+	if (/stale_delivery_claim/.test(code) || stage === "completion") return "completion_unavailable";
+	if (stage === "persistence") return "persistence_unavailable";
+	if (stage === "normalization") return "normalization_unavailable";
+	if (/unexpected/.test(code)) return "unexpected_exception";
+	if (/invalid|unsupported|too_large|missing/.test(code)) return "invalid_request";
+	return retryable ? "other_retryable" : "other_permanent";
+}
 
 function outcomeFor(responseBody: Record<string, unknown>): IpawsMetricsEvent["handlerOutcome"] {
 	const outcome = responseBody.outcome;
@@ -108,6 +130,7 @@ function statusClass(status: number): IpawsMetricsEvent["httpStatus"] {
 }
 
 async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics: MetricsTracker): Promise<Response> {
+	enterStage(metrics, "envelope_validation");
 	if (request.method !== "POST") {
 		return response({ error: "Method Not Allowed" }, { status: 405, headers: { Allow: "POST" } });
 	}
@@ -154,11 +177,13 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	try {
 		message = parseSnsMessage(rawPayload);
 		metrics.snsType = snsType(message.Type);
+		metrics.correlationMessageId = message.MessageId;
 	} catch (error) {
 		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
 		return responseError("ipaws_invalid_payload", "Unable to parse SNS envelope.", 400);
 	}
 
+	enterStage(metrics, "security_validation");
 	if (!config.allowedTopicArns.includes(message.TopicArn.trim())) {
 		metrics.topicArnValidation = "failure";
 		return responseError("ipaws_unexpected_topic", "TopicArn is not configured as allowed.", 400);
@@ -172,6 +197,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	}
 
 	let signatureResult;
+	enterStage(metrics, "certificate_retrieval");
 	try {
 		signatureResult = await verifySnsSignature(message);
 	} catch (error) {
@@ -218,11 +244,13 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	}
 
 	let claim;
+	enterStage(metrics, "initial_idempotency_claim");
 	try {
 		claim = await claimIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 		if (claim.result === "acquired" && claim.recovered) metrics.idempotency.push("lease_recovery");
 	} catch {
 		metrics.idempotency.push("failure");
+		metrics.correlationAction = "preclaim_failure";
 		return responseError("ipaws_idempotency_unavailable", "IPAWS idempotency coordinator is unavailable.", 503);
 	}
 	if (claim.result === "processing") {
@@ -237,7 +265,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			if (await deliveryOutputsComplete(env, message.MessageId)) {
 				metrics.idempotency.push("completed_duplicate");
 				await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
-				return response({ status: "ok", outcome: "duplicate", messageId: message.MessageId }, { headers: { "Cache-Control": "no-store" } });
+				return response({ status: "ok", outcome: "duplicate" }, { headers: { "Cache-Control": "no-store" } });
 			}
 			claim = await recoverIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId);
 			if (claim.result === "acquired") metrics.idempotency.push("lease_recovery");
@@ -253,6 +281,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	if (!metrics.idempotency.includes("lease_recovery")) metrics.idempotency.push("acquired");
 	const claimToken = claim.token;
 
+	enterStage(metrics, "cap_parsing");
 	const parseResult: IpawsCapParseResult = message.Type === "Notification"
 		? parseCapPayload(message.Message, config.parseByteLimit)
 		: {
@@ -264,6 +293,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	metrics.capLifecycle = message.Type === "Notification" ? capLifecycle(parseResult) : "not_applicable";
 
 	try {
+		enterStage(metrics, "persistence");
 		const receipt = await upsertIngestionRecord(
 			env,
 			message,
@@ -280,6 +310,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 
 		if (message.Type === "Notification") {
 			if (parseResult.status === "parsed") {
+				enterStage(metrics, "normalization");
 				let reconstructing = false;
 				if (receipt.duplicate) {
 					try { reconstructing = !(await readNormalizedAlert(env, message.MessageId)); } catch { /* Metrics classification must not affect delivery. */ }
@@ -292,6 +323,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 					throw error;
 				}
 			}
+			enterStage(metrics, "persistence");
 			// SNS delivers notifications only after the HTTPS subscription is confirmed.
 			await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
 			await recordIpawsHealthEvent(env, parseResult.status === "parsed" ? "delivery_notification_parsed" : "delivery_notification_parse_failed", config.healthTtlSeconds, {
@@ -304,14 +336,17 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
 				parseResultSummary: parseResult.status,
 			}, config.recordTtlSeconds);
+			enterStage(metrics, "completion");
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required notification outputs are not yet visible.");
 			if (!(await renewIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership expired before completion.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
-			return response({ status: "ok", outcome: "accepted", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+			metrics.correlationAction = "accepted";
+			return response({ status: "ok", outcome: "accepted", ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
 		if (message.Type === "UnsubscribeConfirmation") {
+			enterStage(metrics, "persistence");
 			await recordIpawsHealthEvent(env, "unsubscribe_confirmation_received", config.healthTtlSeconds, {
 				environment: config.environment,
 				stagingEnabled: config.enabled,
@@ -321,13 +356,16 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseStatus: "parse_failed",
 				parseError: "unsubscribe_confirmation_no_action",
 			}, config.recordTtlSeconds);
+			enterStage(metrics, "completion");
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required unsubscribe output is not yet visible.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
-			return response({ status: "ok", outcome: "unsubscribe_recorded", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+			metrics.correlationAction = "accepted";
+			return response({ status: "ok", outcome: "unsubscribe_recorded", ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
 		if (!config.autoConfirmSubscription) {
+			enterStage(metrics, "persistence");
 			await writeSubscriptionState(env, "skipped", config.subscriptionStateTtlSeconds);
 			await recordIpawsHealthEvent(env, "subscription_confirmation_disabled", config.healthTtlSeconds, {
 				environment: config.environment,
@@ -338,13 +376,16 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseStatus: "parse_failed",
 				parseError: "subscription_confirmation_disabled",
 			}, config.recordTtlSeconds);
+			enterStage(metrics, "completion");
 			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
-			return response({ status: "ok", outcome: "subscription_confirmation_skipped", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+			metrics.correlationAction = "accepted";
+			return response({ status: "ok", outcome: "subscription_confirmation_skipped", ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 		}
 
 		await confirmSubscription(message.SubscribeURL ?? "");
+		enterStage(metrics, "persistence");
 		await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
 		await recordIpawsHealthEvent(env, "subscription_confirmed", config.healthTtlSeconds, {
 			environment: config.environment,
@@ -355,19 +396,21 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			parseStatus: "parse_failed",
 			parseError: null,
 		}, config.recordTtlSeconds);
+		enterStage(metrics, "completion");
 		if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
 		if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 		metrics.idempotency.push("completion");
-		return response({ status: "ok", outcome: "subscription_confirmed", messageId: message.MessageId, ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
+		metrics.correlationAction = "accepted";
+		return response({ status: "ok", outcome: "subscription_confirmed", ingestionId: receipt.record.id }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		metrics.idempotency.push("failure");
 		try {
 			await releaseIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken);
-		} catch (releaseError) {
-			logWarn("IPAWS", "Unable to release failed delivery claim", { messageId: message.MessageId, reason: releaseError instanceof Error ? releaseError.message : "unknown" });
+		} catch {
+			logWarn("IPAWS", "Unable to release failed delivery claim");
 		}
 		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
-		logWarn("IPAWS", "Retryable IPAWS processing failure", { messageId: message.MessageId, reason: error instanceof Error ? error.message : "unknown" });
+		logWarn("IPAWS", "Retryable IPAWS processing failure", { stage: metrics.currentStage ?? "persistence" });
 		return responseError(error instanceof IpawsRetryableError ? error.code : "ipaws_processing_unavailable", "IPAWS processing is temporarily unavailable.", 503);
 	}
 }
@@ -376,7 +419,7 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env, ctx?:
 	const startedAt = Date.now();
 	const metrics: MetricsTracker = {
 		snsType: "unknown", signature: "not_attempted", capParse: "not_applicable", capLifecycle: "not_applicable",
-		idempotency: [], normalizedRecord: [],
+		idempotency: [], normalizedRecord: [], processingStages: [],
 	};
 	let result: Response;
 	let unexpectedException = false;
@@ -389,15 +432,21 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env, ctx?:
 	let body: Record<string, unknown> = {};
 	try { body = await result.clone().json<Record<string, unknown>>(); } catch { /* Responses are normally JSON. */ }
 	const rejection: IpawsMetricsEvent["rejection"] = result.status >= 500 ? "retryable" : result.status >= 400 ? "permanent" : "none";
+	const code = typeof body.code === "string" ? body.code : "";
+	if (result.status >= 400) {
+		metrics.failureStage = metrics.currentStage ?? "envelope_validation";
+		metrics.failureClass = failureClass(code, metrics.failureStage, rejection === "retryable");
+	}
+	const { currentStage: _currentStage, correlationMessageId, correlationAction, ...publicMetrics } = metrics;
 	const metricsWrite = recordIpawsMetrics(env.IPAWS_IDEMPOTENCY, {
-		...metrics,
+		...publicMetrics,
 		idempotency: metrics.idempotency.length ? metrics.idempotency : ["not_reached"],
 		normalizedRecord: metrics.normalizedRecord.length ? metrics.normalizedRecord : ["not_applicable"],
 		httpStatus: statusClass(result.status), handlerOutcome: outcomeFor(body), rejection,
 		unexpectedException: unexpectedException || undefined,
 		latencyMs: Date.now() - startedAt,
 		successfulDelivery: result.status >= 200 && result.status < 300 ? true : undefined,
-	});
+	}, correlationMessageId && correlationAction ? { messageId: correlationMessageId, action: correlationAction } : undefined);
 	if (ctx) ctx.waitUntil(metricsWrite);
 	else await metricsWrite;
 	return result;

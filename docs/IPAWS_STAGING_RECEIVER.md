@@ -25,11 +25,11 @@ This document covers the staging-first IPAWS receiver implementation currently d
 - Parser extracts lifecycle-related fields used for future planning:
 	- `identifier`, `references`, `sender`, `status`, `msgType`, `event`, `urgency`, `severity`, `certainty`, `effective`, `onset`, `expires`, `headline`, `description`, `instruction`, and area geometry/geocode fields.
 - Health snapshot is merged into provider-health admin output at `ipawsReceiver`.
-- Privacy-preserving operational metrics are stored in strongly consistent UTC-day aggregates and exposed as a sanitized staging-only soak report.
+- Privacy-preserving operational metrics are stored in strongly consistent UTC-hour aggregates and exposed as a sanitized staging-only soak report.
 
 ## Durable operational metrics and soak reports
 
-Every callback attempt that reaches the handler makes one best-effort metrics write to the existing `IPAWS_IDEMPOTENCY` Durable Object namespace. A reserved deterministic object name keeps aggregate state separate from per-`MessageId` claim objects. No new binding, migration, Cloudflare route configuration, queue, recipient, secret, or Cloudflare resource is required; the Worker itself adds only the staging-gated read endpoint documented below. The object transactionally updates one UTC-day bucket, so concurrent requests do not use unsafe KV read-modify-write counters.
+Every callback attempt that reaches the handler makes one best-effort metrics write to the existing `IPAWS_IDEMPOTENCY` Durable Object namespace. A reserved deterministic object name keeps aggregate state separate from per-`MessageId` claim objects. No new binding, migration, Cloudflare route configuration, queue, recipient, secret, or Cloudflare resource is required. The object transactionally updates one UTC-hour bucket, so concurrent requests do not use unsafe KV read-modify-write counters.
 
 The metrics schema contains only fixed, low-cardinality dimensions:
 
@@ -39,24 +39,30 @@ The metrics schema contains only fixed, low-cardinality dimensions:
 - CAP parse result and lifecycle (`Alert`, `Update`, `Cancel`, `Test`, `other`, or `not_applicable`);
 - idempotency acquisition, processing/completed duplicates, lease recovery, completion, and failure;
 - normalized-record success, reconstruction, failure, or not-applicable;
+- fixed processing stages and sanitized failure classes, plus the latest failure timestamp/stage/class;
+- privacy-preserving resolution of an initial-claim failure by a later accepted delivery;
 - retryable/permanent rejection, unexpected exceptions, bounded latency totals/max/histogram, and the latest successful-delivery timestamp.
 
 Metrics never accept or persist raw SNS/CAP bodies, arbitrary error text, personal information, message or CAP identifiers, ownership tokens, signatures, certificates, URLs, TopicArns, or secrets. An event with extra fields is reduced to the allowlisted counters before storage. Latency is clamped to five minutes and reported in fixed buckets.
 
-Storage is bounded to the current UTC day plus the preceding **34 UTC days**. Empty days do not create buckets. Reports immediately exclude buckets outside that calendar window, and the next metrics update transaction physically evicts them. The report is not a lifetime counter. This gives a five-week window for a planned soak while bounding keys and values independently of request volume.
+Storage is bounded to at most **840 hourly buckets**: the current UTC hour plus the preceding 839 hours (35 days). Empty hours do not create buckets. Reports exclude buckets outside retention immediately, and the next metrics update physically evicts them. A bucket contains only fixed counters and latency aggregates; at the current schema its serialized upper bound is under 8 KiB, so 840 full buckets are conservatively under 6.6 MiB. Correlation state is separately capped at 256 markers and three rotating 32-byte HMAC keys.
+
+Schema version 2 uses new hourly storage keys and does not reinterpret the previous daily aggregates. A staging deployment therefore begins a new windowed series while leaving legacy keys untouched; normal bounded v2 writes and retention do not enumerate or expose those legacy values.
+
+Retry correlation is best-effort. The singleton object receives the `MessageId` only through an internal Durable Object call, derives an HMAC marker with a random key held only in Durable Object storage, and never stores or returns the identifier. Keys rotate hourly; markers expire after two hours and are capped at 256. A later accepted delivery is checked against the retained key ring and increments only the fixed `resolved_after_preclaim_failure` counter. Metrics/correlation failure cannot change the SNS response, so this counter may undercount.
 
 Retrieve a sanitized report without Cloudflare management APIs:
 
 ```sh
 curl --fail-with-body --silent --show-error \
-  https://<staging-ipaws-host>/v1/ipaws/metrics | jq .
+  'https://<staging-ipaws-host>/v1/ipaws/metrics?start=2026-09-29T14%3A00%3A00.000Z&end=2026-09-29T21%3A00%3A00.000Z' | jq .
 ```
 
-`GET /v1/ipaws/metrics` exists only when `IPAWS_ENVIRONMENT=staging`, is read-only, returns `Cache-Control: no-store`, and contains aggregate operational data only. It has no caller-controlled selector or pagination surface. A canonical fixed cache key holds successful reports at Cloudflare edges for 30 seconds, bounding repeated report reads against the singleton metrics object; query strings cannot bypass that key. The endpoint returns `503 ipaws_metrics_unavailable` if the Durable Object report cannot be read. Allow up to 30 seconds after a soak boundary before capturing the final report.
+`GET /v1/ipaws/metrics` exists only when `IPAWS_ENVIRONMENT=staging`, is read-only, returns `Cache-Control: no-store`, and contains aggregate operational data only. Optional `start` and `end` must be canonical UTC-hour timestamps, must be supplied together, use an inclusive-start/exclusive-end interval, and may span at most seven days. Omitting both selects the last 72 complete-or-current UTC hours. Unknown, duplicate-effective, partial, noncanonical, inverted, or oversized selectors return `400`. A canonical window-specific cache key holds successful reports at Cloudflare edges for 30 seconds; query ordering cannot bypass it. There is no pagination or key enumeration. The endpoint returns `503 ipaws_metrics_unavailable` if the Durable Object report cannot be read.
 
 Metrics are deliberately fail-open relative to observability: the Worker schedules the write with `waitUntil`, and a metrics write or report failure never delays or changes a valid FEMA delivery response. A failed write emits one fixed, sanitized Worker warning and does not attempt another metrics write, preventing recursive failure reporting. Consequently, the report is evidence for successfully recorded observations, not an independent request ledger. Compare `counters.request.received` with Cloudflare Worker request analytics for the same UTC window. A receiver `4xx`/`5xx`, bounded handler failure, or unexpected-exception counter indicates a receiver outcome. A failed Wrangler/API/dashboard query with a healthy direct report is a Cloudflare management/API observation failure. A direct-report `503` or a gap between Worker analytics and recorded requests indicates a metrics path or platform/storage observation failure and must not be labeled a FEMA or receiver-processing failure without corroborating request outcomes.
 
-For a soak, capture the report at start and end, record the exact UTC window and deployed version, and compare counter deltas. Daily buckets are intentionally not reset: reset operations would be destructive and are not exposed.
+For a soak, choose hour-aligned UTC boundaries and request that exact inclusive-start/exclusive-end window after allowing for analytics lag. Buckets are intentionally not reset: reset operations would be destructive and are not exposed.
 
 ## Safe configuration
 
