@@ -22,6 +22,7 @@ const COUNTER_DIMENSIONS = {
 	failureClass: ["invalid_request", "configuration", "topic_validation", "timestamp_validation", "certificate_unavailable", "signature_invalid", "idempotency_unavailable", "delivery_in_progress", "persistence_unavailable", "normalization_unavailable", "completion_unavailable", "output_verification", "unexpected_exception", "other_retryable", "other_permanent"],
 	retryResolution: ["resolved_after_preclaim_failure"],
 } as const;
+export const IPAWS_METRIC_DIMENSIONS = COUNTER_DIMENSIONS;
 type MetricDimension = keyof typeof COUNTER_DIMENSIONS;
 type CounterValue<D extends MetricDimension> = (typeof COUNTER_DIMENSIONS)[D][number];
 type MetricCounters = { [D in MetricDimension]: Partial<Record<CounterValue<D>, number>> };
@@ -55,6 +56,15 @@ function increment<D extends MetricDimension>(counters: MetricCounters, dimensio
 function addLatency(target: LatencyAggregate, milliseconds: number): void { const value = Math.max(0, Math.min(Math.round(milliseconds), 300_000)); target.count++; target.sumMs += value; target.maxMs = Math.max(target.maxMs, value); target.buckets[value <= 100 ? "le100" : value <= 500 ? "le500" : value <= 1_000 ? "le1000" : value <= 5_000 ? "le5000" : "gt5000"]++; }
 export function hourKey(now: number): string { return new Date(Math.floor(now / HOUR_MS) * HOUR_MS).toISOString(); }
 export function canonicalHour(value: string): boolean { return /^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/.test(value) && new Date(value).toISOString() === value; }
+export function validMetricsWindow(start: string, end: string, now: number): boolean {
+	if (!canonicalHour(start) || !canonicalHour(end) || start >= end) return false;
+	const currentHour = Math.floor(now / HOUR_MS) * HOUR_MS;
+	const startMs = Date.parse(start);
+	const endMs = Date.parse(end);
+	return startMs >= currentHour - (IPAWS_METRICS_RETENTION_DAYS * 24 - 1) * HOUR_MS
+		&& endMs <= currentHour + HOUR_MS
+		&& endMs - startMs <= IPAWS_METRICS_MAX_REPORT_HOURS * HOUR_MS;
+}
 export function retainedMetricHours(hours: string[], now: number): string[] { const cutoff = Math.floor(now / HOUR_MS) * HOUR_MS - (IPAWS_METRICS_RETENTION_DAYS * 24 - 1) * HOUR_MS; return [...new Set(hours)].filter((hour) => canonicalHour(hour) && Date.parse(hour) >= cutoff && Date.parse(hour) <= now).sort(); }
 export function applyMetricsEvent(bucket: IpawsMetricsBucket, event: IpawsMetricsEvent, now: number): void {
 	increment(bucket.counters, "request", "received"); increment(bucket.counters, "httpStatus", event.httpStatus); increment(bucket.counters, "handlerOutcome", event.handlerOutcome); increment(bucket.counters, "snsType", event.snsType); increment(bucket.counters, "signature", event.signature);

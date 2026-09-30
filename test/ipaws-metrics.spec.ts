@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpawsIdempotencyCoordinator } from "../src/ipaws/idempotency";
-import { buildSoakReport, capLifecycle, IPAWS_CORRELATION_ROTATION_MS, IPAWS_CORRELATION_TTL_MS, IPAWS_METRICS_MAX_REPORT_HOURS, IPAWS_METRICS_RETENTION_DAYS, recordIpawsMetrics, type IpawsMetricsEvent } from "../src/ipaws/metrics";
+import { buildSoakReport, capLifecycle, IPAWS_CORRELATION_MAX_MARKERS, IPAWS_CORRELATION_ROTATION_MS, IPAWS_CORRELATION_TTL_MS, IPAWS_METRIC_DIMENSIONS, IPAWS_METRICS_MAX_REPORT_HOURS, IPAWS_METRICS_RETENTION_DAYS, recordIpawsMetrics, type IpawsMetricsEvent } from "../src/ipaws/metrics";
 
 function storageHarness() {
 	const values = new Map<string, unknown>();
@@ -42,7 +42,10 @@ async function record(coordinator: IpawsIdempotencyCoordinator, value: IpawsMetr
 	}));
 }
 
-function report(coordinator: IpawsIdempotencyCoordinator, start = "2026-09-24T00:00:00.000Z", end = "2026-10-01T00:00:00.000Z") {
+function report(coordinator: IpawsIdempotencyCoordinator, start?: string, end?: string) {
+	const defaultEnd = new Date((Math.floor(Date.now() / 3_600_000) + 1) * 3_600_000).toISOString();
+	end ??= defaultEnd;
+	start ??= new Date(Date.parse(end) - IPAWS_METRICS_MAX_REPORT_HOURS * 3_600_000).toISOString();
 	return coordinator.fetch(new Request(`https://metrics.internal/metrics/report?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`));
 }
 
@@ -97,6 +100,31 @@ describe("IPAWS durable metrics", () => {
 		expect(JSON.stringify([...values.entries()])).not.toContain(sensitive);
 	});
 
+	it("resolves duplicate concurrent failure markers once and never matches an unrelated delivery", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T10:00:00.000Z"));
+		const { storage, values } = storageHarness(); const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
+		const failed = event({ httpStatus: "5xx", handlerOutcome: "processing_failure", rejection: "retryable", successfulDelivery: undefined, failureStage: "initial_idempotency_claim", failureClass: "idempotency_unavailable" });
+		await Promise.all(Array.from({ length: 8 }, () => record(coordinator, failed, { action: "preclaim_failure", messageId: "same-delivery" })));
+		await record(coordinator, event(), { action: "accepted", messageId: "unrelated-delivery" });
+		await Promise.all(Array.from({ length: 8 }, () => record(coordinator, event(), { action: "accepted", messageId: "same-delivery" })));
+		const result = await (await report(coordinator, "2026-09-30T10:00:00.000Z", "2026-09-30T11:00:00.000Z")).json<ReturnType<typeof buildSoakReport>>();
+		expect(result.counters.retryResolution.resolved_after_preclaim_failure).toBe(1);
+		expect(values.get("metrics:correlation:markers")).toEqual([]);
+	});
+
+	it("bounds correlation markers under adversarial unique failures", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T10:00:00.000Z"));
+		const { storage, values } = storageHarness(); const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
+		const failed = event({ httpStatus: "5xx", handlerOutcome: "processing_failure", rejection: "retryable", successfulDelivery: undefined, failureStage: "initial_idempotency_claim", failureClass: "idempotency_unavailable" });
+		for (let index = 0; index < 300; index++) await record(coordinator, failed, { action: "preclaim_failure", messageId: `delivery-${index}` });
+		expect(values.get("metrics:correlation:markers")).toHaveLength(IPAWS_CORRELATION_MAX_MARKERS);
+		expect(values.get("metrics:correlation:keys")).toHaveLength(1);
+		await record(coordinator, event(), { action: "accepted", messageId: "delivery-0" });
+		await record(coordinator, event(), { action: "accepted", messageId: "delivery-299" });
+		const result = await (await report(coordinator, "2026-09-30T10:00:00.000Z", "2026-09-30T11:00:00.000Z")).json<ReturnType<typeof buildSoakReport>>();
+		expect(result.counters.retryResolution.resolved_after_preclaim_failure).toBe(1);
+	});
+
 	it("expires unresolved correlation markers and rejects oversized report windows", async () => {
 		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T10:00:00.000Z"));
 		const { storage } = storageHarness(); const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
@@ -106,6 +134,8 @@ describe("IPAWS durable metrics", () => {
 		expect(result.counters.retryResolution.resolved_after_preclaim_failure).toBeUndefined();
 		const tooLongEnd = new Date(Date.parse("2026-09-01T00:00:00.000Z") + (IPAWS_METRICS_MAX_REPORT_HOURS + 1) * 3_600_000).toISOString();
 		expect((await report(coordinator, "2026-09-01T00:00:00.000Z", tooLongEnd)).status).toBe(400);
+		expect((await coordinator.fetch(new Request("https://metrics.internal/metrics/report?start=2026-09-30T10%3A00%3A00.000Z&start=2026-09-30T11%3A00%3A00.000Z&end=2026-09-30T13%3A00%3A00.000Z"))).status).toBe(400);
+		expect((await report(coordinator, "2027-01-01T00:00:00.000Z", "2027-01-01T01:00:00.000Z")).status).toBe(400);
 	});
 
 	it("retains only the latest bounded set of UTC hourly aggregates", async () => {
@@ -119,9 +149,26 @@ describe("IPAWS durable metrics", () => {
 		const hours = values.get("metrics:hours") as string[];
 		expect(hours).toHaveLength(IPAWS_METRICS_RETENTION_DAYS * 24);
 		expect([...values.keys()].filter((key) => key.startsWith("metrics:hour:"))).toHaveLength(IPAWS_METRICS_RETENTION_DAYS * 24);
+		const bucket = structuredClone(values.get(`metrics:hour:${hours.at(-1)}`)) as Record<string, unknown>;
+		const counters = bucket.counters as Record<string, Record<string, number>>;
+		for (const [dimension, labels] of Object.entries(IPAWS_METRIC_DIMENSIONS)) {
+			counters[dimension] = Object.fromEntries(labels.map((label) => [label, Number.MAX_SAFE_INTEGER]));
+		}
+		const maximizeNumbers = (value: unknown): void => {
+			if (!value || typeof value !== "object") return;
+			for (const [key, item] of Object.entries(value)) {
+				if (typeof item === "number") (value as Record<string, unknown>)[key] = Number.MAX_SAFE_INTEGER;
+				else maximizeNumbers(item);
+			}
+		};
+		maximizeNumbers(bucket);
+		const worstBucketBytes = new TextEncoder().encode(JSON.stringify(bucket)).byteLength;
+		const indexBytes = new TextEncoder().encode(JSON.stringify(hours)).byteLength;
+		expect(worstBucketBytes).toBeLessThan(8 * 1024);
+		expect(worstBucketBytes * hours.length + indexBytes).toBeLessThan(6.6 * 1024 * 1024);
 	});
 
-	it("retains and orders UTC days deterministically across month and year boundaries", async () => {
+	it("retains and orders UTC hours across month and year boundaries", async () => {
 		vi.useFakeTimers();
 		const { storage, values } = storageHarness();
 		const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
@@ -130,6 +177,19 @@ describe("IPAWS durable metrics", () => {
 			await record(coordinator, event());
 		}
 		expect(values.get("metrics:hours")).toEqual(["2026-11-30T23:00:00.000Z", "2026-12-01T00:00:00.000Z", "2026-12-31T23:00:00.000Z", "2027-01-01T00:00:00.000Z"]);
+	});
+
+	it("uses UTC hours without DST gaps or repeats", async () => {
+		vi.useFakeTimers();
+		const { storage, values } = storageHarness();
+		const coordinator = new IpawsIdempotencyCoordinator({ storage } as unknown as DurableObjectState);
+		for (const timestamp of ["2026-11-01T05:59:59Z", "2026-11-01T06:00:00Z", "2026-11-01T06:59:59Z", "2026-11-01T07:00:00Z"]) {
+			vi.setSystemTime(new Date(timestamp));
+			await record(coordinator, event());
+		}
+		expect(values.get("metrics:hours")).toEqual(["2026-11-01T05:00:00.000Z", "2026-11-01T06:00:00.000Z", "2026-11-01T07:00:00.000Z"]);
+		const result = await (await report(coordinator, "2026-11-01T05:00:00.000Z", "2026-11-01T08:00:00.000Z")).json<ReturnType<typeof buildSoakReport>>();
+		expect(result.counters.request.received).toBe(4);
 	});
 
 	it("expires populated buckets by calendar age after a long idle gap", async () => {

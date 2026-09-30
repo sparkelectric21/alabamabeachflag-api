@@ -443,6 +443,11 @@ describe("IPAWS pub/sub handler", () => {
 		});
 		expect(record.rawMessageDigestSha256).toMatch(/^[a-f0-9]{64}$/);
 		expect(JSON.stringify(record)).not.toContain(baseNotification.Message);
+		expect(env.metricsEvents.at(-1)).toEqual(expect.objectContaining({
+			processingStages: expect.arrayContaining(["certificate_retrieval", "persistence", "security_validation"]),
+			failureStage: "security_validation",
+			failureClass: "signature_invalid",
+		}));
 	});
 
 	it("retains a signed malformed CAP payload as parse_failed without normalized output", async () => {

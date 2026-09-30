@@ -1,4 +1,4 @@
-import { applyMetricsEvent, buildSoakReport, canonicalHour, hourKey, IPAWS_CORRELATION_MAX_MARKERS, IPAWS_CORRELATION_ROTATION_MS, IPAWS_CORRELATION_TTL_MS, IPAWS_METRICS_MAX_REPORT_HOURS, isIpawsMetricsEvent, newMetricsBucket, retainedMetricHours, type IpawsCorrelationAction, type IpawsMetricsBucket } from "./metrics";
+import { applyMetricsEvent, buildSoakReport, hourKey, IPAWS_CORRELATION_MAX_MARKERS, IPAWS_CORRELATION_ROTATION_MS, IPAWS_CORRELATION_TTL_MS, isIpawsMetricsEvent, newMetricsBucket, retainedMetricHours, validMetricsWindow, type IpawsCorrelationAction, type IpawsMetricsBucket } from "./metrics";
 
 type ClaimState =
 	| { status: "processing"; leaseUntil: number; token: string }
@@ -9,7 +9,6 @@ export type IpawsClaimResult =
 	| { result: "processing" | "complete" };
 
 const PROCESSING_LEASE_MS = 60_000;
-const HOUR_MS = 60 * 60 * 1_000;
 interface CorrelationKey { createdAt: number; key: string }
 interface CorrelationMarker { digest: string; expiresAt: number }
 
@@ -74,7 +73,10 @@ export class IpawsIdempotencyCoordinator {
 		}
 		if (action === "/metrics/report") {
 			const url = new URL(request.url); const start = url.searchParams.get("start") ?? ""; const end = url.searchParams.get("end") ?? "";
-			if (!canonicalHour(start) || !canonicalHour(end) || start >= end || (Date.parse(end) - Date.parse(start)) / HOUR_MS > IPAWS_METRICS_MAX_REPORT_HOURS) return new Response("Invalid metrics window", { status: 400 });
+			if ([...url.searchParams.keys()].some((key) => key !== "start" && key !== "end")
+				|| url.searchParams.getAll("start").length !== 1
+				|| url.searchParams.getAll("end").length !== 1
+				|| !validMetricsWindow(start, end, Date.now())) return new Response("Invalid metrics window", { status: 400 });
 			const hours = retainedMetricHours(await this.state.storage.get<string[]>("metrics:hours") ?? [], Date.now()).filter((hour) => hour >= start && hour < end);
 			const values = hours.length ? await this.state.storage.get<IpawsMetricsBucket>(hours.map((hour) => `metrics:hour:${hour}`)) : new Map();
 			return Response.json(buildSoakReport(hours.flatMap((hour) => {

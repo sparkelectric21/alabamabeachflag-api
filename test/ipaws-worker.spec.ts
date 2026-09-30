@@ -26,6 +26,7 @@ function request(path: string, method = "GET", body?: string): Request {
 const executionContext = { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as unknown as ExecutionContext;
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.clearAllMocks();
 });
@@ -76,6 +77,7 @@ describe("standalone IPAWS Worker", () => {
 	});
 
 	it("serves only a sanitized staging metrics report with no-store caching", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
 		const env = createEnvironment();
 		const reportFetch = vi.fn(async () => Response.json({
 			schemaVersion: 2, environment: "staging", retentionDays: 35, maxWindowHours: 168, windowStart: "2026-09-29T00:00:00.000Z", windowEnd: "2026-09-30T00:00:00.000Z",
@@ -107,6 +109,7 @@ describe("standalone IPAWS Worker", () => {
 	});
 
 	it("rejects partial, non-canonical, inverted, and oversized metrics windows", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
 		const env = createEnvironment();
 		for (const query of [
 			"start=2026-09-29T00%3A00%3A00.000Z",
@@ -114,6 +117,8 @@ describe("standalone IPAWS Worker", () => {
 			"start=2026-09-29T00%3A01%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z",
 			"start=2026-09-30T00%3A00%3A00.000Z&end=2026-09-29T00%3A00%3A00.000Z",
 			"start=2026-09-01T00%3A00%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z",
+			"start=2026-08-26T12%3A00%3A00.000Z&end=2026-08-26T13%3A00%3A00.000Z",
+			"start=2026-09-30T13%3A00%3A00.000Z&end=2026-09-30T14%3A00%3A00.000Z",
 		]) expect((await worker.fetch(request(`/v1/ipaws/metrics?${query}`), env, executionContext)).status).toBe(400);
 	});
 

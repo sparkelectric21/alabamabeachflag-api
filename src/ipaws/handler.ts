@@ -210,12 +210,14 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		if (signatureResult.retryable) {
 			return responseError(signatureResult.reason ?? "ipaws_certificate_unavailable", "SNS certificate retrieval is temporarily unavailable.", 503);
 		}
+		enterStage(metrics, "security_validation");
 		const parseResult: IpawsCapParseResult = {
 			status: "parse_failed",
 			message: null,
 			reason: "invalid_signature_untrusted_payload",
 		};
 		const messageDigest = await sha256Hex(message.Message);
+		enterStage(metrics, "persistence");
 		await upsertIngestionRecord(
 			env,
 			message,
@@ -228,9 +230,11 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			messageDigest,
 		);
 		await recordIpawsHealthEvent(env, `signature_failed:${signatureResult.reason ?? "unknown"}`, config.healthTtlSeconds);
+		enterStage(metrics, "security_validation");
 		return responseError(signatureResult.reason ?? "ipaws_signature_invalid", "SNS signature verification failed.", 400);
 	}
 	metrics.signature = "success";
+	enterStage(metrics, "security_validation");
 	if (!env.IPAWS_IDEMPOTENCY) {
 		return responseError("ipaws_idempotency_misconfigured", "Strongly consistent IPAWS idempotency is not configured.", 503);
 	}

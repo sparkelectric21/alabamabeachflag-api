@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { handleIpawsPubSubRequest } from "./handler";
-import { canonicalHour, IPAWS_METRICS_DEFAULT_REPORT_HOURS, IPAWS_METRICS_MAX_REPORT_HOURS, readIpawsMetrics } from "./metrics";
+import { IPAWS_METRICS_DEFAULT_REPORT_HOURS, readIpawsMetrics, validMetricsWindow } from "./metrics";
 import { logWarn } from "../utils/logger";
 export { IpawsIdempotencyCoordinator } from "./idempotency";
 
@@ -29,7 +29,7 @@ function metricsWindow(url: URL, now = Date.now()): { start: string; end: string
 	const defaultEnd = new Date((Math.floor(now / HOUR_MS) + 1) * HOUR_MS).toISOString();
 	const end = url.searchParams.get("end") ?? defaultEnd;
 	const start = url.searchParams.get("start") ?? new Date(Date.parse(end) - IPAWS_METRICS_DEFAULT_REPORT_HOURS * HOUR_MS).toISOString();
-	if (!canonicalHour(start) || !canonicalHour(end) || start >= end || (Date.parse(end) - Date.parse(start)) / HOUR_MS > IPAWS_METRICS_MAX_REPORT_HOURS) return null;
+	if (!validMetricsWindow(start, end, now)) return null;
 	if (url.searchParams.has("start") !== url.searchParams.has("end")) return null;
 	return { start, end, cacheKey: `https://ipaws-metrics.internal/v2/report?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` };
 }
