@@ -57,9 +57,9 @@ jobs:
       - name: Full test suite
         run: npm test
       - name: Check production-generated Worker types
-        run: npx wrangler types --check --config wrangler.jsonc
+        run: npm run cf-typecheck
       - name: Check staging-generated Worker types
-        run: npx wrangler types worker-configuration.ipaws-staging.d.ts --check --config wrangler.ipaws.staging.jsonc
+        run: npm run cf-typecheck:staging
       - name: Validate production bundle and bindings without deploying
         run: npx wrangler deploy --dry-run --outdir /tmp/production-dry-run --config wrangler.jsonc
       - name: Validate staging bundle and bindings
