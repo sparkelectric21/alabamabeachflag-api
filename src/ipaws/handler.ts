@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import { loadIpawsConfig } from "./config";
 import { parseCapPayload } from "./parser";
 import type { IpawsCapParseResult } from "./types";
-import { readIngestionRecord, readNormalizedAlert, readSubscriptionState, updateIngestionRecord, upsertIngestionRecord, writeSubscriptionState } from "./persistence";
+import { readIngestionRecord, readNormalizedAlert, readSubscriptionState, updateIngestionRecord, upsertIngestionRecord, writeInvalidSignatureRecord, writeSubscriptionState } from "./persistence";
 import { recordIpawsHealthEvent } from "./health";
 import { IpawsSnsError, parseSnsMessage, validateSnsTimestamp, validateSubscribeUrl, verifySnsSignature } from "./sns";
 import { logWarn } from "../utils/logger";
@@ -211,24 +211,9 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			return responseError(signatureResult.reason ?? "ipaws_certificate_unavailable", "SNS certificate retrieval is temporarily unavailable.", 503);
 		}
 		enterStage(metrics, "security_validation");
-		const parseResult: IpawsCapParseResult = {
-			status: "parse_failed",
-			message: null,
-			reason: "invalid_signature_untrusted_payload",
-		};
 		const messageDigest = await sha256Hex(message.Message);
 		enterStage(metrics, "persistence");
-		await upsertIngestionRecord(
-			env,
-			message,
-			"signature_invalid",
-			"",
-			"failure",
-			parseResult,
-			message.TopicArn,
-			config.recordTtlSeconds,
-			messageDigest,
-		);
+		await writeInvalidSignatureRecord(env, message, messageDigest, config.recordTtlSeconds);
 		await recordIpawsHealthEvent(env, `signature_failed:${signatureResult.reason ?? "unknown"}`, config.healthTtlSeconds);
 		enterStage(metrics, "security_validation");
 		return responseError(signatureResult.reason ?? "ipaws_signature_invalid", "SNS signature verification failed.", 400);

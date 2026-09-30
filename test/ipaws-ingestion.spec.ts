@@ -424,30 +424,56 @@ describe("IPAWS pub/sub handler", () => {
 
 	it("fails closed on invalid signatures", async () => {
 		const verify = vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: false, reason: "ipaws_signature_mismatch" });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 		const env = createEnv();
 		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
 			method: "POST",
 			body: JSON.stringify(baseNotification),
 		}), env);
 		expect(response.status).toBe(400);
-		expect(await response.json()).toMatchObject({ code: "ipaws_signature_mismatch" });
+		const responseBody = await response.json();
+		expect(responseBody).toMatchObject({ code: "ipaws_signature_mismatch" });
+		expect(JSON.stringify(responseBody)).not.toContain(baseNotification.MessageId);
 		expect(verify).toHaveBeenCalled();
-		const record = JSON.parse(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`) ?? "{}");
+		const invalidEntry = [...env.BEACH_DATA.map.entries()].find(([key]) => key.startsWith("ipaws:invalid-signature:"));
+		expect(invalidEntry).toBeDefined();
+		const record = JSON.parse(invalidEntry?.[1] ?? "{}");
 		expect(record).toMatchObject({
 			processingState: "signature_invalid",
 			signatureResult: "failure",
 			parseStatus: "parse_failed",
 			parseError: "invalid_signature_untrusted_payload",
-			rawMessage: "",
-			messageBody: null,
 		});
 		expect(record.rawMessageDigestSha256).toMatch(/^[a-f0-9]{64}$/);
-		expect(JSON.stringify(record)).not.toContain(baseNotification.Message);
+		const retained = JSON.stringify([...env.BEACH_DATA.map.entries()]);
+		expect(retained).not.toContain(baseNotification.MessageId);
+		expect(retained).not.toContain(baseNotification.Message);
+		expect(retained).not.toContain(baseNotification.Signature);
+		expect(retained).not.toContain(baseNotification.SigningCertURL);
+		expect(JSON.stringify(warn.mock.calls)).not.toContain(baseNotification.MessageId);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(baseNotification.MessageId);
+		expect(env.metricsCorrelations).toEqual([]);
+		expect(record).not.toHaveProperty("messageId");
+		expect(record).not.toHaveProperty("rawMessage");
+		expect(record).not.toHaveProperty("messageBody");
 		expect(env.metricsEvents.at(-1)).toEqual(expect.objectContaining({
 			processingStages: expect.arrayContaining(["certificate_retrieval", "persistence", "security_validation"]),
 			failureStage: "security_validation",
 			failureClass: "signature_invalid",
 		}));
+	});
+
+	it("retains MessageId only for successfully authenticated staging records", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING }),
+		}), env);
+		expect(response.status).toBe(200);
+		expect(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`)).toContain(baseNotification.MessageId);
+		expect(env.BEACH_DATA.map.get(`ipaws:normalized:${baseNotification.MessageId}`)).toContain(baseNotification.MessageId);
+		expect(JSON.stringify(await response.json())).not.toContain(baseNotification.MessageId);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(baseNotification.MessageId);
 	});
 
 	it("retains a signed malformed CAP payload as parse_failed without normalized output", async () => {

@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import type { IpawsCapParseResult, IpawsHealthState, IpawsIngressReceipt, IpawsIngestionRecord, IpawsProcessingState, IpawsSnsMessage } from "./types";
 
 const INTAKE_KEY_PREFIX = "ipaws:ingest:";
+const INVALID_SIGNATURE_KEY_PREFIX = "ipaws:invalid-signature:";
 const NORMALIZED_KEY_PREFIX = "ipaws:normalized:";
 const HEALTH_KEY = "ipaws:health:v1";
 const SUBSCRIPTION_STATE_KEY = "ipaws:subscription:state";
@@ -77,6 +78,28 @@ export async function upsertIngestionRecord(
 
 	await writeIngestionRecord(env, record, recordTtlSeconds);
 	return { duplicate: false, record };
+}
+
+export async function writeInvalidSignatureRecord(
+	env: Pick<Env, "BEACH_DATA">,
+	message: IpawsSnsMessage,
+	rawMessageDigestSha256: string,
+	recordTtlSeconds: number,
+): Promise<void> {
+	const now = new Date().toISOString();
+	await env.BEACH_DATA.put(`${INVALID_SIGNATURE_KEY_PREFIX}${crypto.randomUUID()}`, JSON.stringify({
+		type: message.Type,
+		topicArn: message.TopicArn,
+		messageTimestamp: message.Timestamp,
+		receivedAt: now,
+		signatureVersion: message.SignatureVersion,
+		signatureResult: "failure",
+		processingState: "signature_invalid",
+		parseStatus: "parse_failed",
+		parseError: "invalid_signature_untrusted_payload",
+		rawMessageDigestSha256,
+		updatedAt: now,
+	}), { expirationTtl: recordTtlSeconds });
 }
 
 export async function updateIngestionRecord(

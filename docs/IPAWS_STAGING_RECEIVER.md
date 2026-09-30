@@ -43,7 +43,9 @@ The metrics schema contains only fixed, low-cardinality dimensions:
 - privacy-preserving resolution of an initial-claim failure by a later accepted delivery;
 - retryable/permanent rejection, unexpected exceptions, bounded latency totals/max/histogram, and the latest successful-delivery timestamp.
 
-Metrics never accept or persist raw SNS/CAP bodies, arbitrary error text, personal information, message or CAP identifiers, ownership tokens, signatures, certificates, URLs, TopicArns, or secrets. An event with extra fields is reduced to the allowlisted counters before storage. Latency is clamped to five minutes and reported in fixed buckets.
+Metric events, buckets, and reports never accept or persist raw SNS/CAP bodies, arbitrary error text, personal information, message or CAP identifiers, ownership tokens, signatures, certificates, URLs, TopicArns, or secrets. An event with extra fields is reduced to the allowlisted counters before storage. Latency is clamped to five minutes and reported in fixed buckets.
+
+The MessageId prohibition is scoped to observability and unauthenticated input: MessageId never appears in metrics, retry-correlation markers, public reports, logs, warnings, or callback response bodies. Successfully authenticated SNS deliveries continue to retain MessageId in the existing access-controlled staging ingestion and normalized records for traceability and idempotent processing; this change does not expand that retention or access. Invalid-signature records use a random internal storage key and retain no MessageId or raw body.
 
 Storage is bounded to at most **840 hourly buckets**: the current UTC hour plus the preceding 839 hours (35 days). Empty hours do not create buckets. Reports exclude buckets outside retention immediately, and the next metrics update physically evicts them. A bucket contains only fixed counters and latency aggregates; at the current schema its serialized upper bound is under 8 KiB, so 840 full buckets are conservatively under 6.6 MiB. Correlation state is separately capped at 256 markers and three rotating 32-byte HMAC keys.
 
@@ -88,7 +90,7 @@ All staging controls are environment-driven and set in Wrangler files:
 
 ## Persistence and idempotency
 
-The persistence key uses `ipaws:ingest:<MessageId>` and stores:
+For successfully authenticated SNS messages, the persistence key uses `ipaws:ingest:<MessageId>` and stores:
 
 - generated internal record ID
 - SNS `MessageId`, `Type`, `TopicArn`, and `Timestamp`
@@ -106,7 +108,7 @@ The Durable Object claim and KV outputs are not one transaction. Every post-clai
 - No IPAWS user-facing alert publication is added in this phase.
 - No notification push integration is added in this phase.
 - No FEMA endpoint is contacted from this code.
-- Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature records retain only envelope metadata and a SHA-256 digest of the untrusted message body; the raw body is not stored or parsed.
+- Signed malformed CAP payloads are retained as bounded raw `parse_failed` records and never become normalized alerts. Invalid-signature records use random internal keys and retain only bounded envelope metadata and a SHA-256 digest of the untrusted message body; MessageId and the raw body are not stored or parsed.
 - Geographic filtering and relevance routing are intentionally deferred.
 - Best-effort metrics can undercount if the metrics Durable Object call fails after the receiver has determined its response. Cloudflare request analytics are the independent denominator; neither source proves what FEMA attempted before Cloudflare accepted a request.
 
