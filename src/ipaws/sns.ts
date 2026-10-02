@@ -1,10 +1,10 @@
 import { importX509 } from "jose";
+import { X509Certificate } from "node:crypto";
 import { logWarn } from "../utils/logger";
 import { validateSafeHttpsUrl } from "../utils/http";
 import type { IpawsSnsMessage, IpawsSnsNotification, IpawsSnsSubscriptionConfirmation, IpawsSnsType, IpawsSignatureResult } from "./types";
 import { SNS_TYPES } from "./types";
 
-const SIGNING_CERT_DOMAINS = ["amazonaws.com"];
 const MAX_CERT_BYTES = 96_000;
 const AWS_FETCH_TIMEOUT_MS = 5_000;
 const SIGNATURE_VERSION_ALGORITHMS: Record<string, { hash: string }> = {
@@ -12,14 +12,22 @@ const SIGNATURE_VERSION_ALGORITHMS: Record<string, { hash: string }> = {
 	"2": { hash: "SHA-256" },
 };
 
-async function fetchWithTimeout(input: string, init: RequestInit<RequestInitCfProperties>): Promise<Response> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), AWS_FETCH_TIMEOUT_MS);
-	try {
-		return await fetch(input, { ...init, signal: controller.signal });
-	} finally {
-		clearTimeout(timeout);
-	}
+async function importSnsVerificationKey(pem: string, hash: string): Promise<CryptoKey> {
+	// jose expects a JOSE/JWA algorithm identifier here, not a Web Crypto
+	// algorithm name. RS256 extracts the RSA SPKI from the X.509 certificate.
+	const rsaSha256Key = await importX509(pem, "RS256", { extractable: true });
+	if (hash === "SHA-256") return rsaSha256Key;
+
+	// Web Crypto binds the digest to an RSASSA-PKCS1-v1_5 CryptoKey. SNS
+	// SignatureVersion 1 therefore needs the same SPKI imported with SHA-1.
+	const spki = await crypto.subtle.exportKey("spki", rsaSha256Key);
+	return crypto.subtle.importKey(
+		"spki",
+		spki,
+		{ name: "RSASSA-PKCS1-v1_5", hash: "SHA-1" },
+		false,
+		["verify"],
+	);
 }
 
 export class IpawsSnsError extends Error {
@@ -31,7 +39,7 @@ export class IpawsSnsError extends Error {
 
 export function validateType(value: string): IpawsSnsType {
 	if (SNS_TYPES.includes(value as IpawsSnsType)) return value as IpawsSnsType;
-	throw new IpawsSnsError("ipaws_unsupported_sns_type", `Unsupported SNS Type: ${value}`);
+	throw new IpawsSnsError("ipaws_unsupported_sns_type", "SNS Type is unsupported.");
 }
 
 function requireString(value: unknown, label: string): string {
@@ -44,26 +52,68 @@ function requireString(value: unknown, label: string): string {
 function validateSignedDate(value: string): string {
 	const parsed = Date.parse(value);
 	if (Number.isNaN(parsed)) throw new IpawsSnsError("ipaws_invalid_timestamp", "Timestamp is not valid ISO-8601.");
-	return new Date(parsed).toISOString();
+	return value;
+}
+
+export function validateSnsTimestamp(value: string, maxAgeSeconds: number, maxFutureSkewSeconds: number, nowMs = Date.now()): void {
+	const timestampMs = Date.parse(value);
+	if (Number.isNaN(timestampMs)) throw new IpawsSnsError("ipaws_invalid_timestamp", "Timestamp is not valid ISO-8601.");
+	if (timestampMs < nowMs - maxAgeSeconds * 1_000) {
+		throw new IpawsSnsError("ipaws_stale_timestamp", "SNS Timestamp is older than the configured acceptance window.");
+	}
+	if (timestampMs > nowMs + maxFutureSkewSeconds * 1_000) {
+		throw new IpawsSnsError("ipaws_future_timestamp", "SNS Timestamp exceeds the configured future clock-skew allowance.");
+	}
+}
+
+export function validateSnsCertificate(pem: string, nowMs = Date.now()): X509Certificate {
+	let certificate: X509Certificate;
+	try {
+		certificate = new X509Certificate(pem);
+	} catch {
+		throw new IpawsSnsError("ipaws_invalid_cert", "Signing certificate is not valid X.509.");
+	}
+	const notBefore = Date.parse(certificate.validFrom);
+	const notAfter = Date.parse(certificate.validTo);
+	if (!Number.isFinite(notBefore) || !Number.isFinite(notAfter) || nowMs < notBefore) {
+		throw new IpawsSnsError("ipaws_cert_not_yet_valid", "SNS signing certificate is not yet valid.");
+	}
+	if (nowMs > notAfter) {
+		throw new IpawsSnsError("ipaws_cert_expired", "SNS signing certificate has expired.");
+	}
+	if (certificate.ca) throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must be a leaf certificate.");
+	const snsSubject = /sns(?:\.[a-z0-9-]+)?\.amazonaws\.com|Amazon Simple Notification Service|SimpleNotificationService/i.test(certificate.subject);
+	const awsIssuer = /Amazon|Starfield/i.test(certificate.issuer);
+	if (!snsSubject && !awsIssuer) {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate identity is not attributable to AWS SNS.");
+	}
+	if (certificate.publicKey.asymmetricKeyType !== "rsa") {
+		throw new IpawsSnsError("ipaws_untrusted_cert", "SNS signing certificate must use an RSA public key.");
+	}
+	return certificate;
 }
 
 function validateAwsDomain(hostname: string): boolean {
-	return SIGNING_CERT_DOMAINS.some((suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`));
+	return /^sns\.[a-z0-9-]+\.amazonaws\.com$/i.test(hostname);
 }
 
 function validateSigningCertPath(pathname: string): void {
-	if (!pathname.startsWith("/SimpleNotificationService-") || !pathname.toLowerCase().endsWith(".pem")) {
+	if (!/^\/SimpleNotificationService-[A-Za-z0-9_-]+\.pem$/.test(pathname)) {
 		throw new IpawsSnsError("ipaws_invalid_cert_path", "SigningCertURL path is invalid for AWS SNS certificates.");
 	}
 }
 
 function validateAwsUrl(url: URL): void {
-	validateSafeHttpsUrl(url);
+	try {
+		validateSafeHttpsUrl(url);
+	} catch {
+		throw new IpawsSnsError("ipaws_unsafe_aws_url", "unsafe_upstream_url: AWS URL must use a safe HTTPS origin.");
+	}
 	if (url.username || url.password || url.hash || url.port) {
 		throw new IpawsSnsError("ipaws_unsafe_aws_url", "AWS URL must be HTTPS with no credentials, hash, or port.");
 	}
 	if (!validateAwsDomain(url.hostname)) {
-		throw new IpawsSnsError("ipaws_invalid_aws_hostname", `Unexpected AWS hostname: ${url.hostname}`);
+		throw new IpawsSnsError("ipaws_invalid_aws_hostname", "Signing URL hostname is not an approved SNS endpoint.");
 	}
 }
 
@@ -100,7 +150,7 @@ export function validateSnsRequired(message: IpawsSnsMessage): void {
 	requireString(message.Signature, "Signature");
 	requireString(message.SignatureVersion, "SignatureVersion");
 	if (!(message.SignatureVersion in SIGNATURE_VERSION_ALGORITHMS)) {
-		throw new IpawsSnsError("ipaws_unsupported_signature_version", `Unsupported SignatureVersion: ${message.SignatureVersion}`);
+		throw new IpawsSnsError("ipaws_unsupported_signature_version", "SNS SignatureVersion is unsupported.");
 	}
 	if (message.Type === "SubscriptionConfirmation" || message.Type === "UnsubscribeConfirmation") {
 		requireString(message.Token, "Token");
@@ -116,40 +166,127 @@ function decodeBase64(value: string): Uint8Array {
 	return bytes;
 }
 
-async function readCertificate(url: string): Promise<string | null> {
+type CertificateReadResult =
+	| { ok: true; pem: string }
+	| { ok: false; reason: string; retryable: boolean };
+
+function cancelBody(body: ReadableStream<Uint8Array> | null, reason: string): void {
+	if (!body) return;
+	void body.cancel(reason).catch(() => undefined);
+}
+
+async function readBoundedUtf8(response: Response, signal: AbortSignal): Promise<CertificateReadResult> {
+	const declaredLength = response.headers.get("content-length");
+	if (declaredLength) {
+		const parsedLength = Number.parseInt(declaredLength, 10);
+		if (Number.isFinite(parsedLength) && parsedLength > MAX_CERT_BYTES) {
+			cancelBody(response.body, "certificate_too_large");
+			return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
+		}
+	}
+	if (!response.body) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
+	const reader = response.body.getReader();
+	let readerCancellationStarted = false;
+	const cancelReader = (reason: string) => {
+		if (readerCancellationStarted) return;
+		readerCancellationStarted = true;
+		try { void reader.cancel(reason).catch(() => undefined); } catch { /* Preserve the primary validation result. */ }
+	};
+	let rejectAborted: (reason: unknown) => void = () => undefined;
+	const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
+	let abortTriggered = false;
+	const abortReader = () => {
+		if (abortTriggered) return;
+		abortTriggered = true;
+		rejectAborted(new DOMException("SNS certificate download timed out.", "AbortError"));
+	};
+	signal.addEventListener("abort", abortReader, { once: true });
+	if (signal.aborted) abortReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await Promise.race([reader.read(), aborted]);
+			if (done) break;
+			total += value.byteLength;
+			if (total > MAX_CERT_BYTES) {
+				cancelReader("certificate_too_large");
+				return { ok: false, reason: "ipaws_cert_too_large", retryable: false };
+			}
+			chunks.push(value);
+		}
+	} finally {
+		signal.removeEventListener("abort", abortReader);
+		if (abortTriggered) cancelReader("certificate_timeout");
+		try { reader.releaseLock(); } catch { /* Do not replace the primary read or timeout result. */ }
+	}
+	if (total === 0) return { ok: false, reason: "ipaws_cert_fetch_failed", retryable: false };
+	const bytes = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	try {
+		return { ok: true, pem: new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes) };
+	} catch {
+		return { ok: false, reason: "ipaws_invalid_cert", retryable: false };
+	}
+}
+
+async function readCertificate(url: string): Promise<CertificateReadResult> {
 	const certUrl = new URL(url);
 	validateAwsUrl(certUrl);
 	validateSigningCertPath(certUrl.pathname);
+	if (certUrl.search) {
+		throw new IpawsSnsError("ipaws_invalid_cert_path", "SigningCertURL must not contain a query string.");
+	}
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), AWS_FETCH_TIMEOUT_MS);
 	try {
-		const certResponse = await fetchWithTimeout(certUrl.toString(), { method: "GET", redirect: "manual" });
-		if (!certResponse.ok) return null;
-		const text = await certResponse.text();
-		if (text.length === 0 || text.length > MAX_CERT_BYTES) return null;
-		return text;
+		const certResponse = await fetch(certUrl.toString(), { method: "GET", redirect: "manual", signal: controller.signal });
+		if (!certResponse.ok) {
+			cancelBody(certResponse.body, "certificate_http_error");
+			return {
+				ok: false,
+				reason: "ipaws_cert_fetch_failed",
+				retryable: certResponse.status === 429 || certResponse.status >= 500,
+			};
+		}
+		return await readBoundedUtf8(certResponse, controller.signal);
 	} catch (error) {
 		logWarn("IPAWS", "Signing certificate fetch failed", {
 			err: error instanceof Error ? error.name : "unknown",
 		});
-		return null;
+		return { ok: false, reason: "ipaws_cert_fetch_unavailable", retryable: true };
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
 export async function verifySnsSignature(message: IpawsSnsMessage): Promise<IpawsSignatureResult> {
 	validateSnsRequired(message);
-	let pem: string | null;
+	let certificate: CertificateReadResult;
 	try {
-		pem = await readCertificate(message.SigningCertURL);
+		certificate = await readCertificate(message.SigningCertURL);
 	} catch (error) {
 		if (error instanceof IpawsSnsError) {
 			throw error;
 		}
-		return { valid: false, reason: "ipaws_invalid_cert" };
+		return { valid: false, reason: "ipaws_invalid_cert", retryable: false };
 	}
-	if (!pem) return { valid: false, reason: "ipaws_cert_fetch_failed" };
+	if (!certificate.ok) return { valid: false, reason: certificate.reason, retryable: certificate.retryable };
+	const pem = certificate.pem;
+	try {
+		validateSnsCertificate(pem);
+	} catch (error) {
+		return { valid: false, reason: error instanceof IpawsSnsError ? error.code : "ipaws_invalid_cert" };
+	}
 
+	const algorithm = SIGNATURE_VERSION_ALGORITHMS[message.SignatureVersion];
 	let key: CryptoKey;
 	try {
-		key = await importX509(pem, "RSASSA-PKCS1-v1_5");
+		key = await importSnsVerificationKey(pem, algorithm.hash);
 	} catch {
 		return { valid: false, reason: "ipaws_invalid_cert" };
 	}
@@ -161,14 +298,13 @@ export async function verifySnsSignature(message: IpawsSnsMessage): Promise<Ipaw
 		return { valid: false, reason: "ipaws_invalid_signature" };
 	}
 
-	const algorithm = SIGNATURE_VERSION_ALGORITHMS[message.SignatureVersion];
 	const data = new TextEncoder().encode(parseSigningString(message));
-	const verified = await crypto.subtle.verify(
-		{ name: "RSASSA-PKCS1-v1_5", hash: { name: algorithm.hash } },
-		key,
-		signature,
-		data,
-	);
+	let verified: boolean;
+	try {
+		verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, data);
+	} catch {
+		return { valid: false, reason: "ipaws_invalid_signature", algorithm: algorithm.hash };
+	}
 	return {
 		valid: Boolean(verified),
 		reason: verified ? undefined : "ipaws_signature_mismatch",
@@ -198,7 +334,7 @@ export function parseSnsMessage(value: unknown): IpawsSnsMessage {
 	return parsed;
 }
 
-export function validateSubscribeUrl(value: string): void {
+export function validateSubscribeUrl(value: string, expectedTopicArn?: string, expectedToken?: string): URL {
 	let url: URL;
 	try {
 		url = new URL(value);
@@ -212,7 +348,19 @@ export function validateSubscribeUrl(value: string): void {
 	if (url.pathname !== "/") {
 		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL path is malformed.");
 	}
-	if (!url.searchParams.get("Action") || !url.searchParams.get("TopicArn") || !url.searchParams.get("Token")) {
-		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL query is malformed.");
+	for (const key of ["Action", "TopicArn", "Token"] as const) {
+		if (url.searchParams.getAll(key).length !== 1 || !url.searchParams.get(key)) {
+			throw new IpawsSnsError("ipaws_invalid_subscribe_url", `SubscribeURL must contain exactly one ${key} value.`);
+		}
 	}
+	if (url.searchParams.get("Action") !== "ConfirmSubscription") {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL Action must be ConfirmSubscription.");
+	}
+	if (expectedTopicArn !== undefined && url.searchParams.get("TopicArn") !== expectedTopicArn) {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL TopicArn does not match the signed envelope.");
+	}
+	if (expectedToken !== undefined && url.searchParams.get("Token") !== expectedToken) {
+		throw new IpawsSnsError("ipaws_invalid_subscribe_url", "SubscribeURL Token does not match the signed envelope.");
+	}
+	return url;
 }

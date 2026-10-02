@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type IpawsStandaloneEnv } from "../src/ipaws/worker";
+import { readFileSync } from "node:fs";
 
 function createEnvironment(): IpawsStandaloneEnv & { BEACH_DATA: { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> } } {
 	const BEACH_DATA = {
@@ -22,25 +23,29 @@ function request(path: string, method = "GET", body?: string): Request {
 	return new Request(`https://ipaws.example${path}`, { method, body });
 }
 
+const executionContext = { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} } as unknown as ExecutionContext;
+
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
+	vi.clearAllMocks();
 });
 
 describe("standalone IPAWS Worker", () => {
 	it("routes callback POST requests to the disabled receiver", async () => {
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), createEnvironment());
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), createEnvironment(), executionContext);
 		expect(response.status).toBe(503);
 		expect(await response.json()).toMatchObject({ code: "ipaws_disabled" });
 	});
 
 	it.each(["GET", "PUT"])("rejects %s callback requests with Allow: POST", async (method) => {
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", method), createEnvironment());
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", method), createEnvironment(), executionContext);
 		expect(response.status).toBe(405);
 		expect(response.headers.get("Allow")).toBe("POST");
 	});
 
 	it.each(["/unknown", "/v1/beaches", "/admin/provider-health", "/v1/information-reports"])("does not expose %s", async (path) => {
-		const response = await worker.fetch(request(path), createEnvironment());
+		const response = await worker.fetch(request(path), createEnvironment(), executionContext);
 		expect(response.status).toBe(404);
 	});
 
@@ -48,9 +53,20 @@ describe("standalone IPAWS Worker", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const env = createEnvironment();
-		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env);
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env, executionContext);
 		expect(response.status).toBe(503);
 		expect(fetchMock).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
+	});
+
+	it.each(["IPAWS_NOTIFICATIONS_ENABLED", "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"] as const)("fails closed if %s is enabled in production", async (setting) => {
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		env[setting] = "true";
+		const response = await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env, executionContext);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toMatchObject({ code: "ipaws_unsafe_production_effects" });
 		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
 		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
 	});
@@ -61,6 +77,105 @@ describe("standalone IPAWS Worker", () => {
 		expect("REFRESH_COORDINATOR" in env).toBe(false);
 		expect("VERIFICATION_COORDINATOR" in env).toBe(false);
 		expect("VERIFICATION_ALERT_EMAIL" in env).toBe(false);
-		expect(await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env)).toHaveProperty("status", 503);
+		expect(await worker.fetch(request("/v1/ipaws/pubsub", "POST", "{}"), env, executionContext)).toHaveProperty("status", 503);
+	});
+
+	it("keeps the deployed staging configuration isolated from notification infrastructure", () => {
+		const config = readFileSync(new URL("../wrangler.ipaws.staging.jsonc", import.meta.url), "utf8");
+		expect(config).toContain('"name": "alabamabeachflag-ipaws-staging"');
+		expect(config).toContain('"IPAWS_ENVIRONMENT": "staging"');
+		expect(config).not.toMatch(/send_email|notification_recipient|production/i);
+	});
+
+	it("serves only a sanitized staging metrics report with no-store caching", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
+		const env = createEnvironment();
+		const reportFetch = vi.fn(async () => Response.json({
+			schemaVersion: 2, environment: "staging", retentionDays: 35, maxWindowHours: 168, windowStart: "2026-09-29T00:00:00.000Z", windowEnd: "2026-09-30T00:00:00.000Z",
+			counters: {}, latency: { count: 0, sumMs: 0, maxMs: 0, buckets: {}, averageMs: null },
+			lastSuccessfulDeliveryAt: null, latestFailure: null, limitations: [],
+		}));
+		env.IPAWS_IDEMPOTENCY = {
+			idFromName: vi.fn(() => "metrics-id"),
+			get: vi.fn(() => ({ fetch: reportFetch })),
+		} as unknown as DurableObjectNamespace;
+		let cached: Response | undefined;
+		const cache = {
+			match: vi.fn(async () => cached?.clone()),
+			put: vi.fn(async (_key: RequestInfo | URL, value: Response) => { cached = value.clone(); }),
+		};
+		vi.stubGlobal("caches", { default: cache });
+		const query = "start=2026-09-29T00%3A00%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z";
+		const response = await worker.fetch(request(`/v1/ipaws/metrics?${query}`), env, executionContext);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(response.headers.get("X-IPAWS-Metrics-Cache")).toBe("miss");
+		expect(await response.json()).toMatchObject({ schemaVersion: 2, environment: "staging", retentionDays: 35 });
+		const cachedResponse = await worker.fetch(request("/v1/ipaws/metrics?end=2026-09-30T00%3A00%3A00.000Z&start=2026-09-29T00%3A00%3A00.000Z"), env, executionContext);
+		expect(cachedResponse.headers.get("X-IPAWS-Metrics-Cache")).toBe("hit");
+		expect(reportFetch).toHaveBeenCalledTimes(1);
+		expect(String(cache.match.mock.calls[0]?.[0])).toContain("/v2/report?start=");
+		expect(cache.match.mock.calls[0]?.[0]).toBe(cache.match.mock.calls[1]?.[0]);
+		expect((await worker.fetch(request(`/v1/ipaws/metrics?${query}&attacker=cache-bypass`), env, executionContext)).status).toBe(400);
+	});
+
+	it.each([undefined, "", "stagng", "preview"])("fails closed before metrics access or caching for invalid environment %s", async (environment) => {
+		const env = createEnvironment();
+		if (environment === undefined) delete (env as Partial<IpawsStandaloneEnv>).IPAWS_ENVIRONMENT;
+		else env.IPAWS_ENVIRONMENT = environment;
+		const cache = { match: vi.fn(), put: vi.fn() };
+		vi.stubGlobal("caches", { default: cache });
+		const response = await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_environment_invalid" });
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(cache.match).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
+	});
+
+	it("rejects partial, non-canonical, inverted, and oversized metrics windows", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
+		const env = createEnvironment();
+		for (const query of [
+			"start=2026-09-29T00%3A00%3A00.000Z",
+			"start=2026-09-29T00%3A00%3A00.000Z&start=2026-09-29T01%3A00%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z",
+			"start=2026-09-29T00%3A01%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z",
+			"start=2026-09-30T00%3A00%3A00.000Z&end=2026-09-29T00%3A00%3A00.000Z",
+			"start=2026-09-01T00%3A00%3A00.000Z&end=2026-09-30T00%3A00%3A00.000Z",
+			"start=2026-08-26T12%3A00%3A00.000Z&end=2026-08-26T13%3A00%3A00.000Z",
+			"start=2026-09-30T13%3A00%3A00.000Z&end=2026-09-30T14%3A00%3A00.000Z",
+		]) expect((await worker.fetch(request(`/v1/ipaws/metrics?${query}`), env, executionContext)).status).toBe(400);
+	});
+
+	it("requires a configured production metrics credential", async () => {
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		expect(await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext)).toHaveProperty("status", 503);
+		env.IPAWS_METRICS_READ_TOKEN = "x".repeat(31);
+		const shortCredential = new Request("https://ipaws.example/v1/ipaws/metrics", { headers: { Authorization: `Bearer ${env.IPAWS_METRICS_READ_TOKEN}` } });
+		expect(await worker.fetch(shortCredential, env, executionContext)).toHaveProperty("status", 401);
+	});
+
+	it("serves aggregate production metrics only with bearer authentication and never caches them", async () => {
+		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		env.IPAWS_METRICS_READ_TOKEN = "a-production-metrics-test-token-at-least-32-bytes";
+		const reportFetch = vi.fn(async () => Response.json({
+			schemaVersion: 2, environment: "staging", retentionDays: 35, maxWindowHours: 168,
+			windowStart: "2026-09-30T11:00:00.000Z", windowEnd: "2026-09-30T12:00:00.000Z",
+			counters: {}, latency: { count: 0, sumMs: 0, maxMs: 0, buckets: {}, averageMs: null },
+			lastSuccessfulDeliveryAt: null, latestFailure: null, limitations: [],
+		}));
+		env.IPAWS_IDEMPOTENCY = { idFromName: vi.fn(() => "metrics-id"), get: vi.fn(() => ({ fetch: reportFetch })) } as unknown as DurableObjectNamespace;
+		const query = "start=2026-09-30T11%3A00%3A00.000Z&end=2026-09-30T12%3A00%3A00.000Z";
+		expect((await worker.fetch(request(`/v1/ipaws/metrics?${query}`), env, executionContext)).status).toBe(401);
+		const authorized = new Request(`https://ipaws.example/v1/ipaws/metrics?${query}`, { headers: { Authorization: `Bearer ${env.IPAWS_METRICS_READ_TOKEN}` } });
+		const response = await worker.fetch(authorized, env, executionContext);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(response.headers.get("X-IPAWS-Metrics-Cache")).toBe("miss");
+		expect(await response.json()).toMatchObject({ environment: "production", counters: {} });
+		expect(reportFetch).toHaveBeenCalledTimes(1);
 	});
 });

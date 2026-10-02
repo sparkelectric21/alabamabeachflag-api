@@ -1,0 +1,44 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// Repository template only. Deployment policy rejects every placeholder below.
+	"name": "ipaws-production-placeholder",
+	"main": "src/ipaws/worker.ts",
+	"compatibility_date": "2026-06-27",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	"routes": [
+		{ "pattern": "ipaws-production.invalid/v1/ipaws/*", "zone_name": "ipaws-production.invalid" }
+	],
+	"kv_namespaces": [
+		{
+			"binding": "BEACH_DATA",
+			"id": "00000000000000000000000000000000"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "IPAWS_IDEMPOTENCY", "class_name": "IpawsIdempotencyCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "ipaws-production-idempotency-v1", "new_sqlite_classes": ["IpawsIdempotencyCoordinator"] }
+	],
+	"vars": {
+		"IPAWS_INGESTION_ENABLED": "false",
+		"IPAWS_ENVIRONMENT": "production",
+		"IPAWS_ALLOWED_TOPIC_ARNS": "__IPAWS_PRODUCTION_TOPIC_ARN__",
+		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false",
+		"IPAWS_NOTIFICATIONS_ENABLED": "false",
+		"IPAWS_DOWNSTREAM_EFFECTS_ENABLED": "false",
+		"IPAWS_PRODUCTION_ENDPOINT": "https://ipaws-production.invalid/v1/ipaws/pubsub",
+		"IPAWS_HEALTH_TTL_SECONDS": "604800",
+		"IPAWS_RECORD_TTL_SECONDS": "604800",
+		"IPAWS_SUBSCRIPTION_TTL_SECONDS": "604800",
+		"IPAWS_PARSE_BYTE_LIMIT": "262144",
+		"IPAWS_SNS_MAX_AGE_SECONDS": "3600",
+		"IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS": "300"
+	}
+}

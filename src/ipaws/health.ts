@@ -29,7 +29,7 @@ export async function readIpawsHealthSnapshot(env: Pick<Env, "BEACH_DATA">): Pro
 		lastValidDeliveryAt: existing.lastValidDeliveryAt,
 		lastPayloadAt: existing.lastPayloadAt,
 		lastParseFailureAt: existing.lastParseFailureAt,
-		subscriptionState: existing.subscriptionState,
+		subscriptionState: base.subscriptionState === "unknown" ? existing.subscriptionState : base.subscriptionState,
 		recentOutcomes: existing.recentOutcomes.slice(-8),
 		updatedAt: now,
 	};

@@ -2,6 +2,8 @@ import type { Env } from "../types";
 import type { IpawsCapParseResult, IpawsHealthState, IpawsIngressReceipt, IpawsIngestionRecord, IpawsProcessingState, IpawsSnsMessage } from "./types";
 
 const INTAKE_KEY_PREFIX = "ipaws:ingest:";
+const INVALID_SIGNATURE_KEY_PREFIX = "ipaws:invalid-signature:";
+const NORMALIZED_KEY_PREFIX = "ipaws:normalized:";
 const HEALTH_KEY = "ipaws:health:v1";
 const SUBSCRIPTION_STATE_KEY = "ipaws:subscription:state";
 
@@ -23,6 +25,10 @@ export async function readIngestionRecord(env: Pick<Env, "BEACH_DATA">, messageI
 	return safeParse(await env.BEACH_DATA.get(toKey(messageId), "text"));
 }
 
+export async function readNormalizedAlert(env: Pick<Env, "BEACH_DATA">, messageId: string): Promise<Record<string, unknown> | null> {
+	return safeParse(await env.BEACH_DATA.get(`${NORMALIZED_KEY_PREFIX}${messageId}`, "text"));
+}
+
 export async function writeIngestionRecord(
 	env: Pick<Env, "BEACH_DATA">,
 	record: IpawsIngestionRecord,
@@ -34,19 +40,34 @@ export async function writeIngestionRecord(
 export async function upsertIngestionRecord(
 	env: Pick<Env, "BEACH_DATA">,
 	message: IpawsSnsMessage,
+	environment: "staging" | "production",
 	initialState: IpawsProcessingState,
 	rawMessage: string,
 	signatureResult: "success" | "failure" | "not_attempted",
 	parseResult: IpawsCapParseResult,
 	messageTopicArn: string,
 	recordTtlSeconds: number,
+	rawMessageDigestSha256: string | null = null,
 ): Promise<IpawsIngressReceipt> {
 	const existing = await readIngestionRecord(env, message.MessageId);
-	if (existing) return { duplicate: true, record: existing };
+	if (existing) {
+		if (existing.environment === environment) return { duplicate: true, record: existing };
+		if (existing.environment !== undefined) throw new Error("ipaws_ingestion_environment_mismatch");
+		if (environment !== "staging") throw new Error("ipaws_legacy_ingestion_environment_unverified");
+		// Compatibility for authenticated records written before environment provenance existed.
+		// Backfill only when the currently verified envelope proves this is the same delivery.
+		if (existing.messageId !== message.MessageId || existing.topicArn !== messageTopicArn || existing.rawMessage !== rawMessage) {
+			throw new Error("ipaws_legacy_ingestion_record_mismatch");
+		}
+		const upgraded = { ...existing, environment };
+		await writeIngestionRecord(env, upgraded, recordTtlSeconds);
+		return { duplicate: true, record: upgraded };
+	}
 
 	const now = new Date().toISOString();
 	const record: IpawsIngestionRecord = {
 		id: crypto.randomUUID(),
+		environment,
 		messageId: message.MessageId,
 		type: message.Type,
 		topicArn: messageTopicArn,
@@ -58,8 +79,9 @@ export async function upsertIngestionRecord(
 		signatureResult,
 		parseStatus: parseResult.status,
 		rawMessage,
+		rawMessageDigestSha256,
 		messageBody: parseResult.message ?? null,
-		parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
+		parseError: parseResult.status === "parsed" ? null : (parseResult.reason ?? parseResult.status),
 		parseResultSummary: parseResult.status,
 		subscribeUrl: message.Type === "Notification" ? null : message.SubscribeURL ?? null,
 		capIdentifier: parseResult.message?.parsed.identifier ?? null,
@@ -70,6 +92,28 @@ export async function upsertIngestionRecord(
 
 	await writeIngestionRecord(env, record, recordTtlSeconds);
 	return { duplicate: false, record };
+}
+
+export async function writeInvalidSignatureRecord(
+	env: Pick<Env, "BEACH_DATA">,
+	message: IpawsSnsMessage,
+	rawMessageDigestSha256: string,
+	recordTtlSeconds: number,
+): Promise<void> {
+	const now = new Date().toISOString();
+	await env.BEACH_DATA.put(`${INVALID_SIGNATURE_KEY_PREFIX}${crypto.randomUUID()}`, JSON.stringify({
+		type: message.Type,
+		topicArn: message.TopicArn,
+		messageTimestamp: message.Timestamp,
+		receivedAt: now,
+		signatureVersion: message.SignatureVersion,
+		signatureResult: "failure",
+		processingState: "signature_invalid",
+		parseStatus: "parse_failed",
+		parseError: "invalid_signature_untrusted_payload",
+		rawMessageDigestSha256,
+		updatedAt: now,
+	}), { expirationTtl: recordTtlSeconds });
 }
 
 export async function updateIngestionRecord(
