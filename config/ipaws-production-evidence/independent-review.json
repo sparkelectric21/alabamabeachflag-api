@@ -1,0 +1,8 @@
+{
+  "reviewPhase": "disabled-baseline-final-evidence",
+  "scope": "configuration-evidence-governance-and-secret-readiness-contract",
+  "reviewedAtUtc": "2026-10-02T21:45:00Z",
+  "verdict": "approve",
+  "exactCommitAcceptance": "external-workflow-input-after-merge",
+  "reviewedHeadStoredInManifest": false
+}

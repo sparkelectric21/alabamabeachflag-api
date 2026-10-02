@@ -1,8 +1,8 @@
 {
-  "observedAtUtc": "2026-10-02T20:14:00Z",
+  "observedAtUtc": "2026-10-02T21:43:00Z",
   "environment": "ipaws-production",
   "deploymentBranches": ["main"],
-  "secretNames": ["CLOUDFLARE_API_TOKEN"],
+  "secretNames": ["CLOUDFLARE_API_TOKEN", "IPAWS_METRICS_READ_TOKEN"],
   "variableNames": ["CLOUDFLARE_ACCOUNT_ID"],
   "releaseEnableGatePresent": false,
   "workflowDispatched": false

@@ -3,7 +3,7 @@
   "phase": "disabled-baseline",
   "configurationSha256": "e2e454cc0420bad47339076aa493e9f0365cc0809a0d8a17abbed76d89d21479",
   "evidence": {
-    "independentTechnicalReview": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "independentTechnicalReview": { "status": "verified", "packetSha256": "f615262afde48742cd55382fb15259eea7ea2a6f05dcd2948a9c9301d5deca87", "evidenceSha256": "45ab9de165102ebb91b7bebe017ea32eaf5e9cd16a2bc8864311c1b8f8d58ad9" },
     "resourceIsolation": { "status": "verified", "packetSha256": "f4860c69524855505285c2c738e3990b698ee046f225450df9e18afa5da93186", "evidenceSha256": "50d96536193e634d7ca4696799831f2ce006fde3d4c79e3b21de16dba7ce97b4" },
     "automaticDeploymentGovernance": { "status": "verified", "packetSha256": "083ead98214b34d737a58208abfa7af0191969174d11ea6b7a75037dbd6f1f35", "evidenceSha256": "17474d354eaa0d64405a566bf20e4e688e857142668482a424a5962a5fad5c4b" },
     "dedicatedKvIdentity": { "status": "verified", "packetSha256": "8aa4ba31842acba3ea9ac1701b16a90e9026319a33efe3f496ca6f667079cf3f", "evidenceSha256": "1dacbb4ff1830639cbd90e0a4eb06d8c717a80c2bb25c81e850bdf8c2cd5a20f" },
@@ -13,9 +13,9 @@
     "analyticsAccess": { "status": "verified", "packetSha256": "ab0dfcb720e478521d3f7975badaa214e24baf59bc02a4707a05b711bf7cbc29", "evidenceSha256": "5b38de0b95c40ad7b09358c9571a4c2fb2113dce9b92c30a84d8b97ced9f76a2" },
     "rollbackAndVerificationPlan": { "status": "verified", "packetSha256": "766c6dc1318f2ea94fdd6a3227c057cf9748be6c7e4c3daab053816c662fc148", "evidenceSha256": "61cdf155dc8b04e416a7908cb8ed186525c063fbae69d322be93113234be3bd1" },
     "dnsReadiness": { "status": "verified", "packetSha256": "a5b5356040b5576bfe16d5c5b601031966be5e6a15358b2e0588c25b5bdcebca", "evidenceSha256": "4ec11404326db69e6635f158e64de7c97a9866689530c05515534297a6e73c82" },
-    "metricsSecretReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "metricsSecretReadiness": { "status": "verified", "packetSha256": "7187c463fbcbfa0d497919ea8e6c2a7b8595f623ba6bfd9741bb2437cf2f3cdf", "evidenceSha256": "318eb27ee9c88b862c749cabfae030f01c9adb436fb1a1f34665f1ba7a49b114" },
     "releaseCredentialReadiness": { "status": "verified", "packetSha256": "898aeaf52d25f67bc92debd7b023196f099538e8cce6854fcf717e2cfc2e5474", "evidenceSha256": "c8ffc75f9beb1d66bb11c8adab2fb87bea8ad4263e43044849d63663a1251fb1" },
-    "githubEnvironmentReadiness": { "status": "verified", "packetSha256": "210c8019c614009f0b62aa8f709128a649c4413de247ce9ff32a7d5fedb48d50", "evidenceSha256": "edd2933517f5ce077ae5fdadbd7b4af420493b073b09fe08f33c86814373c014" }
+    "githubEnvironmentReadiness": { "status": "verified", "packetSha256": "4b67b16601bff6b21b82fcd9776e6abb69e6b940642c5dcca8d50a52d82f9f60", "evidenceSha256": "2a8f7bca4cf71a97b4ec3e4da7431a8d10259eaeed6307f19924feeea03cac28" }
   },
   "owners": {
     "monitoring": "william-dickens",
