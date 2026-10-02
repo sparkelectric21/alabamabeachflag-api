@@ -66,6 +66,8 @@ export interface IpawsIngestionConfig {
 	environment: "staging" | "production";
 	allowedTopicArns: readonly string[];
 	autoConfirmSubscription: boolean;
+	notificationsEnabled: boolean;
+	downstreamEffectsEnabled: boolean;
 	parseByteLimit: number;
 	recordTtlSeconds: number;
 	subscriptionStateTtlSeconds: number;
@@ -75,9 +77,10 @@ export interface IpawsIngestionConfig {
 }
 
 export interface IpawsCapParseResult {
-	status: "parsed" | "parse_failed";
+	status: "parsed" | "unsupported" | "parse_failed";
 	message: IpawsRawCapPayload | null;
 	reason?: string;
+	unsupportedClass?: "json_array" | "json_scalar" | "opaque_text";
 }
 
 export type IpawsProcessingState =
@@ -90,6 +93,7 @@ export type IpawsProcessingState =
 	| "unsubscribe_received"
 	| "notification_parsed"
 	| "notification_parse_failed"
+	| "notification_unsupported"
 	| "notification_done"
 	| "unsupported_type";
 

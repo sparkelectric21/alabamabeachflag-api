@@ -1,5 +1,9 @@
 # IPAWS SNS receiver independent security review package
 
+## Production aggregate metrics access
+
+The staging aggregate endpoint remains intended for controlled staging-soak use. In production the aggregate-only endpoint requires a dedicated `IPAWS_METRICS_READ_TOKEN` secret of at least 32 bytes, compares the Bearer credential using fixed-length SHA-256 digests, fails closed when the secret is absent, and never uses the shared response cache. The secret is not placed in Wrangler configuration, source control, logs, reports, or error responses. Reports retain the existing fixed allowlist and cannot include payloads, raw identifiers, signatures, claim tokens, certificate URLs, exception text, or arbitrary dimensions.
+
 ## Recommended decision
 
 Approve the staging receiver for continued staging use. Do not approve a production receiver solely from this review. Before production access, an independent security reviewer must explicitly accept the certificate trust model described below, the FEMA/AWS TopicArn and HTTP/S delivery policy must be recorded, and the production consumer boundary in `IPAWS_PRODUCTION_CONSUMER.md` must be implemented and reviewed.
@@ -46,7 +50,7 @@ Only `SubscriptionConfirmation` can cause an outbound GET. Its signed URL must c
 
 ## CI and generated types
 
-Production and staging Wrangler declarations are separate and checked independently. CI uses Node.js 24.19.0, pins actions by commit SHA, runs on pull requests and pushes to `main`, the integration branch, and this feature branch, and runs focused/full tests, both type checks, staging-surface linting, both Wrangler type checks, both dry runs, whitespace checks, and dependency audits. Dry runs do not upload or deploy versions.
+General production, IPAWS staging, and IPAWS production Wrangler declarations are separate and checked independently. CI uses Node.js 24.21.0, pins actions by commit SHA, runs on pull requests and pushes to `main`, the integration branch, and the existing staging-receiver branch, and runs focused/full tests, all three type checks, staging-surface linting, all three deterministic Wrangler declaration checks, general-production/staging/inert-IPAWS-production dry runs, whitespace checks, deployment-policy checks, and dependency audits. Dry runs do not upload or deploy versions.
 
 ## Dependency advisory disposition
 

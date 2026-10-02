@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { handleIpawsPubSubRequest } from "./handler";
-import { IPAWS_METRICS_DEFAULT_REPORT_HOURS, readIpawsMetrics, validMetricsWindow } from "./metrics";
+import { IPAWS_METRICS_DEFAULT_REPORT_HOURS, readIpawsMetrics, reportForEnvironment, validMetricsWindow } from "./metrics";
 import { logWarn } from "../utils/logger";
 export { IpawsIdempotencyCoordinator } from "./idempotency";
 
@@ -18,6 +18,9 @@ export type IpawsStandaloneEnv = Pick<
 	| "IPAWS_SNS_MAX_AGE_SECONDS"
 	| "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS"
 	| "IPAWS_IDEMPOTENCY"
+	| "IPAWS_METRICS_READ_TOKEN"
+	| "IPAWS_NOTIFICATIONS_ENABLED"
+	| "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"
 >;
 
 const METRICS_CACHE_SECONDS = 30;
@@ -41,21 +44,37 @@ function json(body: unknown, init: ResponseInit = {}): Response {
 	});
 }
 
+async function digest(value: string): Promise<Uint8Array> {
+	return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+}
+
+async function authorizedMetricsRequest(request: Request, secret: string | undefined): Promise<boolean> {
+	if (!secret || new TextEncoder().encode(secret).byteLength < 32) return false;
+	const authorization = request.headers.get("authorization") ?? "";
+	if (!authorization.startsWith("Bearer ")) return false;
+	const [left, right] = await Promise.all([digest(authorization.slice(7)), digest(secret)]);
+	let difference = left.length ^ right.length;
+	for (let index = 0; index < Math.max(left.length, right.length); index++) difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
+	return difference === 0;
+}
+
 export default {
 	async fetch(request: Request, env: IpawsStandaloneEnv, ctx: ExecutionContext): Promise<Response> {
 		const pathname = new URL(request.url).pathname;
 		if (pathname === "/v1/ipaws/metrics" && request.method === "GET") {
-			if (env.IPAWS_ENVIRONMENT !== "staging") return json({ error: "Not Found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+			const environment = env.IPAWS_ENVIRONMENT === "production" ? "production" : "staging";
+			if (environment === "production" && !env.IPAWS_METRICS_READ_TOKEN) return json({ status: "error", code: "ipaws_metrics_auth_unconfigured" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+			if (environment === "production" && !(await authorizedMetricsRequest(request, env.IPAWS_METRICS_READ_TOKEN))) return json({ status: "error", code: "ipaws_metrics_unauthorized" }, { status: 401, headers: { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" } });
 			const window = metricsWindow(new URL(request.url));
 			if (!window) return json({ status: "error", code: "ipaws_invalid_metrics_window" }, { status: 400, headers: { "Cache-Control": "no-store" } });
-			const cache = typeof caches === "undefined" ? null : caches.default;
+			const cache = environment === "staging" && typeof caches !== "undefined" ? caches.default : null;
 			const cached = await cache?.match(window.cacheKey);
 			if (cached) return json(await cached.json(), { headers: { "Cache-Control": "no-store", "X-IPAWS-Metrics-Cache": "hit" } });
 			const report = await readIpawsMetrics(env.IPAWS_IDEMPOTENCY, window.start, window.end);
 			if (!report) return json({ status: "error", code: "ipaws_metrics_unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 			if (cache) ctx.waitUntil(cache.put(window.cacheKey, json(report, { headers: { "Cache-Control": `public, max-age=${METRICS_CACHE_SECONDS}` } }))
 				.catch(() => logWarn("IPAWS Metrics", "Soak report cache write unavailable")));
-			return json(report, { headers: { "Cache-Control": "no-store", "X-IPAWS-Metrics-Cache": "miss" } });
+			return json(reportForEnvironment(report, environment), { headers: { "Cache-Control": "no-store", "X-IPAWS-Metrics-Cache": "miss" } });
 		}
 		if (pathname !== "/v1/ipaws/pubsub") {
 			return json({ error: "Not Found" }, { status: 404, headers: { "Cache-Control": "no-store" } });

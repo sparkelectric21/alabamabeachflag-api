@@ -10,12 +10,17 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "typecheck:staging": "tsc -p tsconfig.ipaws-staging.json --noEmit",
+    "typecheck:ipaws-production": "tsc -p tsconfig.ipaws-production.json --noEmit",
     "lint": "tsc -p tsconfig.ipaws-staging.json --noEmit --noUnusedLocals --noUnusedParameters",
     "check": "npm run typecheck && npm run typecheck:staging && npm test",
     "cf-typegen": "wrangler types worker-configuration.d.ts --env-file wrangler.types.env --config wrangler.jsonc",
     "cf-typegen:staging": "wrangler types worker-configuration.ipaws-staging.d.ts --env-file wrangler.types.env --config wrangler.ipaws.staging.jsonc",
+    "cf-typegen:ipaws-production": "wrangler types worker-configuration.ipaws-production.d.ts --env-file wrangler.types.env --config wrangler.ipaws.production.jsonc",
     "cf-typecheck": "node scripts/check-worker-types.mjs worker-configuration.d.ts",
-    "cf-typecheck:staging": "node scripts/check-worker-types.mjs worker-configuration.ipaws-staging.d.ts"
+    "cf-typecheck:staging": "node scripts/check-worker-types.mjs worker-configuration.ipaws-staging.d.ts",
+    "cf-typecheck:ipaws-production": "node scripts/check-worker-types.mjs worker-configuration.ipaws-production.d.ts",
+    "validate:ipaws-deployment-policy": "node scripts/validate-ipaws-deployment-policy.mjs",
+    "validate:ipaws-production-deploy": "node scripts/validate-ipaws-deployment-policy.mjs --deploy"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

@@ -202,7 +202,10 @@ export function parseCapPayload(raw: string, byteLimit = 262_144): IpawsCapParse
 	try {
 		const parsed = JSON.parse(raw);
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "json_payload_not_object" };
+			return {
+				status: "unsupported", message: { source: "unknown", parsed: {} }, reason: "authenticated_structure_unsupported",
+				unsupportedClass: Array.isArray(parsed) ? "json_array" : "json_scalar",
+			};
 		}
 		const payload = toPayloadFromObject(parsed as Record<string, unknown>);
 		if (!hasCapFields(payload.parsed)) {
@@ -210,6 +213,7 @@ export function parseCapPayload(raw: string, byteLimit = 262_144): IpawsCapParse
 		}
 		return { status: "parsed", message: payload };
 	} catch {
-		return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "message_invalid_json_or_xml" };
+		if (/^[{\[]/.test(raw.trimStart())) return { status: "parse_failed", message: { source: "json", parsed: {} }, reason: "json_payload_malformed" };
+		return { status: "unsupported", message: { source: "unknown", parsed: {} }, reason: "authenticated_structure_unsupported", unsupportedClass: "opaque_text" };
 	}
 }

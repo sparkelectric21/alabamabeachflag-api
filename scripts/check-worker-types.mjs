@@ -5,6 +5,7 @@ import { basename, resolve } from "node:path";
 const allowedTargets = new Map([
 	["worker-configuration.d.ts", "wrangler.jsonc"],
 	["worker-configuration.ipaws-staging.d.ts", "wrangler.ipaws.staging.jsonc"],
+	["worker-configuration.ipaws-production.d.ts", "wrangler.ipaws.production.jsonc"],
 ]);
 const [target] = process.argv.slice(2);
 const config = allowedTargets.get(target);

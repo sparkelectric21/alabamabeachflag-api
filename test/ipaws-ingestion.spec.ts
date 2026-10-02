@@ -142,6 +142,14 @@ describe("IPAWS CAP parser", () => {
 		expect(parsed.message.parsed.info?.[0]?.severity).toBe("Severe");
 	});
 
+	it("classifies authenticated unsupported structures separately from malformed supported formats", () => {
+		expect(parseCapPayload("[]")).toMatchObject({ status: "unsupported", reason: "authenticated_structure_unsupported", unsupportedClass: "json_array" });
+		expect(parseCapPayload("true")).toMatchObject({ status: "unsupported", unsupportedClass: "json_scalar" });
+		expect(parseCapPayload("not-json-or-xml")).toMatchObject({ status: "unsupported", unsupportedClass: "opaque_text" });
+		expect(parseCapPayload("{\"identifier\":" )).toMatchObject({ status: "parse_failed", reason: "json_payload_malformed" });
+		expect(parseCapPayload("<alert>")).toMatchObject({ status: "parse_failed" });
+	});
+
 	it("rejects malformed XML payloads safely", () => {
 		expect(parseCapPayload("<alert><identifier></alert>")).toMatchObject({ status: "parse_failed" });
 	});
@@ -487,6 +495,32 @@ describe("IPAWS pub/sub handler", () => {
 		const record = JSON.parse(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`) ?? "{}");
 		expect(record).toMatchObject({ processingState: "notification_parse_failed", parseStatus: "parse_failed", rawMessage: malformed });
 		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(false);
+	});
+
+	it.each([
+		["json_array", "[]"],
+		["json_scalar", "\"sensitive-scalar-value\""],
+		["opaque_text", "authenticated auxiliary text"],
+	] as const)("retains authenticated unsupported %s input as a terminal non-normalized outcome", async (unsupportedClass, messageBody) => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: messageBody }),
+		}), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ outcome: "accepted" });
+		const record = JSON.parse(env.BEACH_DATA.map.get(`ipaws:ingest:${baseNotification.MessageId}`) ?? "{}");
+		expect(record).toMatchObject({
+			processingState: "notification_unsupported", parseStatus: "unsupported",
+			parseError: "authenticated_structure_unsupported", rawMessage: messageBody,
+		});
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(false);
+		expect(env.metricsEvents.at(-1)).toEqual(expect.objectContaining({
+			capParse: "unsupported", unsupportedInput: unsupportedClass, normalizedRecord: ["not_applicable"],
+		}));
+		const publicMetrics = JSON.stringify(env.metricsEvents);
+		expect(publicMetrics).not.toContain(messageBody);
+		expect(publicMetrics).not.toContain(baseNotification.MessageId);
 	});
 
 	it("safely handles subscription confirmations and respects auto-confirm flag", async () => {

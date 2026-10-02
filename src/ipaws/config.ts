@@ -26,13 +26,15 @@ function parseTopicArns(value: string | undefined): string[] {
 		.filter(Boolean);
 }
 
-export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAWS_ENVIRONMENT" | "IPAWS_ALLOWED_TOPIC_ARNS" | "IPAWS_AUTO_CONFIRM_SUBSCRIPTION" | "IPAWS_PARSE_BYTE_LIMIT" | "IPAWS_RECORD_TTL_SECONDS" | "IPAWS_SUBSCRIPTION_TTL_SECONDS" | "IPAWS_HEALTH_TTL_SECONDS" | "IPAWS_SNS_MAX_AGE_SECONDS" | "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS">
+export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAWS_ENVIRONMENT" | "IPAWS_ALLOWED_TOPIC_ARNS" | "IPAWS_AUTO_CONFIRM_SUBSCRIPTION" | "IPAWS_NOTIFICATIONS_ENABLED" | "IPAWS_DOWNSTREAM_EFFECTS_ENABLED" | "IPAWS_PARSE_BYTE_LIMIT" | "IPAWS_RECORD_TTL_SECONDS" | "IPAWS_SUBSCRIPTION_TTL_SECONDS" | "IPAWS_HEALTH_TTL_SECONDS" | "IPAWS_SNS_MAX_AGE_SECONDS" | "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS">
 ): IpawsIngestionConfig {
 	return {
 		enabled: envBoolean(env.IPAWS_INGESTION_ENABLED, false),
 		environment: env.IPAWS_ENVIRONMENT === "production" ? "production" : "staging",
 		allowedTopicArns: parseTopicArns(env.IPAWS_ALLOWED_TOPIC_ARNS),
 		autoConfirmSubscription: envBoolean(env.IPAWS_AUTO_CONFIRM_SUBSCRIPTION, false),
+		notificationsEnabled: envBoolean(env.IPAWS_NOTIFICATIONS_ENABLED, false),
+		downstreamEffectsEnabled: envBoolean(env.IPAWS_DOWNSTREAM_EFFECTS_ENABLED, false),
 		parseByteLimit: parseNumber(env.IPAWS_PARSE_BYTE_LIMIT, DEFAULT_PARSE_LIMIT_BYTES),
 		recordTtlSeconds: parseNumber(env.IPAWS_RECORD_TTL_SECONDS, DEFAULT_RECORD_TTL_SECONDS),
 		subscriptionStateTtlSeconds: parseNumber(env.IPAWS_SUBSCRIPTION_TTL_SECONDS, DEFAULT_SUBSCRIPTION_TTL_SECONDS),

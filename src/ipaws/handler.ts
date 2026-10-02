@@ -61,7 +61,7 @@ async function deliveryOutputsComplete(env: Env, messageId: string): Promise<boo
 	const record = await readIngestionRecord(env, messageId);
 	if (!record) return false;
 	if (record.type === "Notification") {
-		if (record.processingState === "notification_parse_failed") return await readSubscriptionState(env) === "confirmed";
+		if (record.processingState === "notification_parse_failed" || record.processingState === "notification_unsupported") return await readSubscriptionState(env) === "confirmed";
 		if (record.processingState !== "notification_done") return false;
 		return Boolean(await readNormalizedAlert(env, messageId)) && await readSubscriptionState(env) === "confirmed";
 	}
@@ -136,6 +136,9 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	}
 
 	const config = loadIpawsConfig(env);
+	if (config.environment === "production" && (config.notificationsEnabled || config.downstreamEffectsEnabled)) {
+		return responseError("ipaws_unsafe_production_effects", "Production notification and downstream effects must remain disabled.", 503);
+	}
 	if (!config.enabled) {
 		return responseError("ipaws_disabled", "IPAWS ingestion is disabled in this environment.", 503);
 	}
@@ -278,7 +281,8 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			message: { source: "unknown", parsed: {} },
 			reason: "not_notification",
 		};
-	metrics.capParse = message.Type === "Notification" ? (parseResult.status === "parsed" ? "success" : "failure") : "not_applicable";
+	metrics.capParse = message.Type === "Notification" ? (parseResult.status === "parsed" ? "success" : parseResult.status === "unsupported" ? "unsupported" : "failure") : "not_applicable";
+	metrics.unsupportedInput = parseResult.status === "unsupported" ? parseResult.unsupportedClass : undefined;
 	metrics.capLifecycle = message.Type === "Notification" ? capLifecycle(parseResult) : "not_applicable";
 
 	try {
@@ -315,14 +319,14 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			enterStage(metrics, "persistence");
 			// SNS delivers notifications only after the HTTPS subscription is confirmed.
 			await writeSubscriptionState(env, "confirmed", config.subscriptionStateTtlSeconds);
-			await recordIpawsHealthEvent(env, parseResult.status === "parsed" ? "delivery_notification_parsed" : "delivery_notification_parse_failed", config.healthTtlSeconds, {
+			await recordIpawsHealthEvent(env, parseResult.status === "parsed" ? "delivery_notification_parsed" : parseResult.status === "unsupported" ? "delivery_notification_unsupported" : "delivery_notification_parse_failed", config.healthTtlSeconds, {
 				environment: config.environment,
 				stagingEnabled: config.enabled,
 			});
 			await updateIngestionRecord(env, message.MessageId, {
-				processingState: parseResult.status === "parsed" ? "notification_done" : "notification_parse_failed",
+				processingState: parseResult.status === "parsed" ? "notification_done" : parseResult.status === "unsupported" ? "notification_unsupported" : "notification_parse_failed",
 				parseStatus: parseResult.status,
-				parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
+				parseError: parseResult.status === "parsed" ? null : (parseResult.reason ?? parseResult.status),
 				parseResultSummary: parseResult.status,
 			}, config.recordTtlSeconds);
 			enterStage(metrics, "completion");

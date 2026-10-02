@@ -67,7 +67,7 @@ export async function upsertIngestionRecord(
 		rawMessage,
 		rawMessageDigestSha256,
 		messageBody: parseResult.message ?? null,
-		parseError: parseResult.status === "parse_failed" ? (parseResult.reason ?? "parse_failed") : null,
+		parseError: parseResult.status === "parsed" ? null : (parseResult.reason ?? parseResult.status),
 		parseResultSummary: parseResult.status,
 		subscribeUrl: message.Type === "Notification" ? null : message.SubscribeURL ?? null,
 		capIdentifier: parseResult.message?.parsed.identifier ?? null,
