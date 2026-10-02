@@ -19,6 +19,7 @@ for (const [key, item] of Object.entries(evidence.evidence ?? {})) {
 	fail(!item || Object.keys(item).sort().join(",") !== "evidenceSha256,status", `${key} contains unapproved properties`);
 	fail(!["unverified", "verified"].includes(item?.status), `${key} has an invalid status`);
 	fail(item?.status === "unverified" && item?.evidenceSha256 !== null, `${key} must not contain a digest until verified`);
+	fail(item?.status === "verified" && !/^[a-f0-9]{64}$/.test(item?.evidenceSha256 ?? ""), `${key} verified evidence must contain a non-reversible SHA-256`);
 }
 fail(!evidence.owners || Object.keys(evidence.owners).length !== allowedOwners.size, "evidence manifest must contain every operational owner exactly once");
 for (const key of Object.keys(evidence.owners ?? {})) fail(!allowedOwners.has(key), `unapproved owner field: ${key}`);

@@ -77,7 +77,7 @@ describe("standalone IPAWS Worker", () => {
 		const response = await worker.fetch(hostile, env, { ...executionContext, waitUntil } as ExecutionContext);
 		expect(response.status).toBe(503);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
-		expect(await response.json()).toEqual({ status: "error", code: "ipaws_disabled", message: "IPAWS ingestion is disabled in this environment." });
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_disabled" });
 		expect(bodyRead).not.toHaveBeenCalled();
 		expect(globalFetch).not.toHaveBeenCalled();
 		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
@@ -85,6 +85,40 @@ describe("standalone IPAWS Worker", () => {
 		expect(doIdFromName).not.toHaveBeenCalled();
 		expect(doGet).not.toHaveBeenCalled();
 		expect(doFetch).not.toHaveBeenCalled();
+		expect(waitUntil).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["callback", "/v1/ipaws/pubsub", "POST"],
+		["metrics", "/v1/ipaws/metrics", "GET"],
+		["unknown", "/unknown", "GET"],
+	] as const)("returns the same inert production response for the %s route before routing or bindings", async (_label, path, method) => {
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		env.IPAWS_ALLOWED_TOPIC_ARNS = "";
+		env.IPAWS_METRICS_READ_TOKEN = "s".repeat(32);
+		const doFetch = vi.fn();
+		const doGet = vi.fn(() => ({ fetch: doFetch }));
+		const doIdFromName = vi.fn(() => "forbidden-id");
+		env.IPAWS_IDEMPOTENCY = { idFromName: doIdFromName, get: doGet } as unknown as DurableObjectNamespace;
+		const cache = { match: vi.fn(), put: vi.fn() };
+		vi.stubGlobal("caches", { default: cache });
+		const globalFetch = vi.fn();
+		vi.stubGlobal("fetch", globalFetch);
+		const waitUntil = vi.fn();
+
+		const response = await worker.fetch(request(path, method, method === "POST" ? "sensitive-body" : undefined), env, { ...executionContext, waitUntil } as ExecutionContext);
+		expect(response.status).toBe(503);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_disabled" });
+		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
+		expect(doIdFromName).not.toHaveBeenCalled();
+		expect(doGet).not.toHaveBeenCalled();
+		expect(doFetch).not.toHaveBeenCalled();
+		expect(cache.match).not.toHaveBeenCalled();
+		expect(cache.put).not.toHaveBeenCalled();
+		expect(globalFetch).not.toHaveBeenCalled();
 		expect(waitUntil).not.toHaveBeenCalled();
 	});
 
@@ -178,6 +212,7 @@ describe("standalone IPAWS Worker", () => {
 	it("requires a configured production metrics credential", async () => {
 		const env = createEnvironment();
 		env.IPAWS_ENVIRONMENT = "production";
+		env.IPAWS_INGESTION_ENABLED = "true";
 		expect(await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext)).toHaveProperty("status", 503);
 		env.IPAWS_METRICS_READ_TOKEN = "x".repeat(31);
 		const shortCredential = new Request("https://ipaws.example/v1/ipaws/metrics", { headers: { Authorization: `Bearer ${env.IPAWS_METRICS_READ_TOKEN}` } });
@@ -188,6 +223,7 @@ describe("standalone IPAWS Worker", () => {
 		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
 		const env = createEnvironment();
 		env.IPAWS_ENVIRONMENT = "production";
+		env.IPAWS_INGESTION_ENABLED = "true";
 		env.IPAWS_METRICS_READ_TOKEN = "a-production-metrics-test-token-at-least-32-bytes";
 		const reportFetch = vi.fn(async () => Response.json({
 			schemaVersion: 2, environment: "staging", retentionDays: 35, maxWindowHours: 168,

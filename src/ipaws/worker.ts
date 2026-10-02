@@ -61,13 +61,19 @@ async function authorizedMetricsRequest(request: Request, secret: string | undef
 
 export default {
 	async fetch(request: Request, env: IpawsStandaloneEnv, ctx: ExecutionContext): Promise<Response> {
-		const pathname = new URL(request.url).pathname;
 		let environment: "staging" | "production";
 		try {
 			environment = parseIpawsEnvironment(env.IPAWS_ENVIRONMENT);
 		} catch {
 			return json({ status: "error", code: "ipaws_environment_invalid" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 		}
+		if (environment === "production" && (env.IPAWS_NOTIFICATIONS_ENABLED === "true" || env.IPAWS_DOWNSTREAM_EFFECTS_ENABLED === "true")) {
+			return json({ status: "error", code: "ipaws_unsafe_production_effects" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+		}
+		if (environment === "production" && env.IPAWS_INGESTION_ENABLED !== "true") {
+			return json({ status: "error", code: "ipaws_disabled" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+		}
+		const pathname = new URL(request.url).pathname;
 		if (pathname === "/v1/ipaws/metrics" && request.method === "GET") {
 			if (environment === "production" && !env.IPAWS_METRICS_READ_TOKEN) return json({ status: "error", code: "ipaws_metrics_auth_unconfigured" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 			if (environment === "production" && !(await authorizedMetricsRequest(request, env.IPAWS_METRICS_READ_TOKEN))) return json({ status: "error", code: "ipaws_metrics_unauthorized" }, { status: 401, headers: { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" } });

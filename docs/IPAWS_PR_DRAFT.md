@@ -8,7 +8,7 @@ Prepare isolated IPAWS production ingress baseline
 
 ### Summary
 
-Adds an inert, isolated production-ingress template and repository safety gates while preserving the deployed staging receiver. This PR does not deploy anything. Production ingestion, subscription confirmation, notifications, and downstream effects remain disabled.
+Adds an inert, isolated production-ingress baseline configuration and repository safety gates while preserving the deployed staging receiver. The dedicated KV namespace was created empty in a separately authorized preparation step; this PR does not deploy a Worker, DNS, route, Durable Object migration, or secret. Production ingestion, subscription confirmation, notifications, and downstream effects remain disabled.
 
 ### Architecture
 
@@ -35,11 +35,11 @@ The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS 
 
 ### Test evidence
 
-Local correction review used Node.js 24.21.0 and Wrangler 4.137.0. The complete suite passed 871 tests across 50 files, along with the general, staging, and IPAWS-production TypeScript and deterministic declaration checks; lint; deployment-policy template validation; expected rejection of unresolved real-deployment placeholders; staging and inert-production dry runs; whitespace checks; and production/development dependency-audit policies. GitHub evidence must refer to the exact reviewed head.
+Final verification must use the locked Node.js 24 and Wrangler versions and record the resulting test count only after the complete suite finishes. Required gates include the general, staging, and IPAWS-production TypeScript and deterministic declaration checks; lint; deployment-policy validation; expected rejection of incomplete external evidence; staging and inert-production dry runs; whitespace checks; and production/development dependency-audit policies. GitHub evidence must refer to the exact reviewed head.
 
 ### Staging evidence
 
-The staging Worker remains separately named and configured with staging KV, its Worker-scoped idempotency Durable Object, staging variables, and storage-only normalized records with notifications disabled. The production file contains placeholders and is rejected by real-deployment validation until independently reviewed values are supplied. This PR itself performs no deployment.
+The staging Worker remains separately named and configured with staging KV, its Worker-scoped idempotency Durable Object, staging variables, and storage-only normalized records with notifications disabled. The production file contains reviewed, isolated Cloudflare identifiers but an empty TopicArn allowlist and disabled capabilities. Complete-evidence validation still blocks release until the external evidence and a separate deployment approval exist. This PR itself performs no deployment.
 
 ### Dependency audit
 
@@ -57,8 +57,8 @@ Wrangler was upgraded within major version 4 and safe transitive fixes were appl
 
 ### Reviewer checklist
 
-- [ ] Confirm all resources and variables are staging-only.
-- [ ] Confirm no production secret, binding, route, or notification path is present.
+- [ ] Confirm dedicated IPAWS production identities are distinct from staging and general production, with no resource crossover.
+- [ ] Confirm no production secret value, notification/downstream binding, or enabled effect path is present, and that the PR itself performs no deployment.
 - [ ] Review SNS canonical signing and both signature versions.
 - [ ] Independently approve or reject the certificate trust model.
 - [ ] Confirm the FEMA TopicArn and actual SNS HTTP/S delivery policy.

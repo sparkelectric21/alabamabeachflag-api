@@ -1,21 +1,21 @@
 # IPAWS production release governance
 
-## Current stop condition
+## Current deployment boundary
 
-Merging PR #10 produced repository commit `279a9e02706c0aa29edd2c282e7646d5eb01bba4`. Cloudflare Workers Builds then created general-production Worker version `740ee4d0-d95d-496e-93c3-cf40864d0fce` and activated it at 100 percent. GitHub check `Workers Builds: alabamabeachflag-api` directly associates Cloudflare build `44de7903-3e65-4907-9df2-e28ca18b5065`, that Worker version, and the merge commit. GitHub Actions run `37045668178` was a separate verification-only workflow; all of its Wrangler deployment commands used `--dry-run`.
+The general-production incident and its attribution remain recorded below, but the automatic-activation path has been corrected. Workers Builds now uses `npx wrangler versions upload --config wrangler.jsonc`, so a matching `main` build may create an inactive general-Worker version without changing traffic. The active general-production version remains `740ee4d0-d95d-496e-93c3-cf40864d0fce`; the upload associated with merged PR #11 remained inactive.
 
-The deployment removed the disabled IPAWS route and variables from the general Worker, retained the same routes, bindings, compatibility settings, and Durable Object migration tag, and showed no aggregate Worker errors in the bounded observation immediately after release. It was nevertheless outside the merge-only authorization. Do not merge this or another branch into `main` until the live Workers Builds production trigger has been separately reviewed and changed.
+Merging PR #10 had activated the general Worker outside the merge-only authorization. That deployment removed the disabled IPAWS route and variables from the general Worker, retained the same routes, bindings, compatibility settings, and Durable Object migration tag, and showed no aggregate Worker errors in the bounded observation immediately after release. The repository still treats verification CI and any production release as separate operations.
 
-## Required Cloudflare change before another merge
+## General-Worker build control
 
-Cloudflare documents `npx wrangler versions upload` as the supported way to keep automatic builds while preventing automatic production activation. The smallest reversible configuration change is:
+Cloudflare documents `npx wrangler versions upload` as the supported way to keep automatic builds while preventing automatic production activation. The configured control is:
 
 1. Keep the Git connection so builds remain attributable to exact commits.
-2. In **Workers & Pages → alabamabeachflag-api → Settings → Builds**, record the current production Deploy command and change it from `npx wrangler deploy` to `npx wrangler versions upload --config wrangler.jsonc`.
+2. In **Workers & Pages → alabamabeachflag-api → Settings → Builds**, keep the production Deploy command exactly `npx wrangler versions upload --config wrangler.jsonc`.
 3. Confirm the production branch is exactly `main`, record all path filters and deploy hooks, and require a separate explicit promotion to 100 percent.
 4. Do not trigger a test build as part of the setting change. If inactive upload cannot preserve the Worker's Durable Object contract, disconnect Workers Builds instead; do not silently fall back to live deployment.
 
-This Cloudflare setting is an external production-control write. Repository changes cannot enforce it. William Dickens, as account owner, must record the existing command, production branch, path filters, token identity/scope, and active deployment before approving the change. Rollback is restoring the recorded Deploy command. Restoring it re-enables automatic activation on the next matching push, so rollback must not trigger or retry a build.
+This Cloudflare setting is an external production control that repository checks cannot enforce. William Dickens, as account owner, recorded and verified the command, production branch, filters, token identity/scope, and active deployment. Restoring the old deploy command would re-enable automatic activation on the next matching push and therefore requires separate approval.
 
 ## Repository enforcement
 
@@ -30,6 +30,8 @@ The release workflow is intentionally inert until all of these external controls
 - the production configuration contains independently verified values and passes deploy-mode policy validation;
 - `config/ipaws-production-evidence.json` pins that exact configuration digest, contains a non-reversible digest for every independently reviewed evidence packet, and assigns every operational owner;
 - the dispatch supplies the exact reviewed `main` commit, configuration SHA-256, evidence-manifest SHA-256, approval reference, and confirmation phrase.
+
+For the first deployment only, the release token must have **Workers product Admin** on this account because Cloudflare cannot grant a per-Worker role before the dedicated Worker exists, plus **Zone → Workers Routes → Write** scoped only to `alabamabeachflag.com`. Binding the already-created KV namespace does not require KV data permission. No DNS, KV Storage, R2, D1, Queues, Tail, or account-wide route permission belongs on this token. After bootstrap and readback, replace it with **Editor** scoped only to `alabamabeachflag-ipaws-production` plus the same zone-scoped Workers Routes permission for releases that may change the route. A separate aggregate-analytics read token remains preferable for monitoring and must not be reused as the release credential.
 
 The workflow deploys only `wrangler.ipaws.production.jsonc`. Immediately before deployment it refetches and rechecks remote `main`, the commit, both approved hashes, and the complete working tree. Its first release must use `wrangler deploy` because the dedicated SQLite-backed Durable Object migration is an atomic resource operation. A wrapper applies the approved commit as a version tag and captures the returned version ID without printing it. Sanitized readback then requires that exact tagged version alone at 100 percent, exact compatibility and migration settings, the exact KV identity, an isolated Durable Object namespace and class, exact plain variables, exactly one named metrics secret of secret type, the exact route, and no custom domain. The initial baseline remains unsubscribed and keeps ingestion, automatic subscription confirmation, notifications, and downstream effects disabled.
 

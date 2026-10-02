@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "configurationSha256": null,
+  "configurationSha256": "d40e96d590885d27c5ed0dca2afd1ddecd8327d00d4ea45d21a5e48e0564258c",
   "evidence": {
     "femaProductionContract": { "status": "unverified", "evidenceSha256": null },
     "snsSubscriptionAndDeliveryPolicy": { "status": "unverified", "evidenceSha256": null },
     "auxiliaryMessageFormats": { "status": "unverified", "evidenceSha256": null },
-    "cloudflareResourceIsolation": { "status": "unverified", "evidenceSha256": null },
-    "cloudflareBuildsGovernance": { "status": "unverified", "evidenceSha256": null },
+    "cloudflareResourceIsolation": { "status": "verified", "evidenceSha256": "f4860c69524855505285c2c738e3990b698ee046f225450df9e18afa5da93186" },
+    "cloudflareBuildsGovernance": { "status": "verified", "evidenceSha256": "083ead98214b34d737a58208abfa7af0191969174d11ea6b7a75037dbd6f1f35" },
     "analyticsAccess": { "status": "unverified", "evidenceSha256": null },
     "independentSecurityReview": { "status": "unverified", "evidenceSha256": null }
   },

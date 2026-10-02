@@ -44,7 +44,7 @@ describe("production release governance", () => {
 	it("emits only statuses even when configuration contains realistic identifiers", () => {
 		const scratch = mkdtempSync(resolve(tmpdir(), "inventory-"));
 		try {
-			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("ipaws-production-placeholder", "secret-worker-name").replace("00000000000000000000000000000000", "1234567890abcdef1234567890abcdef").replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:sensitive-topic"');
+			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("alabamabeachflag-ipaws-production", "secret-worker-name").replace("9c56e6dc43b14cf091ca8f7211123fca", "1234567890abcdef1234567890abcdef").replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:sensitive-topic"');
 			const path = resolve(scratch, "config.jsonc"); writeFileSync(path, config);
 			const result = run(["scripts/report-ipaws-production-inputs.mjs", `--config=${path}`]);
 			expect(result.status).toBe(0); expect(result.stdout).not.toMatch(/secret-worker-name|1234567890abcdef|sensitive-topic|arn:aws/);
@@ -69,6 +69,16 @@ describe("production release governance", () => {
 			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete", `--evidence=${path}`]).status).toBe(0);
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
 	});
+	it("rejects a verified evidence status without a valid protected digest", () => {
+		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-digest-"));
+		try {
+			const evidence = JSON.parse(readFileSync("config/ipaws-production-evidence.json", "utf8"));
+			evidence.evidence.cloudflareResourceIsolation.evidenceSha256 = "invalid";
+			const path = resolve(scratch, "evidence.json"); writeFileSync(path, JSON.stringify(evidence));
+			const result = run(["scripts/validate-ipaws-production-evidence.mjs", `--evidence=${path}`]);
+			expect(result.status).toBe(1); expect(result.stderr).toContain("verified evidence must contain");
+		} finally { rmSync(scratch, { recursive: true, force: true }); }
+	});
 });
 
 describe("sanitized post-deployment verification", () => {
@@ -84,7 +94,7 @@ describe("sanitized post-deployment verification", () => {
 				{ name: "IPAWS_METRICS_READ_TOKEN", type: "secret_text" },
 				...Object.entries(config.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
 			] } },
-			routes: { result: [{ script: "ipaws-production-placeholder", pattern: "ipaws-production.invalid/v1/ipaws/*" }] }, domains: { result: [] },
+			routes: { result: [{ script: "alabamabeachflag-ipaws-production", pattern: "ipaws.alabamabeachflag.com/v1/ipaws/*" }] }, domains: { result: [] },
 			"protected-durable-ids": ["staging-do", "general-production-do"],
 		};
 		change?.(docs); for (const [name, value] of Object.entries(docs)) writeFileSync(resolve(scratch, `${name}.json`), JSON.stringify(value)); return scratch;

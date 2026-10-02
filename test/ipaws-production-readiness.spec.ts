@@ -205,9 +205,9 @@ describe("IPAWS deployment policy", () => {
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
 	}
 
-	it("accepts the inert repository template but rejects unresolved real deployment", () => {
+	it("accepts the configured inert baseline in both template and deploy policy modes", () => {
 		expect(runPolicy().status).toBe(0);
-		expect(runPolicy(undefined, undefined, true).status).toBe(1);
+		expect(runPolicy(undefined, undefined, true).status).toBe(0);
 	});
 
 	it("rejects enabled baseline behavior and staging/production resource crossover", () => {
@@ -215,7 +215,7 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { config.kv_namespaces[0].id = "60f732dff736438bbb53edb2815059bb"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.vars.IPAWS_AUTO_CONFIRM_SUBSCRIPTION = "true"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.queues = { producers: [] }; }).status).toBe(1);
-		 expect(runPolicy(undefined, (config) => { config.name = "ipaws-production-placeholder"; }).status).toBe(1);
+		expect(runPolicy(undefined, (config) => { config.name = "alabamabeachflag-ipaws-production"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.name = "alabamabeachflag-api"; }).status).toBe(1);
 		expect(generalKvId).toBeTruthy();
 		expect(runPolicy((config) => { config.kv_namespaces[0].id = generalKvId; }).status).toBe(1);
