@@ -37,6 +37,13 @@ function mutateRelease(directory: string, change: (workflow: any) => void) {
 
 describe("production release governance", () => {
 	it("accepts the strict manual fail-closed release path", () => expect(governance().status).toBe(0));
+	it("rejects the legacy production environment and any unreviewed replacement", () => {
+		for (const environment of ["ipaws-production", "production", "ipaws-production-release-unreviewed"]) {
+			const result = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].environment = environment; }));
+			expect(result.status).toBe(1);
+			expect(result.stderr).toContain("release must use the protected ipaws-production-release environment");
+		}
+	});
 	for (const trigger of ["push", "repository_dispatch", "workflow_call", "pull_request_target", "issue_comment"]) {
 		it(`rejects ${trigger} as a production trigger`, () => {
 			const result = governance((directory) => mutateRelease(directory, (workflow) => { workflow.on[trigger] = {}; }));
