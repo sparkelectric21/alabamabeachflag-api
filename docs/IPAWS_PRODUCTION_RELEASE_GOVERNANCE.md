@@ -21,9 +21,11 @@ This Cloudflare setting is an external production control that repository checks
 
 `npm run validate:production-release-governance` structurally allowlists the two repository workflows and every property and step in the manual release. It rejects added triggers, jobs, actions, secret exposure, deployment-capable commands in verification CI, changes to the immutable-tree recheck, and changes to the exact deploy/readback commands. The ordinary `npm run deploy` entry point fails closed; the protected workflow is the only repository-defined live-deployment path.
 
-The release workflow is intentionally inert until all of these external controls exist:
+The release workflow targets the main-only `ipaws-production-release` environment. It was created without reviewers, a wait timer, secrets, variables, custom protection rules, or a release gate so runner acquisition can be diagnosed independently of credentials. The original `ipaws-production` environment and its protected values remain unchanged. No production release is possible from the replacement environment until a separately approved credential migration refreshes the readiness evidence and installs the exact reviewed variable and secret names.
 
-- the GitHub environment `ipaws-production` is limited to `main`; this sole-owner project uses explicit confirmation and immutable evidence gates rather than a nonexistent second account;
+The release workflow is intentionally inert until all of these external controls exist in `ipaws-production-release`:
+
+- the GitHub environment `ipaws-production-release` is limited to `main`; this sole-owner project uses explicit confirmation and immutable evidence gates rather than a nonexistent second account;
 - environment variable `IPAWS_PRODUCTION_RELEASE_ENABLED` is exactly `approved-disabled-baseline`;
 - environment variable `CLOUDFLARE_ACCOUNT_ID` is configured;
 - environment secret `CLOUDFLARE_API_TOKEN` is a dedicated least-privilege token;
@@ -31,6 +33,8 @@ The release workflow is intentionally inert until all of these external controls
 - the production configuration contains independently verified values and passes deploy-mode policy validation;
 - `config/ipaws-production-disabled-baseline-evidence.json` pins the exact disabled configuration, contains only pre-endpoint evidence, and assigns every operational owner;
 - the dispatch supplies the exact reviewed `main` commit, configuration SHA-256, evidence-manifest SHA-256, approval reference, and confirmation phrase.
+
+The committed bootstrap evidence still records the independently verified credential readiness of the unchanged original `ipaws-production` environment. That historical packet must not be interpreted as credential readiness for `ipaws-production-release`; migration and refreshed evidence require separate approval before deployment.
 
 For the first deployment only, the time-limited release token has **Account → Workers Scripts → Edit** on the approved account because a nonexistent Worker cannot yet be selected as a per-Worker resource, plus **Zone → Workers Routes → Edit** scoped only to `alabamabeachflag.com`. Binding the already-created KV namespace does not require KV data permission. No DNS, KV Storage, R2, D1, Queues, Tail, account-membership, billing, or unrelated permission belongs on this token. After bootstrap and readback, replace it with a credential scoped only to `alabamabeachflag-ipaws-production` plus the same zone-scoped Workers Routes permission for releases that may change the route. A separate aggregate-analytics read token remains preferable for monitoring and must not be reused as the release credential.
 

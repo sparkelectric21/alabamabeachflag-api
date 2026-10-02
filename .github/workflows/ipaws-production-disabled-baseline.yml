@@ -18,7 +18,7 @@
       "if": "github.ref == 'refs/heads/main'",
       "runs-on": "ubuntu-latest",
       "timeout-minutes": 20,
-      "environment": "ipaws-production",
+      "environment": "ipaws-production-release",
       "env": {
         "CLOUDFLARE_ACCOUNT_ID": "${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
         "RELEASE_ENABLED": "${{ vars.IPAWS_PRODUCTION_RELEASE_ENABLED }}",

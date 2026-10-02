@@ -16,7 +16,7 @@ for (const name of files) fail(!allowedWorkflowNames.has(name), `unreviewed work
 let workflow;
 try {
 	const releaseSource = readFileSync(resolve(workflowDirectory, releaseName), "utf8");
-	fail(createHash("sha256").update(releaseSource).digest("hex") !== "913362661a84d9390aab3261de025b82a4babb9ab3a39940551a0298dd39e59c", "manual release workflow differs byte-for-byte from the reviewed definition");
+	fail(createHash("sha256").update(releaseSource).digest("hex") !== "b1538d369c8636672b2d8982565b167de06ca7392d3ac123fa5a4fd221e24cf0", "manual release workflow differs byte-for-byte from the reviewed definition");
 	workflow = JSON.parse(releaseSource);
 } catch { failures.push(`missing or non-canonical manual release workflow: ${releaseName}`); }
 
@@ -29,7 +29,7 @@ if (workflow) {
 	const job = workflow.jobs?.["deploy-disabled-baseline"];
 	exactKeys(job, ["if", "runs-on", "timeout-minutes", "environment", "env", "steps"], "release job");
 	fail(job?.if !== "github.ref == 'refs/heads/main'", "release must run only from main");
-	fail(job?.environment !== "ipaws-production", "release must use the protected ipaws-production environment");
+	fail(job?.environment !== "ipaws-production-release", "release must use the protected ipaws-production-release environment");
 	fail(job?.["runs-on"] !== "ubuntu-latest", "release runner is not reviewed");
 	fail(job?.["timeout-minutes"] !== 20, "release timeout is not reviewed");
 	fail(Object.values(job?.env ?? {}).some((value) => String(value).includes("secrets.")), "secrets must not be job-scoped");

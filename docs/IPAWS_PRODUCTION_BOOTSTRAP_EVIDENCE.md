@@ -5,7 +5,8 @@ This packet records only sanitized pre-deployment evidence observed on 2026-10-0
 ## External readiness
 
 - DNS: `ipaws.alabamabeachflag.com` has one proxied AAAA record targeting Cloudflare's documented non-serving Worker-only placeholder `100::`. No Worker route exists. A bounded HEAD check returned Cloudflare `522`, so no application origin was exposed.
-- GitHub environment: `ipaws-production` is restricted to `main`. It contains only the expected bootstrap and metrics secret names plus the `CLOUDFLARE_ACCOUNT_ID` variable. The release-enable variable is absent and no release workflow was dispatched.
+- Original GitHub environment: `ipaws-production` is restricted to `main` and remains unchanged with the expected bootstrap and metrics secret names plus the `CLOUDFLARE_ACCOUNT_ID` variable. Its release-enable variable is absent.
+- Diagnostic release environment: `ipaws-production-release` is restricted to `main` and initially has no reviewers, wait timer, secrets, variables, custom protection rules, or release gate. The manual workflow targets this environment only to isolate runner acquisition. It cannot deploy until a separately approved credential migration and evidence refresh are complete.
 - Release credential: the time-limited bootstrap token is scoped only to the approved account and `alabamabeachflag.com`, with Workers Scripts edit and Workers Routes edit. Its value is not retrievable from GitHub and is not recorded here.
 - Analytics: the authenticated Cloudflare account dashboard displayed aggregate Worker invocation, Worker error, and CPU-time metrics. No request body or log access was used. A dedicated read-only automation credential with `Account Analytics: Read` is still unprovisioned and must not reuse the release credential.
 - Ownership: `config/ipaws-production-disabled-baseline-evidence.json` assigns monitoring, privacy, incident response, FEMA coordination, secret custody, and rollback to `william-dickens`.
