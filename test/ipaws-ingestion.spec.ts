@@ -74,12 +74,14 @@ function createEnv(overrides: Partial<Env> = {}) {
 	const claims = new Map<string, { status: "processing"; token: string } | { status: "complete" }>();
 	const metricsEvents: unknown[] = [];
 	const metricsCorrelations: unknown[] = [];
+	const idempotencyRequests: string[] = [];
 	const metricsControl = { fail: false, claimFailures: 0 };
 	const idempotency = {
 		idFromName: (name: string) => name,
 		get: (id: string) => ({
 			fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const path = new URL(String(input)).pathname;
+				idempotencyRequests.push(path);
 				if (path === "/metrics/record") {
 					if (metricsControl.fail) throw new Error("injected_metrics_failure");
 					const body = JSON.parse(String(init?.body ?? "{}"));
@@ -124,8 +126,9 @@ function createEnv(overrides: Partial<Env> = {}) {
 		...overrides,
 		metricsEvents,
 		metricsCorrelations,
+		idempotencyRequests,
 		metricsControl,
-	} as Env & { BEACH_DATA: ReturnType<typeof createStore>; metricsEvents: unknown[]; metricsCorrelations: unknown[]; metricsControl: { fail: boolean; claimFailures: number } };
+	} as Env & { BEACH_DATA: ReturnType<typeof createStore>; metricsEvents: unknown[]; metricsCorrelations: unknown[]; idempotencyRequests: string[]; metricsControl: { fail: boolean; claimFailures: number } };
 }
 
 describe("IPAWS CAP parser", () => {
@@ -269,6 +272,69 @@ describe("IPAWS pub/sub handler", () => {
 		env.BEACH_DATA.map.set(`ipaws:ingest:${baseNotification.MessageId}`, JSON.stringify({ ...legacy, rawMessage: "different" }));
 		await expect(upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600))
 			.rejects.toThrow("ipaws_legacy_ingestion_record_mismatch");
+	});
+
+	it("rejects an environment-less production record before any claim or recovery", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv({ IPAWS_ENVIRONMENT: "production" });
+		const legacy = {
+			id: "legacy-internal-record", messageId: baseNotification.MessageId, type: "Notification",
+			topicArn: baseNotification.TopicArn, rawMessage: CAP_JSON_STRING, processingState: "notification_done",
+		};
+		const ingestionKey = `ipaws:ingest:${baseNotification.MessageId}`;
+		const original = JSON.stringify(legacy);
+		env.BEACH_DATA.map.set(ingestionKey, original);
+
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING }),
+		}), env);
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({
+			status: "error", code: "ipaws_legacy_ingestion_environment_unverified",
+			message: "Existing ingestion provenance is not verified for production.",
+		});
+		expect(env.idempotencyRequests.filter((path) => path === "/claim" || path === "/recover")).toEqual([]);
+		expect(env.BEACH_DATA.map.get(ingestionKey)).toBe(original);
+		expect(env.BEACH_DATA.map.has(`ipaws:normalized:${baseNotification.MessageId}`)).toBe(false);
+		expect(env.BEACH_DATA.map.has("ipaws:health:v1")).toBe(false);
+		expect(env.BEACH_DATA.map.has("ipaws:subscription:state")).toBe(false);
+		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
+		expect(env.metricsCorrelations).toEqual([]);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(baseNotification.MessageId);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(CAP_JSON_STRING);
+	});
+
+	it("does not inspect legacy ingestion state before signature and TopicArn authorization", async () => {
+		const signature = vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: false, reason: "ipaws_signature_mismatch" });
+		const signatureEnv = createEnv({ IPAWS_ENVIRONMENT: "production" });
+		await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, Message: CAP_JSON_STRING }),
+		}), signatureEnv);
+		expect(signatureEnv.BEACH_DATA.get.mock.calls.some(([key]) => key === `ipaws:ingest:${baseNotification.MessageId}`)).toBe(false);
+
+		signature.mockClear();
+		const topicEnv = createEnv({ IPAWS_ENVIRONMENT: "production" });
+		await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, TopicArn: `${defaultTopicArn}-other`, Message: CAP_JSON_STRING }),
+		}), topicEnv);
+		expect(signature).not.toHaveBeenCalled();
+		expect(topicEnv.BEACH_DATA.get).not.toHaveBeenCalled();
+	});
+
+	it("allows a valid production record to continue through idempotency", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv({ IPAWS_ENVIRONMENT: "production" });
+		const parsed = parseCapPayload(CAP_JSON_STRING);
+		await upsertIngestionRecord(env, baseNotification, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600);
+		env.BEACH_DATA.put.mockClear();
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING }),
+		}), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ status: "ok", outcome: "accepted" });
+		expect(env.idempotencyRequests).toContain("/claim");
+		expect(env.idempotencyRequests).toContain("/complete");
 	});
 	it("fences stale owners after lease expiry and permits only the current owner to complete", async () => {
 		const values = new Map<string, unknown>();

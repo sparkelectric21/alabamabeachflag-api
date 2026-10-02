@@ -35,7 +35,7 @@ The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS 
 
 ### Test evidence
 
-Local correction review used Node.js 24.21.0 and Wrangler 4.137.0. The complete suite passed 868 tests across 50 files, along with the general, staging, and IPAWS-production TypeScript and deterministic declaration checks; lint; deployment-policy template validation; expected rejection of unresolved real-deployment placeholders; staging and inert-production dry runs; whitespace checks; and production/development dependency-audit policies. GitHub evidence must refer to the exact reviewed head.
+Local correction review used Node.js 24.21.0 and Wrangler 4.137.0. The complete suite passed 871 tests across 50 files, along with the general, staging, and IPAWS-production TypeScript and deterministic declaration checks; lint; deployment-policy template validation; expected rejection of unresolved real-deployment placeholders; staging and inert-production dry runs; whitespace checks; and production/development dependency-audit policies. GitHub evidence must refer to the exact reviewed head.
 
 ### Staging evidence
 

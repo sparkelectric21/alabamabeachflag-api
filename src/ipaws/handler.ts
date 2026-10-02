@@ -238,6 +238,16 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			return responseError("ipaws_invalid_subscribe_url", "SubscribeURL is invalid.", 400);
 		}
 	}
+	if (config.environment === "production") {
+		const existingRecord = await readIngestionRecord(env, message.MessageId);
+		if (existingRecord && existingRecord.environment === undefined) {
+			return responseError(
+				"ipaws_legacy_ingestion_environment_unverified",
+				"Existing ingestion provenance is not verified for production.",
+				503,
+			);
+		}
+	}
 
 	let claim;
 	enterStage(metrics, "initial_idempotency_claim");
