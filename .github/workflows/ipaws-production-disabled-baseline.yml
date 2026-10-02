@@ -1,0 +1,45 @@
+{
+  "name": "IPAWS production disabled baseline release",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "approved_commit": { "description": "Exact independently reviewed main commit", "required": true, "type": "string" },
+        "approved_config_sha256": { "description": "SHA-256 of the reviewed production configuration", "required": true, "type": "string" },
+        "approved_evidence_sha256": { "description": "SHA-256 of the reviewed evidence manifest", "required": true, "type": "string" },
+        "approval_reference": { "description": "Human change-approval reference", "required": true, "type": "string" },
+        "confirmation": { "description": "Enter DEPLOY_DISABLED_IPAWS_BASELINE", "required": true, "type": "string" }
+      }
+    }
+  },
+  "permissions": { "contents": "read" },
+  "concurrency": { "group": "ipaws-production-disabled-baseline", "cancel-in-progress": false },
+  "jobs": {
+    "deploy-disabled-baseline": {
+      "if": "github.ref == 'refs/heads/main'",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 20,
+      "environment": "ipaws-production",
+      "env": {
+        "CLOUDFLARE_ACCOUNT_ID": "${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
+        "RELEASE_ENABLED": "${{ vars.IPAWS_PRODUCTION_RELEASE_ENABLED }}",
+        "APPROVED_COMMIT": "${{ inputs.approved_commit }}",
+        "APPROVED_CONFIG_SHA256": "${{ inputs.approved_config_sha256 }}",
+        "APPROVED_EVIDENCE_SHA256": "${{ inputs.approved_evidence_sha256 }}",
+        "APPROVAL_REFERENCE": "${{ inputs.approval_reference }}",
+        "CONFIRMATION": "${{ inputs.confirmation }}"
+      },
+      "steps": [
+        { "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "with": { "ref": "${{ inputs.approved_commit }}", "fetch-depth": 0 } },
+        { "name": "Validate immutable approval inputs", "shell": "bash", "run": "set -euo pipefail\ntest \"$RELEASE_ENABLED\" = \"approved-disabled-baseline\"\ntest \"$CONFIRMATION\" = \"DEPLOY_DISABLED_IPAWS_BASELINE\"\n[[ \"$APPROVED_COMMIT\" =~ ^[0-9a-f]{40}$ ]]\n[[ \"$APPROVED_CONFIG_SHA256\" =~ ^[0-9a-f]{64}$ ]]\n[[ \"$APPROVED_EVIDENCE_SHA256\" =~ ^[0-9a-f]{64}$ ]]\n[[ \"$APPROVAL_REFERENCE\" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$ ]]\ntest \"$(git rev-parse HEAD)\" = \"$APPROVED_COMMIT\"\ntest \"$(git rev-parse origin/main)\" = \"$APPROVED_COMMIT\"\ntest \"$(sha256sum wrangler.ipaws.production.jsonc | cut -d ' ' -f 1)\" = \"$APPROVED_CONFIG_SHA256\"\ntest \"$(sha256sum config/ipaws-production-evidence.json | cut -d ' ' -f 1)\" = \"$APPROVED_EVIDENCE_SHA256\"\ntest -n \"$CLOUDFLARE_ACCOUNT_ID\"" },
+        { "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with": { "node-version": "24.21.0", "cache": "npm" } },
+        { "run": "npm ci" },
+        { "name": "Verify repository and disabled deployment policy", "run": "npm run validate:production-release-governance\nnpm run validate:ipaws-production-deploy\nnpm run validate:ipaws-production-evidence -- --require-complete\nnpm run inventory:ipaws-production-inputs -- --require-configured\nnpm run typecheck:ipaws-production\nnpm run lint\nnpm test\nnpm run cf-typecheck:ipaws-production\nnpm audit --omit=dev --audit-level=high\nnpm audit --audit-level=critical" },
+        { "name": "Build exact reviewed configuration without deploying", "run": "npx wrangler deploy --dry-run --outdir /tmp/ipaws-production-disabled-baseline --config wrangler.ipaws.production.jsonc" },
+        { "name": "Revalidate immutable reviewed tree", "shell": "bash", "run": "set -euo pipefail\ngit fetch --no-tags origin main\ntest \"$(git rev-parse HEAD)\" = \"$APPROVED_COMMIT\"\ntest \"$(git rev-parse origin/main)\" = \"$APPROVED_COMMIT\"\ntest \"$(sha256sum wrangler.ipaws.production.jsonc | cut -d ' ' -f 1)\" = \"$APPROVED_CONFIG_SHA256\"\ntest \"$(sha256sum config/ipaws-production-evidence.json | cut -d ' ' -f 1)\" = \"$APPROVED_EVIDENCE_SHA256\"\ngit diff --exit-code\ngit diff --cached --exit-code\ntest -z \"$(git status --porcelain)\"" },
+        { "name": "Record disabled-baseline approval summary", "run": "echo \"approvalReference=$APPROVAL_REFERENCE\"\necho \"commit=$APPROVED_COMMIT\"\necho \"configSha256=$APPROVED_CONFIG_SHA256\"\necho \"evidenceSha256=$APPROVED_EVIDENCE_SHA256\"\necho \"ingestionEnabled=false\"\necho \"automaticSubscriptionConfirmationEnabled=false\"\necho \"notificationsEnabled=false\"\necho \"downstreamEffectsEnabled=false\"" },
+        { "name": "Deploy reviewed disabled baseline", "env": { "CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}" }, "run": "node scripts/deploy-ipaws-production-disabled-baseline.mjs" },
+        { "name": "Verify deployed disabled baseline", "env": { "CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}" }, "run": "node scripts/verify-ipaws-production-deployment.mjs --version-file=/tmp/ipaws-production-deployed-version --approved-commit=${APPROVED_COMMIT}" }
+      ]
+    }
+  }
+}

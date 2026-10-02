@@ -29,7 +29,8 @@
 	"vars": {
 		"IPAWS_INGESTION_ENABLED": "false",
 		"IPAWS_ENVIRONMENT": "production",
-		"IPAWS_ALLOWED_TOPIC_ARNS": "__IPAWS_PRODUCTION_TOPIC_ARN__",
+		// Deliberate deny-all bootstrap. A verified production TopicArn requires a later reviewed change.
+		"IPAWS_ALLOWED_TOPIC_ARNS": "",
 		"IPAWS_AUTO_CONFIRM_SUBSCRIPTION": "false",
 		"IPAWS_NOTIFICATIONS_ENABLED": "false",
 		"IPAWS_DOWNSTREAM_EFFECTS_ENABLED": "false",

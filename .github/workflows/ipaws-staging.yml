@@ -21,6 +21,16 @@ on:
       - "tsconfig.ipaws-staging.json"
       - "tsconfig.ipaws-production.json"
       - "scripts/validate-ipaws-deployment-policy.mjs"
+      - "scripts/validate-production-release-governance.mjs"
+      - "scripts/validate-ipaws-production-evidence.mjs"
+      - "scripts/verify-ipaws-production-deployment.mjs"
+      - "scripts/deploy-ipaws-production-disabled-baseline.mjs"
+      - "scripts/refuse-direct-production-deploy.mjs"
+      - "scripts/report-ipaws-production-inputs.mjs"
+      - "config/ipaws-production-evidence.json"
+      - "docs/IPAWS_PRODUCTION_RELEASE_GOVERNANCE.md"
+      - "docs/IPAWS_PRODUCTION_DEPLOYMENT_INCIDENT_2026-10-02.md"
+      - ".github/workflows/ipaws-production-disabled-baseline.yml"
       - ".github/workflows/ipaws-staging.yml"
   push:
     branches:
@@ -70,6 +80,12 @@ jobs:
         run: npm run cf-typecheck:ipaws-production
       - name: Validate IPAWS deployment policy template
         run: npm run validate:ipaws-deployment-policy
+      - name: Validate production release governance
+        run: npm run validate:production-release-governance
+      - name: Validate production evidence template
+        run: npm run validate:ipaws-production-evidence
+      - name: Inventory unresolved production inputs
+        run: npm run inventory:ipaws-production-inputs
       - name: Confirm unresolved production template cannot deploy
         run: if npm run validate:ipaws-production-deploy; then echo "production template unexpectedly passed deployment validation"; exit 1; fi
       - name: Validate production bundle and bindings without deploying

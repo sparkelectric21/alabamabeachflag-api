@@ -2,7 +2,9 @@
 
 This is a design contract, not an enabled production path. The staging receiver remains storage-only and cannot notify users.
 
-`wrangler.ipaws.production.jsonc` is an inert repository template, not an approved deployment configuration. Its Worker, KV, route, endpoint, and TopicArn values are recognizable placeholders. `npm run validate:ipaws-production-deploy` must fail until an operator replaces every placeholder with independently verified production identifiers. The initial baseline must keep ingestion, automatic subscription confirmation, notifications, and downstream effects set to `false` and must contain no queue, email, service, D1, R2, AI, or asset binding.
+`wrangler.ipaws.production.jsonc` is an inert repository template, not an approved deployment configuration. Its Worker, KV, route, and endpoint values are recognizable placeholders. Its TopicArn allowlist is deliberately empty: this is the reviewed deny-all bootstrap, not a value to infer from staging. `npm run validate:ipaws-production-deploy` must fail until an operator replaces every resource placeholder with independently verified production identifiers. The initial baseline must keep ingestion, automatic subscription confirmation, notifications, and downstream effects set to `false` and must contain no queue, email, service, D1, R2, AI, or asset binding.
+
+Production release governance, the automatic-deployment incident, and the manual disabled-baseline workflow are documented in `IPAWS_PRODUCTION_RELEASE_GOVERNANCE.md`. Until the live Cloudflare Workers Builds trigger is separately reviewed and changed, merging to `main` is itself a production deployment and is prohibited for IPAWS readiness work.
 
 ## Contract and authorization boundary
 
@@ -75,23 +77,37 @@ The authorizer should default deny. It must validate the approved FEMA feed, pro
 
 The repository provides deterministic lifecycle projection, per-lineage default-deny authorization from a strongly consistent transactional snapshot, a transactional ledger contract for inbox/version/projection/effect-decision writes, and relationship-based reconciliation in `src/ipaws/production-lifecycle.ts`. Every modeled effect decision carries explicit inbox, immutable-version, and lineage references so missing, orphaned, duplicate, and terminally inconsistent decisions can be detected without comparing unrelated key spaces. This module is modeled and tested but is not called by the receiver runtime. These are prerequisites, not an enabled consumer: a strongly consistent production store and its binding still require separate approval, provisioning, and integration. The stored “effect” is only an idempotent authorization-decision record; no user-facing transport is implemented.
 
+The lifecycle ledger is not required for the isolated disabled baseline or for a later passive receiver that only authenticates and retains input while all effects remain disabled. It becomes mandatory before any consumer authorization decision, queue/outbox publication, notification, or downstream effect is enabled.
+
 ## Required operator and FEMA inputs
 
 Supply and independently verify all of the following without placing credentials in source control:
 
-- exact production SNS TopicArn and AWS partition/region;
-- whether automatic subscription confirmation is approved, who initiates it, and the change window;
+FEMA's current redistribution guidance requires no IPAWS Users Portal application, API key, password, or user credential. FEMA Engineering provisions HTTPS subscribers through AWS SNS. The documented topic name is `EAS_PUBLIC_FEED`, but the production TopicArn, account, partition, and region are not present in the reviewed correspondence and must not be inferred from staging. A production subscription ARN, state, and effective attributes do not exist until FEMA receives the production endpoint and initiates onboarding; collect those as post-initiation evidence. Subscription confirmation must occur within FEMA's stated 48-hour window, but automatic confirmation remains disabled.
+
+- exact production SNS TopicArn and AWS partition/region, supplied by FEMA before any ingestion-capable change;
+- after FEMA initiates onboarding: subscription ARN/state, effective delivery/retry policy, raw-message-delivery setting, DLQ/redrive behavior, and the approved confirmation procedure;
 - dedicated production Worker name, KV namespace ID, route/zone, endpoint, and Durable Object ownership;
-- the Cloudflare account and operator authorized to deploy and roll back;
+- William Dickens is the Cloudflare account operator authorized to deploy and roll back;
 - a secret binding named `IPAWS_METRICS_READ_TOKEN` containing a newly generated value of at least 32 bytes;
 - a read-only Cloudflare API token with `Account Analytics: Read`, its custodian, and expiry/rotation owner;
-- incident commander, privacy reviewer, monitoring owner, FEMA liaison, and rollback operator;
+- William Dickens owns monitoring, privacy, incident response, FEMA coordination, secret custody, and rollback; no separate GitHub-account reviewer is required;
 - confirmation whether authenticated JSON arrays, scalar JSON, or opaque text are expected auxiliary FEMA messages.
+
+Proposed isolated resource identities, pending explicit approval and availability checks:
+
+- Worker: `alabamabeachflag-ipaws-production`
+- KV namespace display name: `alabamabeachflag-ipaws-production`
+- Durable Object binding/class: `IPAWS_IDEMPOTENCY` / `IpawsIdempotencyCoordinator`, with the dedicated migration tag `ipaws-production-idempotency-v1` and a namespace owned only by the production Worker
+- hostname: `ipaws.alabamabeachflag.com`
+- callback: `https://ipaws.alabamabeachflag.com/v1/ipaws/pubsub`
+
+These are proposals, not provisioned resources or verified identifiers. Do not place their generated IDs into configuration until read-only collision and isolation checks pass.
 
 ## Disabled production baseline
 
 1. Replace every placeholder in `wrangler.ipaws.production.jsonc` with approved production identifiers. Do not reuse staging identifiers.
-2. Keep `IPAWS_INGESTION_ENABLED`, `IPAWS_AUTO_CONFIRM_SUBSCRIPTION`, `IPAWS_NOTIFICATIONS_ENABLED`, and `IPAWS_DOWNSTREAM_EFFECTS_ENABLED` set to `false`.
+2. Keep the TopicArn allowlist empty and keep `IPAWS_INGESTION_ENABLED`, `IPAWS_AUTO_CONFIRM_SUBSCRIPTION`, `IPAWS_NOTIFICATIONS_ENABLED`, and `IPAWS_DOWNSTREAM_EFFECTS_ENABLED` set to `false`.
 3. Provision only the approved production KV namespace, Worker route, metrics secret, and dedicated SQLite Durable Object namespace. Resource creation is a separate authorized change.
 4. Run the full Node.js 24 suite, all declaration checks, `npm run validate:ipaws-production-deploy`, audits, and the production-template dry run.
 5. Review resolved dry-run bindings against the approved inventory. Verify the staging config contains none of the production identifiers.
