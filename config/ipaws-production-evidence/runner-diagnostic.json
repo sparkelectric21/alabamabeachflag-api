@@ -1,0 +1,13 @@
+{
+  "observedAtUtc": "2026-10-02T22:21:30Z",
+  "environment": "ipaws-production-release",
+  "runId": 37072027774,
+  "headSha": "be2425df4be38be9d31174cf0ef88231484b9a74",
+  "runner": "ubuntu-latest",
+  "checkoutCompleted": true,
+  "stoppingStep": "Validate immutable approval inputs",
+  "failureClass": "release_gate_absent",
+  "laterStepsExecuted": false,
+  "cloudflareCommandExecuted": false,
+  "workflowDispatchedForDeployment": false
+}

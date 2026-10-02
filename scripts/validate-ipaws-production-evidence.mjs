@@ -8,7 +8,7 @@ const phase = rawArgument("phase") ?? "disabled-baseline";
 const requireComplete = process.argv.includes("--require-complete");
 const evidenceDefaults = { "disabled-baseline": "config/ipaws-production-disabled-baseline-evidence.json", "passive-ingestion": "config/ipaws-production-passive-ingestion-evidence.json" };
 const evidenceKeys = {
-	"disabled-baseline": ["independentTechnicalReview", "resourceIsolation", "automaticDeploymentGovernance", "dedicatedKvIdentity", "proposedResourceIdentities", "disabledCapabilityBaseline", "inertPreRoutingResponse", "analyticsAccess", "rollbackAndVerificationPlan", "dnsReadiness", "metricsSecretReadiness", "releaseCredentialReadiness", "githubEnvironmentReadiness"],
+	"disabled-baseline": ["independentTechnicalReview", "resourceIsolation", "automaticDeploymentGovernance", "dedicatedKvIdentity", "proposedResourceIdentities", "disabledCapabilityBaseline", "inertPreRoutingResponse", "analyticsAccess", "rollbackAndVerificationPlan", "dnsReadiness", "metricsSecretReadiness", "releaseCredentialReadiness", "githubEnvironmentReadiness", "runnerDiagnostic"],
 	"passive-ingestion": ["disabledBaselineDeployment", "femaProductionTopic", "awsPartitionAndRegion", "subscriptionInitiation", "subscriptionArnAndState", "deliveryRetryPolicy", "rawMessageDelivery", "dlqRedrive", "auxiliaryFormats", "nonemptyTopicAllowlistReview", "ingestionEnablementApproval", "automaticConfirmationDisabled", "notificationsAndEffectsDisabled"],
 };
 const evidencePacketFiles = {
@@ -19,6 +19,7 @@ const evidencePacketFiles = {
 		metricsSecretReadiness: "config/ipaws-production-evidence/metrics-secret-readiness.json",
 		releaseCredentialReadiness: "config/ipaws-production-evidence/release-credential-readiness.json",
 		githubEnvironmentReadiness: "config/ipaws-production-evidence/github-environment-readiness.json",
+		runnerDiagnostic: "config/ipaws-production-evidence/runner-diagnostic.json",
 	},
 };
 const ownerKeys = ["monitoring", "privacy", "incidentResponse", "femaCoordination", "secretCustody", "rollback"];
@@ -54,7 +55,7 @@ function validateDisabledBaselinePacket(key, packet) {
 	if (key === "independentTechnicalReview") {
 		exactProperties(packet, ["reviewPhase", "scope", "reviewedAtUtc", "verdict", "exactCommitAcceptance", "reviewedHeadStoredInManifest"], "independent review packet");
 		fail(packet?.reviewPhase !== "disabled-baseline-final-evidence", "independent review phase is invalid");
-		fail(packet?.scope !== "configuration-evidence-governance-and-secret-readiness-contract", "independent review scope is invalid");
+		fail(packet?.scope !== "fresh-release-environment-credential-runner-and-disabled-baseline-evidence", "independent review scope is invalid");
 		fail(packet?.verdict !== "approve", "independent review verdict must be approve");
 		fail(packet?.exactCommitAcceptance !== "external-workflow-input-after-merge", "exact-head acceptance must remain external");
 		fail(packet?.reviewedHeadStoredInManifest !== false, "review packet must not embed a reviewed head");
@@ -62,7 +63,7 @@ function validateDisabledBaselinePacket(key, packet) {
 	}
 	if (key === "metricsSecretReadiness") {
 		exactProperties(packet, ["observedAtUtc", "environment", "secretName", "generation", "minimumRandomBytes", "storedAs", "secretValueRetainedInRepository", "secretValueRetrievedForVerification", "workflowDispatched"], "metrics secret packet");
-		fail(packet?.environment !== "ipaws-production", "metrics secret environment is invalid");
+		fail(packet?.environment !== "ipaws-production-release", "metrics secret environment is invalid");
 		fail(packet?.secretName !== "IPAWS_METRICS_READ_TOKEN", "metrics secret name is invalid");
 		fail(packet?.generation !== "cryptographically-secure-operating-system-randomness", "metrics secret generation method is invalid");
 		fail(!Number.isInteger(packet?.minimumRandomBytes) || packet.minimumRandomBytes < 32, "metrics secret must contain at least 32 random bytes");
@@ -73,13 +74,31 @@ function validateDisabledBaselinePacket(key, packet) {
 	}
 	if (key === "githubEnvironmentReadiness") {
 		exactProperties(packet, ["observedAtUtc", "environment", "deploymentBranches", "secretNames", "variableNames", "releaseEnableGatePresent", "workflowDispatched"], "GitHub environment packet");
-		fail(packet?.environment !== "ipaws-production", "GitHub environment name is invalid");
+		fail(packet?.environment !== "ipaws-production-release", "GitHub environment name is invalid");
 		fail(JSON.stringify(packet?.deploymentBranches) !== JSON.stringify(["main"]), "GitHub environment must be restricted to main");
 		fail(JSON.stringify([...(packet?.secretNames ?? [])].sort()) !== JSON.stringify(["CLOUDFLARE_API_TOKEN", "IPAWS_METRICS_READ_TOKEN"].sort()), "GitHub environment secret names are invalid");
 		fail(JSON.stringify(packet?.variableNames) !== JSON.stringify(["CLOUDFLARE_ACCOUNT_ID"]), "GitHub environment variable names are invalid");
 		fail(packet?.releaseEnableGatePresent !== false, "release-enable gate must remain absent");
 		fail(packet?.workflowDispatched !== false, "GitHub environment must not claim a workflow dispatch");
 		fail(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(packet?.observedAtUtc ?? ""), "GitHub environment observation timestamp is invalid");
+	}
+	if (key === "releaseCredentialReadiness") {
+		exactProperties(packet, ["observedAtUtc", "credentialName", "environment", "expiresOn", "accountScope", "zoneScope", "permissions", "excludedPermissions", "tokenValueRetainedInRepository", "tokenValueRetrievedForVerification"], "release credential packet");
+		fail(packet?.credentialName !== "IPAWS production release bootstrap", "release credential name is invalid");
+		fail(packet?.environment !== "ipaws-production-release", "release credential environment is invalid");
+		fail(packet?.expiresOn !== "2026-10-09", "release credential expiration is invalid");
+		fail(packet?.accountScope !== "approved-cloudflare-account-only" || packet?.zoneScope !== "alabamabeachflag.com-only", "release credential resource scope is invalid");
+		fail(JSON.stringify(packet?.permissions) !== JSON.stringify(["Workers Scripts:Edit", "Workers Routes:Edit"]), "release credential permissions are invalid");
+		for (const permission of ["DNS:Edit", "KV Storage:Edit", "D1:Edit", "R2:Edit", "Queues:Edit", "Workers AI:Edit", "Billing:Edit", "Memberships:Edit", "Account Administration:Edit"]) fail(!packet?.excludedPermissions?.includes(permission), `release credential must exclude ${permission}`);
+		fail(packet?.tokenValueRetainedInRepository !== false || packet?.tokenValueRetrievedForVerification !== false, "release credential value must not be retained or retrieved");
+	}
+	if (key === "runnerDiagnostic") {
+		exactProperties(packet, ["observedAtUtc", "environment", "runId", "headSha", "runner", "checkoutCompleted", "stoppingStep", "failureClass", "laterStepsExecuted", "cloudflareCommandExecuted", "workflowDispatchedForDeployment"], "runner diagnostic packet");
+		fail(packet?.environment !== "ipaws-production-release", "runner diagnostic environment is invalid");
+		fail(packet?.runId !== 37072027774 || packet?.headSha !== "be2425df4be38be9d31174cf0ef88231484b9a74", "runner diagnostic immutable identity is invalid");
+		fail(packet?.runner !== "ubuntu-latest" || packet?.checkoutCompleted !== true, "runner diagnostic did not establish runner acquisition and checkout");
+		fail(packet?.stoppingStep !== "Validate immutable approval inputs" || packet?.failureClass !== "release_gate_absent", "runner diagnostic did not fail at the expected gate");
+		fail(packet?.laterStepsExecuted !== false || packet?.cloudflareCommandExecuted !== false || packet?.workflowDispatchedForDeployment !== false, "runner diagnostic must not claim deployment activity");
 	}
 }
 

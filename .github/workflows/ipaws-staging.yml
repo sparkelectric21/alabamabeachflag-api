@@ -29,6 +29,8 @@ on:
       - "scripts/report-ipaws-production-inputs.mjs"
       - "config/ipaws-production-disabled-baseline-evidence.json"
       - "config/ipaws-production-passive-ingestion-evidence.json"
+      - "config/ipaws-production-evidence/**"
+      - "docs/IPAWS_PRODUCTION_BOOTSTRAP_EVIDENCE.md"
       - "docs/IPAWS_PRODUCTION_RELEASE_GOVERNANCE.md"
       - "docs/IPAWS_PRODUCTION_DEPLOYMENT_INCIDENT_2026-10-02.md"
       - ".github/workflows/ipaws-production-disabled-baseline.yml"
