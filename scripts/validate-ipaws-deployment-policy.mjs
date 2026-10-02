@@ -114,7 +114,10 @@ const allowedProductionVariables = new Set(requiredVariables);
 for (const variable of Object.keys(production.config.vars ?? {})) {
 	fail(!allowedProductionVariables.has(variable), `unapproved production variable: ${variable}`);
 }
-for (const variable of requiredVariables) fail(typeof production.config.vars?.[variable] !== "string" || production.config.vars[variable].length === 0, `production variable ${variable} is required`);
+for (const variable of requiredVariables) {
+	const value = production.config.vars?.[variable];
+	fail(typeof value !== "string" || (variable !== "IPAWS_ALLOWED_TOPIC_ARNS" && value.length === 0), `production variable ${variable} is required`);
+}
 fail(production.config.vars?.IPAWS_ENVIRONMENT !== "production", "production environment marker must be production");
 fail(staging.config.vars?.IPAWS_ENVIRONMENT !== "staging", "staging environment marker must be staging");
 for (const name of ["IPAWS_INGESTION_ENABLED", "IPAWS_AUTO_CONFIRM_SUBSCRIPTION", "IPAWS_NOTIFICATIONS_ENABLED", "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"]) {
@@ -133,7 +136,7 @@ if (mode === "deploy") {
 	fail(placeholders.length > 0, `unresolved production placeholders: ${placeholders.join(", ")}`);
 	fail(!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(production.config.name ?? ""), "production Worker name is invalid");
 	fail(!/^[a-f0-9]{32}$/.test(productionKv ?? "") || /^0{32}$/.test(productionKv ?? ""), "production KV namespace ID must be a non-placeholder 32-character lowercase hexadecimal ID");
-	fail(!/^arn:(?:aws|aws-us-gov):sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+(?:,arn:(?:aws|aws-us-gov):sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+)*$/.test(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS ?? ""), "production TopicArn allowlist is invalid");
+	fail(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS !== "", "initial disabled production baseline must use an empty deny-all TopicArn allowlist");
 	try {
 		const endpoint = new URL(productionEndpoint);
 		const endpointInZone = endpoint.hostname === routeZone || endpoint.hostname.endsWith(`.${routeZone}`);

@@ -8,14 +8,14 @@ The deployment removed the disabled IPAWS route and variables from the general W
 
 ## Required Cloudflare change before another merge
 
-The safest reversible configuration is:
+Cloudflare documents `npx wrangler versions upload` as the supported way to keep automatic builds while preventing automatic production activation. The smallest reversible configuration change is:
 
 1. Keep the Git connection so builds remain attributable to exact commits.
-2. Change the general Worker's production deploy command from `npx wrangler deploy` to `npx wrangler versions upload --config wrangler.jsonc`.
+2. In **Workers & Pages → alabamabeachflag-api → Settings → Builds**, record the current production Deploy command and change it from `npx wrangler deploy` to `npx wrangler versions upload --config wrangler.jsonc`.
 3. Confirm the production branch is exactly `main`, record all path filters and deploy hooks, and require a separate explicit promotion to 100 percent.
-4. If an inactive upload cannot preserve the Worker's current Durable Object contract, pause automatic production builds instead; do not silently fall back to live deployment.
+4. Do not trigger a test build as part of the setting change. If inactive upload cannot preserve the Worker's Durable Object contract, disconnect Workers Builds instead; do not silently fall back to live deployment.
 
-This Cloudflare setting is an external production-control write. Repository changes cannot enforce it. A Cloudflare account owner must review the current trigger and build-token scope and explicitly approve the change. Rollback is restoring the recorded trigger configuration, but only after a separately approved test confirms it does not unexpectedly activate a version.
+This Cloudflare setting is an external production-control write. Repository changes cannot enforce it. William Dickens, as account owner, must record the existing command, production branch, path filters, token identity/scope, and active deployment before approving the change. Rollback is restoring the recorded Deploy command. Restoring it re-enables automatic activation on the next matching push, so rollback must not trigger or retry a build.
 
 ## Repository enforcement
 
@@ -23,7 +23,7 @@ This Cloudflare setting is an external production-control write. Repository chan
 
 The release workflow is intentionally inert until all of these external controls exist:
 
-- the GitHub environment `ipaws-production` has required reviewers and deployment-branch protection limited to `main`;
+- the GitHub environment `ipaws-production` is limited to `main`; this sole-owner project uses explicit confirmation and immutable evidence gates rather than a nonexistent second account;
 - environment variable `IPAWS_PRODUCTION_RELEASE_ENABLED` is exactly `approved-disabled-baseline`;
 - environment variable `CLOUDFLARE_ACCOUNT_ID` is configured;
 - environment secret `CLOUDFLARE_API_TOKEN` is a dedicated least-privilege token;
@@ -35,7 +35,7 @@ The workflow deploys only `wrangler.ipaws.production.jsonc`. Immediately before 
 
 ## Passive receiver boundary
 
-The disabled baseline creates an isolated Worker, KV binding, route, and idempotency Durable Object but accepts no IPAWS messages while ingestion is false. Enabling passive ingestion is a later, separately approved change after FEMA/AWS subscription evidence is complete. Automatic subscription confirmation, notifications, and downstream effects remain separate approvals.
+The disabled baseline creates an isolated Worker, KV binding, route, and idempotency Durable Object with an empty TopicArn allowlist. Because ingestion is false, callback POSTs fail before body reading, SNS parsing, certificate retrieval, storage, metrics mutation, normalization, or acknowledgement. The endpoint can be supplied to FEMA without accepting a production notification. FEMA must provide the exact production TopicArn before any later allowlist or ingestion change. Automatic subscription confirmation, notifications, and downstream effects remain separate approvals.
 
 `src/ipaws/production-lifecycle.ts` is a modeled consumer contract only. The passive receiver does not call it, no lifecycle-ledger resource is bound, and no effect transport exists. A strongly consistent lifecycle ledger is not required to authenticate and retain passive ingress while all effects are disabled. It is deferred to the consumer/effects phase and requires its own design, provisioning, migration, integration, and review.
 
@@ -56,4 +56,4 @@ Pause immediately for any privacy exposure, nonzero Worker errors attributable t
 
 ## Machine-readable missing inputs
 
-Run `npm run inventory:ipaws-production-inputs`. It emits only field names and status—never configured values, identifiers, evidence digests, owner names, or secrets. `-- --require-configured` is a fail-closed deployment gate for configuration-derived fields. `npm run validate:ipaws-production-evidence -- --require-complete` separately rejects missing evidence, owners, or a configuration-digest mismatch.
+Run `npm run inventory:ipaws-production-inputs`. It emits only field names and status—never configured values, identifiers, evidence digests, owner names, or secrets. The TopicArn field reports `deny_all_pending_fema`; that is the approved bootstrap state, not a configured ARN. `-- --require-configured` is a fail-closed deployment gate for the other configuration fields. `npm run validate:ipaws-production-evidence -- --require-complete` separately rejects missing evidence, ownership, or a configuration-digest mismatch. William Dickens owns all operational roles. Exact-commit pinning, passing CI, manual confirmation, hashes, clean-tree enforcement, rollback safeguards, and independent technical review are the compensating sole-owner controls.

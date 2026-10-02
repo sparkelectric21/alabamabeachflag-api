@@ -189,7 +189,7 @@ describe("IPAWS deployment policy", () => {
 		config.name = "ipaws-production-test-fixture";
 		config.kv_namespaces[0].id = "1234567890abcdef1234567890abcdef";
 		config.routes = [{ pattern: "ipaws-production-test.example/v1/ipaws/*", zone_name: "ipaws-production-test.example" }];
-		config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws-us-gov:sns:us-gov-west-1:111111111111:TEST_ONLY";
+		config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "";
 		config.vars.IPAWS_PRODUCTION_ENDPOINT = "https://ipaws-production-test.example/v1/ipaws/pubsub";
 	}
 	function runPolicy(productionMutation?: (config: Record<string, any>) => void, stagingMutation?: (config: Record<string, any>) => void, deploy = false) {
@@ -255,5 +255,10 @@ describe("IPAWS deployment policy", () => {
 		}, undefined, true);
 		expect(result.stderr).toBe("");
 		expect(result.status).toBe(0);
+	});
+
+	it("requires a deny-all TopicArn bootstrap and rejects invented or staged production allowlists", () => {
+		expect(runPolicy((config) => { resolveProduction(config); config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws:sns:us-east-1:111111111111:EAS_PUBLIC_FEED"; }, undefined, true).status).toBe(1);
+		expect(runPolicy((config) => { resolveProduction(config); config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws-us-gov:sns:us-gov-west-1:594897668655:EAS_PUBLIC_FEED"; }, undefined, true).status).toBe(1);
 	});
 });

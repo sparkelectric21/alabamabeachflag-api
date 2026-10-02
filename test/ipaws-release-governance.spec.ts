@@ -48,6 +48,7 @@ describe("production release governance", () => {
 			const path = resolve(scratch, "config.jsonc"); writeFileSync(path, config);
 			const result = run(["scripts/report-ipaws-production-inputs.mjs", `--config=${path}`]);
 			expect(result.status).toBe(0); expect(result.stdout).not.toMatch(/secret-worker-name|1234567890abcdef|sensitive-topic|arn:aws/);
+			expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
 	});
 	it("requires pinned verified evidence and assigned owners", () => {

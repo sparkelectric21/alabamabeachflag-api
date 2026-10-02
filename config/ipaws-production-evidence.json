@@ -11,11 +11,11 @@
     "independentSecurityReview": { "status": "unverified", "evidenceSha256": null }
   },
   "owners": {
-    "monitoring": null,
-    "privacy": null,
-    "incidentResponse": null,
-    "femaCoordination": null,
-    "secretCustody": null,
-    "rollback": null
+    "monitoring": "william-dickens",
+    "privacy": "william-dickens",
+    "incidentResponse": "william-dickens",
+    "femaCoordination": "william-dickens",
+    "secretCustody": "william-dickens",
+    "rollback": "william-dickens"
   }
 }

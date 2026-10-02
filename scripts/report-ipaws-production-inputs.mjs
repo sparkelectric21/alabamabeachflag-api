@@ -24,7 +24,7 @@ const fields = [
 	["cloudflare.workerName", config.name], ["cloudflare.kvNamespaceId", kv], ["cloudflare.routePattern", route.pattern],
 	["cloudflare.zoneName", route.zone_name], ["cloudflare.callbackEndpoint", config.vars?.IPAWS_PRODUCTION_ENDPOINT],
 	["aws.topicArn", config.vars?.IPAWS_ALLOWED_TOPIC_ARNS],
-].map(([field, value]) => ({ field, status: placeholder(value) ? "missing" : "configured" }));
+].map(([field, value]) => ({ field, status: field === "aws.topicArn" && value === "" ? "deny_all_pending_fema" : placeholder(value) ? "missing" : "configured" }));
 const external = [
 	...Object.entries(evidence.evidence ?? {}).map(([field, item]) => ({ field: `evidence.${field}`, status: item?.status === "verified" ? "verified" : "unverified" })),
 	...Object.entries(evidence.owners ?? {}).map(([field, owner]) => ({ field: `owners.${field}`, status: typeof owner === "string" && owner.length > 0 ? "assigned" : "unverified" })),
@@ -33,4 +33,4 @@ const disabled = ["IPAWS_INGESTION_ENABLED", "IPAWS_AUTO_CONFIRM_SUBSCRIPTION", 
 	.map((field) => ({ field: `baseline.${field}`, status: config.vars?.[field] === "false" ? "verified_disabled" : "unsafe" }));
 const report = { schemaVersion: 1, source: "wrangler.ipaws.production.jsonc", configuration: fields, externalEvidence: external, safetyBaseline: disabled };
 console.log(JSON.stringify(report, null, 2));
-if (process.argv.includes("--require-configured") && [...fields, ...disabled].some((item) => !["configured", "verified_disabled"].includes(item.status))) process.exit(1);
+if (process.argv.includes("--require-configured") && [...fields, ...disabled].some((item) => !["configured", "verified_disabled", "deny_all_pending_fema"].includes(item.status))) process.exit(1);
