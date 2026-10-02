@@ -42,7 +42,7 @@ const rejectUnknownKeys = (value, allowed, label) => {
 };
 const allowedProductionKeys = new Set([
 	"$schema", "name", "main", "compatibility_date", "compatibility_flags", "workers_dev", "preview_urls",
-	"observability", "upload_source_maps", "routes", "kv_namespaces", "durable_objects", "migrations", "vars",
+	"observability", "upload_source_maps", "secrets", "routes", "kv_namespaces", "durable_objects", "migrations", "vars",
 ]);
 for (const key of Object.keys(production.config)) fail(!allowedProductionKeys.has(key), `unapproved production configuration key: ${key}`);
 
@@ -71,12 +71,17 @@ for (const migration of production.config.migrations ?? []) rejectUnknownKeys(mi
 for (const route of production.config.routes ?? []) {
 	if (typeof route === "object" && route !== null) rejectUnknownKeys(route, new Set(["pattern", "zone_name"]), "production route");
 }
+rejectUnknownKeys(production.config.secrets, new Set(["required"]), "production secrets");
 
 fail(production.config.main !== "src/ipaws/worker.ts", "production main must be src/ipaws/worker.ts");
 fail(production.config.workers_dev !== false, "production workers_dev must be false");
 fail(production.config.preview_urls !== false, "production preview_urls must be false");
 fail(production.config.observability?.enabled !== true, "production observability must remain enabled");
 fail(production.config.upload_source_maps !== true, "production source map upload setting must remain explicit");
+fail(!Array.isArray(production.config.secrets?.required)
+	|| production.config.secrets.required.length !== 1
+	|| production.config.secrets.required[0] !== "IPAWS_METRICS_READ_TOKEN",
+"production must require exactly the reviewed metrics secret");
 fail(!Array.isArray(production.config.compatibility_flags) || !production.config.compatibility_flags.includes("nodejs_compat"), "production nodejs_compat flag is required");
 fail(productionKvBindings.length !== 1 || productionKvBindings[0]?.binding !== "BEACH_DATA", "production must contain exactly one BEACH_DATA KV binding");
 fail(productionDoBindings.length !== 1 || productionDoBindings[0]?.name !== "IPAWS_IDEMPOTENCY" || productionDoBindings[0]?.class_name !== "IpawsIdempotencyCoordinator", "production must contain exactly one IPAWS_IDEMPOTENCY Durable Object binding");

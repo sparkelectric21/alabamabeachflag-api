@@ -1,0 +1,9 @@
+{
+  "observedAtUtc": "2026-10-02T20:14:00Z",
+  "environment": "ipaws-production",
+  "deploymentBranches": ["main"],
+  "secretNames": ["CLOUDFLARE_API_TOKEN"],
+  "variableNames": ["CLOUDFLARE_ACCOUNT_ID"],
+  "releaseEnableGatePresent": false,
+  "workflowDispatched": false
+}

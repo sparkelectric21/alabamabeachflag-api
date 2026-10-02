@@ -9,6 +9,7 @@
 	"preview_urls": false,
 	"observability": { "enabled": true },
 	"upload_source_maps": true,
+	"secrets": { "required": ["IPAWS_METRICS_READ_TOKEN"] },
 	"routes": [
 		{ "pattern": "ipaws.alabamabeachflag.com/v1/ipaws/*", "zone_name": "alabamabeachflag.com" }
 	],

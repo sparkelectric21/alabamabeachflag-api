@@ -11,6 +11,14 @@ const evidenceKeys = {
 	"disabled-baseline": ["independentTechnicalReview", "resourceIsolation", "automaticDeploymentGovernance", "dedicatedKvIdentity", "proposedResourceIdentities", "disabledCapabilityBaseline", "inertPreRoutingResponse", "analyticsAccess", "rollbackAndVerificationPlan", "dnsReadiness", "metricsSecretReadiness", "releaseCredentialReadiness", "githubEnvironmentReadiness"],
 	"passive-ingestion": ["disabledBaselineDeployment", "femaProductionTopic", "awsPartitionAndRegion", "subscriptionInitiation", "subscriptionArnAndState", "deliveryRetryPolicy", "rawMessageDelivery", "dlqRedrive", "auxiliaryFormats", "nonemptyTopicAllowlistReview", "ingestionEnablementApproval", "automaticConfirmationDisabled", "notificationsAndEffectsDisabled"],
 };
+const evidencePacketFiles = {
+	"disabled-baseline": {
+		analyticsAccess: "config/ipaws-production-evidence/analytics-access.json",
+		dnsReadiness: "config/ipaws-production-evidence/dns-readiness.json",
+		releaseCredentialReadiness: "config/ipaws-production-evidence/release-credential-readiness.json",
+		githubEnvironmentReadiness: "config/ipaws-production-evidence/github-environment-readiness.json",
+	},
+};
 const ownerKeys = ["monitoring", "privacy", "incidentResponse", "femaCoordination", "secretCustody", "rollback"];
 const canonicalOwner = "william-dickens";
 const hex = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
@@ -55,6 +63,8 @@ function validateManifest(manifest, expectedPhase, complete, expectedConfigurati
 		if (item?.status === "verified") {
 			fail(!hex(item.packetSha256), `${expectedPhase}.${key} verified evidence must contain a packet SHA-256`);
 			fail(item.evidenceSha256 !== hash(`${expectedPhase}:${key}:${item.packetSha256}`), `${expectedPhase}.${key} evidence is not bound to its phase and requirement`);
+			const packetFile = evidencePacketFiles[expectedPhase]?.[key];
+			if (packetFile) fail(item.packetSha256 !== hash(readFileSync(file(packetFile))), `${expectedPhase}.${key} packet digest does not match its reviewed repository evidence`);
 			fail(packets.has(item.packetSha256), `${expectedPhase} evidence packets must not be reused across requirements`);
 			packets.add(item.packetSha256);
 		}
