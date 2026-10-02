@@ -24,6 +24,7 @@ on:
       - "scripts/validate-production-release-governance.mjs"
       - "scripts/validate-ipaws-production-evidence.mjs"
       - "scripts/verify-ipaws-production-deployment.mjs"
+      - "scripts/deploy-ipaws-production-disabled-baseline.mjs"
       - "scripts/refuse-direct-production-deploy.mjs"
       - "scripts/report-ipaws-production-inputs.mjs"
       - "config/ipaws-production-evidence.json"

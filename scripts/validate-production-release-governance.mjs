@@ -16,7 +16,7 @@ for (const name of files) fail(!allowedWorkflowNames.has(name), `unreviewed work
 let workflow;
 try {
 	const releaseSource = readFileSync(resolve(workflowDirectory, releaseName), "utf8");
-	fail(createHash("sha256").update(releaseSource).digest("hex") !== "310344348b3c693637b322b81cf63f37f1454ac9b59be971a1b8b9a1520f30e4", "manual release workflow differs byte-for-byte from the reviewed definition");
+	fail(createHash("sha256").update(releaseSource).digest("hex") !== "c7a97630a456b9e0aeaa8c432d7cae4f3996c3d398087ef2476ca578da961321", "manual release workflow differs byte-for-byte from the reviewed definition");
 	workflow = JSON.parse(releaseSource);
 } catch { failures.push(`missing or non-canonical manual release workflow: ${releaseName}`); }
 
@@ -48,8 +48,8 @@ if (workflow) {
 	for (const required of ["IPAWS_PRODUCTION_RELEASE_ENABLED", "DEPLOY_DISABLED_IPAWS_BASELINE", "approved_config_sha256", "approved_evidence_sha256", "validate:ipaws-production-deploy", "validate:ipaws-production-evidence -- --require-complete", "wrangler deploy --dry-run", "git diff --exit-code", "git status --porcelain", "notificationsEnabled=false", "downstreamEffectsEnabled=false"])
 		fail(!allText.includes(required), `release workflow is missing required gate: ${required}`);
 	const deploy = job?.steps?.[8], verify = job?.steps?.[9];
-	fail(deploy?.run !== "npx wrangler deploy --config wrangler.ipaws.production.jsonc --message \"Deploy reviewed disabled IPAWS production baseline ${APPROVED_COMMIT}\"", "live deployment command differs from the reviewed command");
-	fail(verify?.run !== "node scripts/verify-ipaws-production-deployment.mjs", "post-deployment verification command differs from the reviewed command");
+	fail(deploy?.run !== "node scripts/deploy-ipaws-production-disabled-baseline.mjs", "live deployment command differs from the reviewed command");
+	fail(verify?.run !== "node scripts/verify-ipaws-production-deployment.mjs --version-file=/tmp/ipaws-production-deployed-version --approved-commit=${APPROVED_COMMIT}", "post-deployment verification command differs from the reviewed command");
 	for (const [index, step] of (job?.steps ?? []).entries()) {
 		const token = step.env?.CLOUDFLARE_API_TOKEN;
 		fail(index < 8 && token !== undefined, "deployment credential is exposed before deployment");

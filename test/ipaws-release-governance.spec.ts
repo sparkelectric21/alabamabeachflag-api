@@ -69,19 +69,41 @@ describe("sanitized post-deployment verification", () => {
 	function fixture(change?: (documents: Record<string, any>) => void) {
 		const scratch = mkdtempSync(resolve(tmpdir(), "deployment-fixture-"));
 		const configSource = readFileSync("wrangler.ipaws.production.jsonc", "utf8");
-		const vars = [...configSource.matchAll(/"(IPAWS_[A-Z_]+)"\s*:/g)].map((match) => match[1]);
+		const config = JSON.parse(configSource.replace(/^\s*\/\/.*$/gm, ""));
 		const docs: Record<string, any> = {
-			deployment: { versions: [{ version_id: "sensitive-version", percentage: 100 }] },
-			version: { compatibility_date: "2026-06-27", compatibility_flags: ["nodejs_compat"], migration_tag: "ipaws-production-idempotency-v1", resources: { bindings: [{ name: "BEACH_DATA" }, { name: "IPAWS_IDEMPOTENCY" }, ...vars.map((name) => ({ name }))] } },
+			deployment: { versions: [{ version_id: "11111111-1111-4111-8111-111111111111", percentage: 100 }] },
+			version: { id: "11111111-1111-4111-8111-111111111111", annotations: { "workers/tag": "a".repeat(40) }, resources: { script_runtime: { compatibility_date: "2026-06-27", compatibility_flags: ["nodejs_compat"], migration_tag: "ipaws-production-idempotency-v1" }, bindings: [
+				{ name: "BEACH_DATA", type: "kv_namespace", namespace_id: config.kv_namespaces[0].id },
+				{ name: "IPAWS_IDEMPOTENCY", type: "durable_object_namespace", class_name: "IpawsIdempotencyCoordinator", namespace_id: "dedicated-production-do" },
+				{ name: "IPAWS_METRICS_READ_TOKEN", type: "secret_text" },
+				...Object.entries(config.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
+			] } },
 			routes: { result: [{ script: "ipaws-production-placeholder", pattern: "ipaws-production.invalid/v1/ipaws/*" }] }, domains: { result: [] },
+			"protected-durable-ids": ["staging-do", "general-production-do"],
 		};
 		change?.(docs); for (const [name, value] of Object.entries(docs)) writeFileSync(resolve(scratch, `${name}.json`), JSON.stringify(value)); return scratch;
 	}
-	it("accepts exact state and rejects drift without disclosing identifiers", () => {
-		const good = fixture(), bad = fixture((docs) => docs.version.resources.bindings.push({ name: "SECRET_BINDING", text: "sensitive-value" }));
-		try {
-			expect(run(["scripts/verify-ipaws-production-deployment.mjs", `--fixture=${good}`]).status).toBe(0);
-			const result = run(["scripts/verify-ipaws-production-deployment.mjs", `--fixture=${bad}`]); expect(result.status).toBe(1); expect(result.stderr).toContain("unexpected_binding"); expect(result.stderr).not.toMatch(/SECRET_BINDING|sensitive-value|sensitive-version/);
-		} finally { rmSync(good, { recursive: true, force: true }); rmSync(bad, { recursive: true, force: true }); }
+	it("accepts exact state and rejects resource, type, value, secret, traffic, and provenance drift", () => {
+		const cases: Array<[(docs: Record<string, any>) => void, string]> = [
+			[(docs) => docs.version.resources.bindings.push({ name: "SECRET_BINDING", type: "secret_text" }), "unexpected_binding"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "BEACH_DATA").namespace_id = "wrong-kv", "kv_binding_mismatch"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "BEACH_DATA").type = "plain_text", "kv_binding_mismatch"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "IPAWS_IDEMPOTENCY").class_name = "WrongClass", "durable_binding_mismatch"],
+			[(docs) => docs["protected-durable-ids"].push("dedicated-production-do"), "durable_resource_crossover"],
+			[(docs) => docs.version.resources.bindings.splice(docs.version.resources.bindings.findIndex((item: any) => item.name === "IPAWS_METRICS_READ_TOKEN"), 1), "unexpected_binding"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "IPAWS_METRICS_READ_TOKEN").type = "plain_text", "metrics_secret_binding_mismatch"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "IPAWS_ENVIRONMENT").text = "staging", "variable_binding_mismatch"],
+			[(docs) => docs.version.resources.bindings.find((item: any) => item.name === "IPAWS_ENVIRONMENT").type = "secret_text", "variable_binding_mismatch"],
+			[(docs) => docs.deployment.versions[0].version_id = "22222222-2222-4222-8222-222222222222", "traffic_or_version_mismatch"],
+			[(docs) => docs.version.annotations["workers/tag"] = "b".repeat(40), "approved_commit_tag_mismatch"],
+		];
+		const good = fixture();
+		try { expect(run(["scripts/verify-ipaws-production-deployment.mjs", `--fixture=${good}`]).status).toBe(0); }
+		finally { rmSync(good, { recursive: true, force: true }); }
+		for (const [change, code] of cases) {
+			const bad = fixture(change);
+			try { const result = run(["scripts/verify-ipaws-production-deployment.mjs", `--fixture=${bad}`]); expect(result.status).toBe(1); expect(result.stderr).toContain(code); expect(result.stderr).not.toMatch(/SECRET_BINDING|wrong-kv|sensitive-version|dedicated-production-do/); }
+			finally { rmSync(bad, { recursive: true, force: true }); }
+		}
 	});
 });
