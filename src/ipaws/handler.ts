@@ -441,6 +441,8 @@ export async function handleIpawsPubSubRequest(request: Request, env: Env, ctx?:
 	try { body = await result.clone().json<Record<string, unknown>>(); } catch { /* Responses are normally JSON. */ }
 	const rejection: IpawsMetricsEvent["rejection"] = result.status >= 500 ? "retryable" : result.status >= 400 ? "permanent" : "none";
 	const code = typeof body.code === "string" ? body.code : "";
+	// The disabled production bootstrap must be completely inert: no Durable Object metrics write or waitUntil task.
+	if (code === "ipaws_disabled") return result;
 	if (result.status >= 400) {
 		metrics.failureStage = metrics.currentStage ?? "envelope_validation";
 		metrics.failureClass = failureClass(code, metrics.failureStage, rejection === "retryable");

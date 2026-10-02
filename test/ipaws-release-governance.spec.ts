@@ -44,12 +44,17 @@ describe("production release governance", () => {
 	it("emits only statuses even when configuration contains realistic identifiers", () => {
 		const scratch = mkdtempSync(resolve(tmpdir(), "inventory-"));
 		try {
-			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("ipaws-production-placeholder", "secret-worker-name").replace("00000000000000000000000000000000", "1234567890abcdef1234567890abcdef").replace("__IPAWS_PRODUCTION_TOPIC_ARN__", "arn:aws:sns:us-east-1:123456789012:sensitive-topic");
+			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("ipaws-production-placeholder", "secret-worker-name").replace("00000000000000000000000000000000", "1234567890abcdef1234567890abcdef").replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:sensitive-topic"');
 			const path = resolve(scratch, "config.jsonc"); writeFileSync(path, config);
 			const result = run(["scripts/report-ipaws-production-inputs.mjs", `--config=${path}`]);
 			expect(result.status).toBe(0); expect(result.stdout).not.toMatch(/secret-worker-name|1234567890abcdef|sensitive-topic|arn:aws/);
-			expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
+			expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "configured" });
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
+	});
+	it("reports the empty TopicArn allowlist only as the fixed deny-all status", () => {
+		const result = run(["scripts/report-ipaws-production-inputs.mjs"]);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
 	});
 	it("requires pinned verified evidence and assigned owners", () => {
 		const template = run(["scripts/validate-ipaws-production-evidence.mjs"]); expect(template.status).toBe(0);

@@ -60,6 +60,34 @@ describe("standalone IPAWS Worker", () => {
 		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
 	});
 
+	it("keeps the production deny-all bootstrap free of body reads and every state mutation", async () => {
+		const env = createEnvironment();
+		env.IPAWS_ENVIRONMENT = "production";
+		env.IPAWS_ALLOWED_TOPIC_ARNS = "";
+		const doFetch = vi.fn();
+		const doGet = vi.fn(() => ({ fetch: doFetch }));
+		const doIdFromName = vi.fn(() => "metrics-id");
+		env.IPAWS_IDEMPOTENCY = { idFromName: doIdFromName, get: doGet } as unknown as DurableObjectNamespace;
+		const globalFetch = vi.fn(); vi.stubGlobal("fetch", globalFetch);
+		const waitUntil = vi.fn();
+		const bodyRead = vi.fn();
+		const hostile = request("/v1/ipaws/pubsub", "POST", "sensitive-body");
+		Object.defineProperty(hostile, "body", { configurable: true, get: bodyRead });
+
+		const response = await worker.fetch(hostile, env, { ...executionContext, waitUntil } as ExecutionContext);
+		expect(response.status).toBe(503);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_disabled", message: "IPAWS ingestion is disabled in this environment." });
+		expect(bodyRead).not.toHaveBeenCalled();
+		expect(globalFetch).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.put).not.toHaveBeenCalled();
+		expect(doIdFromName).not.toHaveBeenCalled();
+		expect(doGet).not.toHaveBeenCalled();
+		expect(doFetch).not.toHaveBeenCalled();
+		expect(waitUntil).not.toHaveBeenCalled();
+	});
+
 	it.each(["IPAWS_NOTIFICATIONS_ENABLED", "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"] as const)("fails closed if %s is enabled in production", async (setting) => {
 		const env = createEnvironment();
 		env.IPAWS_ENVIRONMENT = "production";
