@@ -45,13 +45,21 @@ export interface ProductionAuthorizationDecision {
 	reason: "authorized" | "disabled" | "topic" | "status" | "scope" | "geography" | "freshness" | "lifecycle";
 }
 
+export interface ProductionEffectRecord {
+	effectKey: string;
+	inboxKey: string;
+	versionKey: string;
+	lineageKey: string;
+	decision: ProductionAuthorizationDecision;
+}
+
 export interface ProductionLedgerTransaction {
 	appendVersion(versionKey: string, version: ProductionAlertVersion): Promise<void>;
 	/** Must read the same strongly consistent transactional snapshot mutated by appendVersion. */
 	listVersionsForLineage(lineageKey: string): Promise<ProductionAlertVersion[]>;
 	putProjection(projection: ProductionLifecycleProjection): Promise<void>;
 	insertInboxIfAbsent(inboxKey: string): Promise<boolean>;
-	insertEffectIfAbsent(effectKey: string, decision: ProductionAuthorizationDecision): Promise<boolean>;
+	insertEffectIfAbsent(effect: ProductionEffectRecord): Promise<boolean>;
 	suppressEffectsForLineage(lineageKey: string): Promise<void>;
 }
 
@@ -63,6 +71,7 @@ export interface ProductionApplyResult {
 	duplicate: boolean;
 	effectCreated: boolean;
 	decision: ProductionAuthorizationDecision;
+	decisions: Readonly<Record<string, ProductionAuthorizationDecision>>;
 	projection: ProductionLifecycleProjection;
 	projections: ProductionLifecycleProjection[];
 }
@@ -131,6 +140,19 @@ export function authorizeProductionVersion(version: ProductionAlertVersion, poli
 	return { allowed: true, policyVersion: policy.policyVersion, reason: "authorized" };
 }
 
+function authorizeLineage(
+	version: ProductionAlertVersion,
+	policy: ProductionAuthorizationPolicy,
+	projectionBefore: ProductionLifecycleProjection,
+	now = Date.now(),
+): ProductionAuthorizationDecision {
+	const base = authorizeProductionVersion(version, policy, now);
+	if (!base.allowed || version.messageType !== "Update") return base;
+	return projectionBefore.state === "active" && projectionBefore.currentVersion !== null
+		? base
+		: { allowed: false, policyVersion: policy.policyVersion, reason: "lifecycle" };
+}
+
 export async function applyProductionLifecycle(
 	ledger: ProductionLifecycleLedger,
 	version: ProductionAlertVersion,
@@ -140,15 +162,18 @@ export async function applyProductionLifecycle(
 		? [lineageKey(version.sender, version.identifier)]
 		: [...referencedLineages(version)];
 	if (targets.length === 0) targets.push(lineageKey(version.sender, version.identifier));
-	const decision = authorizeProductionVersion(version, policy);
 	const inboxKey = stableKey([version.source, version.topicArn, version.messageId, String(version.schemaVersion)]);
 	return ledger.transaction(async (transaction) => {
 		const inserted = await transaction.insertInboxIfAbsent(inboxKey);
 		if (!inserted) {
 			const projections = await Promise.all(targets.map(async (target) => projectProductionLifecycle(await transaction.listVersionsForLineage(target), target)));
-			return { duplicate: true, effectCreated: false, decision, projection: projections[0], projections };
+			const decisions = Object.fromEntries(projections.map((projection) => [projection.lineageKey, authorizeLineage(version, policy, projection)]));
+			return { duplicate: true, effectCreated: false, decision: decisions[targets[0]], decisions, projection: projections[0], projections };
 		}
-		await transaction.appendVersion(stableKey([version.sender, version.identifier, version.sentAt, version.contentDigest]), version);
+		const projectionsBefore = await Promise.all(targets.map(async (target) => projectProductionLifecycle(await transaction.listVersionsForLineage(target), target)));
+		const decisions = Object.fromEntries(projectionsBefore.map((projection) => [projection.lineageKey, authorizeLineage(version, policy, projection)]));
+		const versionKey = stableKey([version.sender, version.identifier, version.sentAt, version.contentDigest]);
+		await transaction.appendVersion(versionKey, version);
 		const projections = await Promise.all(targets.map(async (target) => projectProductionLifecycle(await transaction.listVersionsForLineage(target), target)));
 		for (const projection of projections) await transaction.putProjection(projection);
 		if (version.messageType === "Cancel") for (const target of targets) await transaction.suppressEffectsForLineage(target);
@@ -156,24 +181,36 @@ export async function applyProductionLifecycle(
 		let effectCreated = false;
 		for (const target of targets) {
 			const effectKey = stableKey([target, version.messageType, version.contentDigest, policy.policyVersion]);
-			effectCreated = (await transaction.insertEffectIfAbsent(effectKey, decision)) || effectCreated;
+			effectCreated = (await transaction.insertEffectIfAbsent({ effectKey, inboxKey, versionKey, lineageKey: target, decision: decisions[target] })) || effectCreated;
 		}
-		return { duplicate: false, effectCreated, decision, projection: projections[0], projections };
+		return { duplicate: false, effectCreated, decision: decisions[targets[0]], decisions, projection: projections[0], projections };
 	});
 }
 
 export function reconciliationKeySets(input: {
-	ingress: readonly string[];
-	versions: readonly string[];
+	ingress: readonly { ingressKey: string; inboxKey: string }[];
+	versions: readonly { versionKey: string; inboxKey: string; expectedLineageKeys: readonly string[]; terminal: boolean }[];
 	inbox: readonly string[];
-	effects: readonly string[];
-}): { missingVersions: string[]; missingInbox: string[]; orphanEffects: string[] } {
-	const ingress = new Set(input.ingress);
-	const versions = new Set(input.versions);
+	effects: readonly ProductionEffectRecord[];
+}): { missingVersions: string[]; missingInbox: string[]; missingEffects: string[]; orphanEffects: string[]; duplicateDecisions: string[]; terminalAllowedEffects: string[] } {
 	const inbox = new Set(input.inbox);
+	const versionKeys = new Set(input.versions.map(({ versionKey }) => versionKey));
+	const versionInbox = new Set(input.versions.map(({ inboxKey }) => inboxKey));
+	const effectRelationships = new Set(input.effects.map(({ inboxKey, versionKey, lineageKey }) => stableKey([inboxKey, versionKey, lineageKey])));
+	const decisionCounts = new Map<string, number>();
+	for (const effect of input.effects) {
+		const relationship = stableKey([effect.inboxKey, effect.lineageKey]);
+		decisionCounts.set(relationship, (decisionCounts.get(relationship) ?? 0) + 1);
+	}
+	const terminalVersionKeys = new Set(input.versions.filter(({ terminal }) => terminal).map(({ versionKey }) => versionKey));
 	return {
-		missingVersions: [...ingress].filter((key) => !versions.has(key)).sort(),
-		missingInbox: [...versions].filter((key) => !inbox.has(key)).sort(),
-		orphanEffects: [...new Set(input.effects)].filter((key) => !inbox.has(key)).sort(),
+		missingVersions: input.ingress.filter(({ inboxKey }) => !versionInbox.has(inboxKey)).map(({ ingressKey }) => ingressKey).sort(),
+		missingInbox: input.versions.filter(({ inboxKey }) => !inbox.has(inboxKey)).map(({ versionKey }) => versionKey).sort(),
+		missingEffects: input.versions.flatMap(({ inboxKey, versionKey, expectedLineageKeys }) => expectedLineageKeys
+			.filter((target) => !effectRelationships.has(stableKey([inboxKey, versionKey, target])))
+			.map((target) => stableKey([versionKey, target]))).sort(),
+		orphanEffects: input.effects.filter(({ inboxKey, versionKey }) => !inbox.has(inboxKey) || !versionKeys.has(versionKey)).map(({ effectKey }) => effectKey).sort(),
+		duplicateDecisions: [...decisionCounts].filter(([, count]) => count > 1).map(([relationship]) => relationship).sort(),
+		terminalAllowedEffects: input.effects.filter(({ versionKey, decision }) => terminalVersionKeys.has(versionKey) && decision.allowed).map(({ effectKey }) => effectKey).sort(),
 	};
 }

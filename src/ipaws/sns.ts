@@ -39,7 +39,7 @@ export class IpawsSnsError extends Error {
 
 export function validateType(value: string): IpawsSnsType {
 	if (SNS_TYPES.includes(value as IpawsSnsType)) return value as IpawsSnsType;
-	throw new IpawsSnsError("ipaws_unsupported_sns_type", `Unsupported SNS Type: ${value}`);
+	throw new IpawsSnsError("ipaws_unsupported_sns_type", "SNS Type is unsupported.");
 }
 
 function requireString(value: unknown, label: string): string {
@@ -113,7 +113,7 @@ function validateAwsUrl(url: URL): void {
 		throw new IpawsSnsError("ipaws_unsafe_aws_url", "AWS URL must be HTTPS with no credentials, hash, or port.");
 	}
 	if (!validateAwsDomain(url.hostname)) {
-		throw new IpawsSnsError("ipaws_invalid_aws_hostname", `Unexpected AWS hostname: ${url.hostname}`);
+		throw new IpawsSnsError("ipaws_invalid_aws_hostname", "Signing URL hostname is not an approved SNS endpoint.");
 	}
 }
 
@@ -150,7 +150,7 @@ export function validateSnsRequired(message: IpawsSnsMessage): void {
 	requireString(message.Signature, "Signature");
 	requireString(message.SignatureVersion, "SignatureVersion");
 	if (!(message.SignatureVersion in SIGNATURE_VERSION_ALGORITHMS)) {
-		throw new IpawsSnsError("ipaws_unsupported_signature_version", `Unsupported SignatureVersion: ${message.SignatureVersion}`);
+		throw new IpawsSnsError("ipaws_unsupported_signature_version", "SNS SignatureVersion is unsupported.");
 	}
 	if (message.Type === "SubscriptionConfirmation" || message.Type === "UnsubscribeConfirmation") {
 		requireString(message.Token, "Token");

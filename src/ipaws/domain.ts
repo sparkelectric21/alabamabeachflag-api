@@ -4,7 +4,7 @@ import type { IpawsIngestionRecord, IpawsRawCapPayload } from "./types";
 export interface IpawsNormalizedAlert {
 	schemaVersion: 1;
 	source: "fema-ipaws";
-	environment: "staging";
+	environment: "staging" | "production";
 	messageId: string;
 	topicArn: string;
 	identifier: string;
@@ -31,7 +31,7 @@ export function normalizeIpawsAlert(record: IpawsIngestionRecord): IpawsNormaliz
 	return {
 		schemaVersion: 1,
 		source: "fema-ipaws",
-		environment: "staging",
+		environment: record.environment,
 		messageId: record.messageId,
 		topicArn: record.topicArn,
 		identifier: record.capIdentifier,

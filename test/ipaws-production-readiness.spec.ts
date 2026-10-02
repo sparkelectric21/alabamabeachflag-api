@@ -31,6 +31,10 @@ const cancel: ProductionAlertVersion = {
 const disabledPolicy: ProductionAuthorizationPolicy = {
 	policyVersion: "disabled-baseline-v1", enabled: false, allowedTopicArns: [], allowedGeocodes: [], allowedStatuses: [], allowedScopes: [], maximumAgeSeconds: 3600, maximumFutureSkewSeconds: 300,
 };
+const enabledPolicy: ProductionAuthorizationPolicy = {
+	policyVersion: "enabled-test-v1", enabled: true, allowedTopicArns: [alert.topicArn], allowedGeocodes: ["target"],
+	allowedStatuses: ["Actual"], allowedScopes: ["Public"], maximumAgeSeconds: 10 * 365 * 24 * 60 * 60, maximumFutureSkewSeconds: 300,
+};
 
 function referencedTarget(reference: string): string | null {
 	const [sender, identifier] = reference.split(",");
@@ -68,7 +72,7 @@ describe("IPAWS production lifecycle prerequisites", () => {
 				|| version.references.some((reference) => reference.startsWith(`${alert.sender},${alert.identifier},`))),
 			putProjection: async () => undefined,
 			insertInboxIfAbsent: async (key) => { if (inbox.has(key)) return false; inbox.add(key); return true; },
-			insertEffectIfAbsent: async (key) => { if (effects.has(key)) return false; effects.add(key); return true; },
+			insertEffectIfAbsent: async ({ effectKey }) => { if (effects.has(effectKey)) return false; effects.add(effectKey); return true; },
 			suppressEffectsForLineage: async (key) => { suppressed.push(key); },
 		}));
 		const ledger = { transaction } as ProductionLifecycleLedger;
@@ -78,6 +82,39 @@ describe("IPAWS production lifecycle prerequisites", () => {
 		expect(versions).toHaveLength(1);
 		expect(await applyProductionLifecycle(ledger, cancel, disabledPolicy)).toMatchObject({ duplicate: false, decision: { allowed: false, reason: "disabled" }, projection: { state: "cancelled" } });
 		expect(suppressed).toEqual([lineageKey(alert.sender, alert.identifier)]);
+	});
+
+	it("denies orphan and post-cancellation Updates from each lineage's transactional projection", async () => {
+		const activeTwo = { ...alert, messageId: "active-two", identifier: "active-two", contentDigest: "e".repeat(64) };
+		const versions = [alert, cancel, activeTwo];
+		const mixedUpdate = { ...update, messageId: "mixed", references: [
+			"sender,alert-one,2026-10-01T00:00:00.000Z",
+			"sender,active-two,2026-10-01T00:00:00.000Z",
+			"sender,missing,2026-10-01T00:00:00.000Z",
+		], contentDigest: "f".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z" };
+		const ledger: ProductionLifecycleLedger = { transaction: async (operation) => operation({
+			insertInboxIfAbsent: async () => true,
+			appendVersion: async (_key, version) => { versions.push(version); },
+			listVersionsForLineage: async (target) => versions.filter((version) => lineageKey(version.sender, version.identifier) === target || version.references.some((reference) => referencedTarget(reference) === target)),
+			putProjection: async () => undefined,
+			insertEffectIfAbsent: async () => true,
+			suppressEffectsForLineage: async () => undefined,
+		}) };
+		const result = await applyProductionLifecycle(ledger, mixedUpdate, enabledPolicy);
+		expect(result.decisions[lineageKey("sender", "alert-one")]).toMatchObject({ allowed: false, reason: "lifecycle" });
+		expect(result.decisions[lineageKey("sender", "active-two")]).toMatchObject({ allowed: true, reason: "authorized" });
+		expect(result.decisions[lineageKey("sender", "missing")]).toMatchObject({ allowed: false, reason: "lifecycle" });
+	});
+
+	it("denies a single orphan Update under an enabled policy", async () => {
+		const versions: ProductionAlertVersion[] = [];
+		const ledger: ProductionLifecycleLedger = { transaction: async (operation) => operation({
+			insertInboxIfAbsent: async () => true, appendVersion: async (_key, version) => { versions.push(version); },
+			listVersionsForLineage: async () => versions, putProjection: async () => undefined,
+			insertEffectIfAbsent: async () => true, suppressEffectsForLineage: async () => undefined,
+		}) };
+		const orphan = { ...update, expiresAt: "2099-01-01T00:00:00.000Z" };
+		expect(await applyProductionLifecycle(ledger, orphan, enabledPolicy)).toMatchObject({ decision: { allowed: false, reason: "lifecycle" } });
 	});
 
 	it("cancels every referenced lineage in the same transaction", async () => {
@@ -102,13 +139,27 @@ describe("IPAWS production lifecycle prerequisites", () => {
 	});
 
 	it("reports reconciliation gaps without including record content", () => {
-		expect(reconciliationKeySets({ ingress: ["a", "b"], versions: ["a", "c"], inbox: ["a"], effects: ["a", "z"] })).toEqual({
-			missingVersions: ["b"], missingInbox: ["c"], orphanEffects: ["z"],
+		const denied = { allowed: false, policyVersion: "disabled-baseline-v1", reason: "disabled" as const };
+		expect(reconciliationKeySets({
+			ingress: [{ ingressKey: "ingress-a", inboxKey: "inbox-a" }, { ingressKey: "ingress-b", inboxKey: "inbox-b" }],
+			versions: [
+				{ versionKey: "version-a", inboxKey: "inbox-a", expectedLineageKeys: ["lineage-a"], terminal: false },
+				{ versionKey: "version-c", inboxKey: "inbox-c", expectedLineageKeys: ["lineage-c"], terminal: true },
+			],
+			inbox: ["inbox-a"],
+			effects: [
+				{ effectKey: "effect-a", inboxKey: "inbox-a", versionKey: "version-a", lineageKey: "lineage-a", decision: denied },
+				{ effectKey: "effect-orphan", inboxKey: "inbox-z", versionKey: "version-z", lineageKey: "lineage-z", decision: denied },
+			],
+		})).toEqual({
+			missingVersions: ["ingress-b"], missingInbox: ["version-c"], missingEffects: ["9:version-c|9:lineage-c"], orphanEffects: ["effect-orphan"],
+			duplicateDecisions: [], terminalAllowedEffects: [],
 		});
 	});
 });
 
 describe("IPAWS deployment policy", () => {
+	const generalKvId = readFileSync("wrangler.jsonc", "utf8").match(/"binding":\s*"BEACH_DATA",\s*"id":\s*"([^"]+)"/)?.[1];
 	function runPolicy(productionMutation?: (config: Record<string, any>) => void, stagingMutation?: (config: Record<string, any>) => void, deploy = false) {
 		const scratch = mkdtempSync(resolve(tmpdir(), "ipaws-policy-"));
 		try {
@@ -132,7 +183,11 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { config.kv_namespaces[0].id = "60f732dff736438bbb53edb2815059bb"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.vars.IPAWS_AUTO_CONFIRM_SUBSCRIPTION = "true"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.queues = { producers: [] }; }).status).toBe(1);
-		expect(runPolicy(undefined, (config) => { config.name = "ipaws-production-placeholder"; }).status).toBe(1);
+		 expect(runPolicy(undefined, (config) => { config.name = "ipaws-production-placeholder"; }).status).toBe(1);
+		expect(runPolicy((config) => { config.name = "alabamabeachflag-api"; }).status).toBe(1);
+		expect(generalKvId).toBeTruthy();
+		expect(runPolicy((config) => { config.kv_namespaces[0].id = generalKvId; }).status).toBe(1);
+		expect(runPolicy((config) => { config.vars.UNREVIEWED_WEBHOOK_URL = "https://example.invalid"; }).status).toBe(1);
 	});
 
 	it("rejects missing required resources and every unreviewed top-level binding", () => {

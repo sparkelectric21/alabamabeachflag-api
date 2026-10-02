@@ -2,17 +2,19 @@
 
 ## Title
 
-Add hardened FEMA IPAWS staging SNS receiver
+Prepare isolated IPAWS production ingress baseline
 
 ## Description
 
 ### Summary
 
-Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonical repository. It adds authenticated SNS ingestion, CAP parsing and staging storage, strongly consistent duplicate coordination, staging-only normalized records, tests, documentation, and a dedicated CI gate. This PR does not deploy anything and does not enable production notifications.
+Adds an inert, isolated production-ingress template and repository safety gates while preserving the deployed staging receiver. This PR does not deploy anything. Production ingestion, subscription confirmation, notifications, and downstream effects remain disabled.
 
 ### Architecture
 
-`POST /v1/ipaws/pubsub` validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a size- and time-bounded AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a staging Durable Object, safely parses CAP 1.2 XML, stores the receipt/parse result in staging KV, and writes a storage-only normalized staging record. Acquired, processing, and complete states use owner-token fencing for lease recovery and persisted-output repair. No queue, notification service, production user store, or production route is bound.
+The receiver validates the SNS envelope and exact TopicArn, bounds timestamp freshness, fetches a size- and time-bounded AWS SNS certificate without redirects, verifies the SNS signature, claims the MessageId through a dedicated Durable Object, safely parses CAP 1.2 XML, and stores authenticated results. Ingestion records now carry validated `staging` or `production` provenance, which normalization preserves. Matching legacy authenticated records are upgraded only when the verified delivery matches their stored MessageId, topic, and raw message; ambiguous or cross-environment records fail closed.
+
+`src/ipaws/production-lifecycle.ts` models transactional Alert/Update/Cancel projection, per-lineage authorization, effect-decision idempotency, and relationship-based reconciliation. It is tested but is not called by the receiver runtime and cannot dispatch effects.
 
 ### Security controls
 
@@ -27,17 +29,17 @@ Promotes the recovered and hardened FEMA IPAWS staging receiver into the canonic
 - Exact subscription action/topic/token matching; unsubscribe URLs are never fetched
 - Retryable 503 classification for transient certificate and confirmation failures
 - Token-fenced idempotency renew/complete/release operations; stale owners cannot mutate a replacement claim and produce a retryable 503 rather than a false acknowledgement
-- Staging-only resources and `notificationsEnabled: false`
+- Separate staging and production templates, strict crossover validation, and `notificationsEnabled: false`
 
 The certificate model relies on Cloudflare TLS validation of the pinned AWS SNS origin and does not independently build a full X.509 chain. Independent security approval is required before production use; see `docs/IPAWS_SECURITY_REVIEW.md`.
 
 ### Test evidence
 
-Local review on Node.js 24.19.0 passed production and staging TypeScript checks, production and staging generated Worker type checks, static staging-surface linting, 82/82 focused IPAWS tests, 798/798 full-suite tests, changed-file whitespace checks (excluding Wrangler-generated declarations), production/all-dependency audit policy checks, and both production and staging Wrangler dry runs. Updated remote CI status should be recorded after the branch is pushed.
+Local correction review used Node.js 24.21.0 and Wrangler 4.137.0. The complete suite passed 851 tests across 50 files, along with the general, staging, and IPAWS-production TypeScript and deterministic declaration checks; lint; deployment-policy template validation; expected rejection of unresolved real-deployment placeholders; staging and inert-production dry runs; whitespace checks; and production/development dependency-audit policies. GitHub evidence must refer to the exact reviewed head.
 
 ### Staging evidence
 
-The recovered implementation corresponds to the staging architecture previously verified at deployed version `88b281b3-445b-48f1-924f-a29a5872cbca`: staging KV, staging idempotency Durable Object, staging IPAWS variables, and storage-only normalized records with notifications disabled. This PR itself performs no deployment.
+The staging Worker remains separately named and configured with staging KV, its Worker-scoped idempotency Durable Object, staging variables, and storage-only normalized records with notifications disabled. The production file contains placeholders and is rejected by real-deployment validation until independently reviewed values are supplied. This PR itself performs no deployment.
 
 ### Dependency audit
 
@@ -49,7 +51,8 @@ Wrangler was upgraded within major version 4 and safe transitive fixes were appl
 - SignatureVersion 1 requires legacy SHA-1 compatibility.
 - Durable Object and KV writes are not a cross-system transaction; downstream effecting consumers must be independently idempotent.
 - The actual SNS delivery policy must be recorded before selecting the production timestamp window.
-- CAP lifecycle projection, geographic authorization, production transport, DLQ/reconciliation, and notification authorization are deliberately not implemented.
+- CAP lifecycle projection, per-lineage default-deny authorization, transactional effect-decision idempotency, and relationship-based reconciliation are modeled and tested, but are not integrated into the receiver runtime.
+- Production transport, a provisioned strongly consistent lifecycle ledger, analytics access, and notification delivery are not implemented or enabled.
 - Invalid-signature records retain bounded envelope metadata and a SHA-256 digest only; their untrusted message bodies are neither stored nor parsed.
 
 ### Reviewer checklist

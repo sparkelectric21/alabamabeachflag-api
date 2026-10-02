@@ -26,11 +26,16 @@ function parseTopicArns(value: string | undefined): string[] {
 		.filter(Boolean);
 }
 
+function parseEnvironment(value: string | undefined): "staging" | "production" {
+	if (value === "staging" || value === "production") return value;
+	throw new Error("ipaws_environment_invalid");
+}
+
 export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAWS_ENVIRONMENT" | "IPAWS_ALLOWED_TOPIC_ARNS" | "IPAWS_AUTO_CONFIRM_SUBSCRIPTION" | "IPAWS_NOTIFICATIONS_ENABLED" | "IPAWS_DOWNSTREAM_EFFECTS_ENABLED" | "IPAWS_PARSE_BYTE_LIMIT" | "IPAWS_RECORD_TTL_SECONDS" | "IPAWS_SUBSCRIPTION_TTL_SECONDS" | "IPAWS_HEALTH_TTL_SECONDS" | "IPAWS_SNS_MAX_AGE_SECONDS" | "IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS">
 ): IpawsIngestionConfig {
 	return {
 		enabled: envBoolean(env.IPAWS_INGESTION_ENABLED, false),
-		environment: env.IPAWS_ENVIRONMENT === "production" ? "production" : "staging",
+		environment: parseEnvironment(env.IPAWS_ENVIRONMENT),
 		allowedTopicArns: parseTopicArns(env.IPAWS_ALLOWED_TOPIC_ARNS),
 		autoConfirmSubscription: envBoolean(env.IPAWS_AUTO_CONFIRM_SUBSCRIPTION, false),
 		notificationsEnabled: envBoolean(env.IPAWS_NOTIFICATIONS_ENABLED, false),

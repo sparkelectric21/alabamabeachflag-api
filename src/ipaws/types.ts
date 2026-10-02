@@ -99,6 +99,7 @@ export type IpawsProcessingState =
 
 export interface IpawsIngestionRecord {
 	id: string;
+	environment: "staging" | "production";
 	messageId: string;
 	type: IpawsSnsType;
 	topicArn: string;

@@ -57,9 +57,9 @@ async function confirmSubscription(url: string): Promise<void> {
 	}
 }
 
-async function deliveryOutputsComplete(env: Env, messageId: string): Promise<boolean> {
+async function deliveryOutputsComplete(env: Env, messageId: string, environment: "staging" | "production"): Promise<boolean> {
 	const record = await readIngestionRecord(env, messageId);
-	if (!record) return false;
+	if (!record || record.environment !== environment) return false;
 	if (record.type === "Notification") {
 		if (record.processingState === "notification_parse_failed" || record.processingState === "notification_unsupported") return await readSubscriptionState(env) === "confirmed";
 		if (record.processingState !== "notification_done") return false;
@@ -182,7 +182,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		metrics.snsType = snsType(message.Type);
 		metrics.correlationMessageId = message.MessageId;
 	} catch (error) {
-		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		if (error instanceof IpawsSnsError) return responseError(error.code, "SNS request validation failed.", 400);
 		return responseError("ipaws_invalid_payload", "Unable to parse SNS envelope.", 400);
 	}
 
@@ -195,7 +195,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		validateSnsTimestamp(message.Timestamp, config.snsMaxAgeSeconds, config.snsMaxFutureSkewSeconds);
 	} catch (error) {
 		metrics.timestampValidation = "failure";
-		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		if (error instanceof IpawsSnsError) return responseError(error.code, "SNS request validation failed.", 400);
 		return responseError("ipaws_invalid_timestamp", "SNS Timestamp is invalid.", 400);
 	}
 
@@ -205,7 +205,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		signatureResult = await verifySnsSignature(message);
 	} catch (error) {
 		metrics.signature = "failure";
-		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		if (error instanceof IpawsSnsError) return responseError(error.code, "SNS request validation failed.", 400);
 		return responseError("ipaws_signature_validation_unavailable", "SNS signature validation is temporarily unavailable.", 503);
 	}
 	if (!signatureResult.valid) {
@@ -230,7 +230,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		try {
 			validateSubscribeUrl(message.SubscribeURL ?? "", message.TopicArn, message.Token ?? "");
 		} catch (error) {
-			if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+			if (error instanceof IpawsSnsError) return responseError(error.code, "SNS request validation failed.", 400);
 			return responseError("ipaws_invalid_subscribe_url", "SubscribeURL is invalid.", 400);
 		}
 	}
@@ -254,7 +254,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 	}
 	if (claim.result === "complete") {
 		try {
-			if (await deliveryOutputsComplete(env, message.MessageId)) {
+			if (await deliveryOutputsComplete(env, message.MessageId, config.environment)) {
 				metrics.idempotency.push("completed_duplicate");
 				await recordIpawsHealthEvent(env, "delivery_duplicate", config.healthTtlSeconds);
 				return response({ status: "ok", outcome: "duplicate" }, { headers: { "Cache-Control": "no-store" } });
@@ -290,6 +290,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		const receipt = await upsertIngestionRecord(
 			env,
 			message,
+			config.environment,
 			"signature_verified",
 			message.Message,
 			"success",
@@ -330,7 +331,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseResultSummary: parseResult.status,
 			}, config.recordTtlSeconds);
 			enterStage(metrics, "completion");
-			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required notification outputs are not yet visible.");
+			if (!(await deliveryOutputsComplete(env, message.MessageId, config.environment))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required notification outputs are not yet visible.");
 			if (!(await renewIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership expired before completion.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
@@ -350,7 +351,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseError: "unsubscribe_confirmation_no_action",
 			}, config.recordTtlSeconds);
 			enterStage(metrics, "completion");
-			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required unsubscribe output is not yet visible.");
+			if (!(await deliveryOutputsComplete(env, message.MessageId, config.environment))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required unsubscribe output is not yet visible.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
 			metrics.correlationAction = "accepted";
@@ -370,7 +371,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 				parseError: "subscription_confirmation_disabled",
 			}, config.recordTtlSeconds);
 			enterStage(metrics, "completion");
-			if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
+			if (!(await deliveryOutputsComplete(env, message.MessageId, config.environment))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
 			if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 			metrics.idempotency.push("completion");
 			metrics.correlationAction = "accepted";
@@ -390,7 +391,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 			parseError: null,
 		}, config.recordTtlSeconds);
 		enterStage(metrics, "completion");
-		if (!(await deliveryOutputsComplete(env, message.MessageId))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
+		if (!(await deliveryOutputsComplete(env, message.MessageId, config.environment))) throw new IpawsRetryableError("ipaws_output_verification_failed", "Required subscription output is not yet visible.");
 		if (!(await completeIpawsDelivery(env.IPAWS_IDEMPOTENCY, message.MessageId, claimToken))) throw new IpawsRetryableError("ipaws_stale_delivery_claim", "Delivery ownership changed before completion.");
 		metrics.idempotency.push("completion");
 		metrics.correlationAction = "accepted";
@@ -402,7 +403,7 @@ async function handleIpawsPubSubRequestInner(request: Request, env: Env, metrics
 		} catch {
 			logWarn("IPAWS", "Unable to release failed delivery claim");
 		}
-		if (error instanceof IpawsSnsError) return responseError(error.code, error.message, 400);
+		if (error instanceof IpawsSnsError) return responseError(error.code, "SNS request validation failed.", 400);
 		logWarn("IPAWS", "Retryable IPAWS processing failure", { stage: metrics.currentStage ?? "persistence" });
 		return responseError(error instanceof IpawsRetryableError ? error.code : "ipaws_processing_unavailable", "IPAWS processing is temporarily unavailable.", 503);
 	}

@@ -40,6 +40,7 @@ export async function writeIngestionRecord(
 export async function upsertIngestionRecord(
 	env: Pick<Env, "BEACH_DATA">,
 	message: IpawsSnsMessage,
+	environment: "staging" | "production",
 	initialState: IpawsProcessingState,
 	rawMessage: string,
 	signatureResult: "success" | "failure" | "not_attempted",
@@ -49,11 +50,23 @@ export async function upsertIngestionRecord(
 	rawMessageDigestSha256: string | null = null,
 ): Promise<IpawsIngressReceipt> {
 	const existing = await readIngestionRecord(env, message.MessageId);
-	if (existing) return { duplicate: true, record: existing };
+	if (existing) {
+		if (existing.environment === environment) return { duplicate: true, record: existing };
+		if (existing.environment !== undefined) throw new Error("ipaws_ingestion_environment_mismatch");
+		// Compatibility for authenticated records written before environment provenance existed.
+		// Backfill only when the currently verified envelope proves this is the same delivery.
+		if (existing.messageId !== message.MessageId || existing.topicArn !== messageTopicArn || existing.rawMessage !== rawMessage) {
+			throw new Error("ipaws_legacy_ingestion_record_mismatch");
+		}
+		const upgraded = { ...existing, environment };
+		await writeIngestionRecord(env, upgraded, recordTtlSeconds);
+		return { duplicate: true, record: upgraded };
+	}
 
 	const now = new Date().toISOString();
 	const record: IpawsIngestionRecord = {
 		id: crypto.randomUUID(),
+		environment,
 		messageId: message.MessageId,
 		type: message.Type,
 		topicArn: messageTopicArn,

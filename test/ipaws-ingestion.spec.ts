@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleIpawsPubSubRequest } from "../src/ipaws/handler";
 import { IpawsIdempotencyCoordinator } from "../src/ipaws/idempotency";
 import { parseCapPayload } from "../src/ipaws/parser";
+import { normalizeIpawsAlert } from "../src/ipaws/domain";
+import { upsertIngestionRecord } from "../src/ipaws/persistence";
 import { parseSigningString, parseSnsMessage, validateSnsRequired, validateSubscribeUrl, validateType } from "../src/ipaws/sns";
 import type { Env } from "../src/types";
 import * as sns from "../src/ipaws/sns";
@@ -190,12 +192,12 @@ describe("IPAWS SNS validation utilities", () => {
 
 	it("accepts valid SNS types and rejects others", () => {
 		expect(() => validateType("Notification")).not.toThrow();
-		expect(() => validateType("NotAType" as never)).toThrow("Unsupported SNS Type");
+		expect(() => validateType("NotAType" as never)).toThrow("SNS Type is unsupported.");
 	});
 
 	it("rejects unsafe SubscribeURL values", () => {
 		expect(() => validateSubscribeUrl("http://example.com/")).toThrow("unsafe_upstream_url");
-		expect(() => validateSubscribeUrl("https://sns.example.com/?Action=ConfirmSubscription&Token=t&TopicArn=a")).toThrow("Unexpected AWS hostname");
+		expect(() => validateSubscribeUrl("https://sns.example.com/?Action=ConfirmSubscription&Token=t&TopicArn=a")).toThrow("Signing URL hostname is not an approved SNS endpoint.");
 	});
 
 	it("validates required SNS fields", () => {
@@ -205,6 +207,55 @@ describe("IPAWS SNS validation utilities", () => {
 });
 
 describe("IPAWS pub/sub handler", () => {
+	it("returns a fixed bounded response for a very large attacker-controlled SNS Type", async () => {
+		const env = createEnv();
+		const attackerValue = `https://attacker.invalid/${"secret".repeat(20_000)}`;
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify({ ...baseNotification, Type: attackerValue }),
+		}), env);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_unsupported_sns_type", message: "SNS request validation failed." });
+		expect(Number(response.headers.get("content-length")) || 0).toBeLessThan(256);
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(attackerValue);
+	});
+
+	it("fails closed for an unrecognized environment instead of relabeling it as staging", async () => {
+		const env = createEnv({ IPAWS_ENVIRONMENT: "preview" });
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
+			method: "POST", body: JSON.stringify(baseNotification),
+		}), env);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_unexpected_exception", message: "IPAWS processing is temporarily unavailable." });
+		expect(env.BEACH_DATA.map.size).toBe(0);
+	});
+
+	it("records validated environment provenance and refuses cross-environment normalization", async () => {
+		const env = createEnv();
+		const parsed = parseCapPayload(CAP_JSON_STRING);
+		const staging = await upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600);
+		expect(staging.record.environment).toBe("staging");
+		expect(normalizeIpawsAlert(staging.record).environment).toBe("staging");
+		await expect(upsertIngestionRecord(env, baseNotification, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600))
+			.rejects.toThrow("ipaws_ingestion_environment_mismatch");
+		const productionMessage = { ...baseNotification, MessageId: "22222222-2222-2222-2222-222222222222" };
+		const production = await upsertIngestionRecord(env, productionMessage, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, productionMessage.TopicArn, 3600);
+		expect(normalizeIpawsAlert(production.record).environment).toBe("production");
+		await expect(upsertIngestionRecord(env, productionMessage, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, productionMessage.TopicArn, 3600))
+			.rejects.toThrow("ipaws_ingestion_environment_mismatch");
+	});
+
+	it("upgrades a matching legacy authenticated record but rejects ambiguous legacy data", async () => {
+		const env = createEnv();
+		const parsed = parseCapPayload(CAP_JSON_STRING);
+		const current = await upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600);
+		const legacy = { ...current.record } as Partial<typeof current.record>;
+		delete legacy.environment;
+		env.BEACH_DATA.map.set(`ipaws:ingest:${baseNotification.MessageId}`, JSON.stringify(legacy));
+		expect((await upsertIngestionRecord(env, baseNotification, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600)).record.environment).toBe("production");
+		env.BEACH_DATA.map.set(`ipaws:ingest:${baseNotification.MessageId}`, JSON.stringify({ ...legacy, rawMessage: "different" }));
+		await expect(upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600))
+			.rejects.toThrow("ipaws_legacy_ingestion_record_mismatch");
+	});
 	it("fences stale owners after lease expiry and permits only the current owner to complete", async () => {
 		const values = new Map<string, unknown>();
 		const storage = {
@@ -430,6 +481,21 @@ describe("IPAWS pub/sub handler", () => {
 		}));
 	});
 
+	it("repairs matching legacy provenance behind a complete marker before acknowledging a duplicate", async () => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		expect((await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env)).status).toBe(200);
+		const ingestionKey = `ipaws:ingest:${baseNotification.MessageId}`;
+		const legacy = JSON.parse(env.BEACH_DATA.map.get(ingestionKey) ?? "{}");
+		delete legacy.environment;
+		env.BEACH_DATA.map.set(ingestionKey, JSON.stringify(legacy));
+		const recovered = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(recovered.status).toBe(200);
+		expect(JSON.parse(env.BEACH_DATA.map.get(ingestionKey) ?? "{}").environment).toBe("staging");
+		expect(JSON.parse(env.BEACH_DATA.map.get(`ipaws:normalized:${baseNotification.MessageId}`) ?? "{}").environment).toBe("staging");
+	});
+
 	it("fails closed on invalid signatures", async () => {
 		const verify = vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: false, reason: "ipaws_signature_mismatch" });
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -559,6 +625,7 @@ describe("IPAWS pub/sub handler", () => {
 	it("rejects unsafe subscription URLs", async () => {
 		const verify = vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, reason: undefined, algorithm: "SHA-1" });
 		const env = createEnv();
+		const maliciousUrl = `https://example.com/${"private-payload".repeat(20_000)}?Action=ConfirmSubscription&Token=t&TopicArn=a`;
 		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", {
 			method: "POST",
 			body: JSON.stringify({
@@ -566,11 +633,12 @@ describe("IPAWS pub/sub handler", () => {
 				Type: "SubscriptionConfirmation" as const,
 				Message: "subscribe",
 				Token: "token",
-				SubscribeURL: "https://example.com/?Action=ConfirmSubscription&Token=t&TopicArn=a",
+				SubscribeURL: maliciousUrl,
 			}),
 		}), env);
 		expect(response.status).toBe(400);
-		expect(await response.json()).toMatchObject({ code: "ipaws_invalid_aws_hostname" });
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_invalid_aws_hostname", message: "SNS request validation failed." });
+		expect(JSON.stringify(env.metricsEvents)).not.toContain(maliciousUrl);
 		expect(verify).toHaveBeenCalled();
 	});
 

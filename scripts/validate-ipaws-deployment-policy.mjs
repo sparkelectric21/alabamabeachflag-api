@@ -6,6 +6,7 @@ const mode = process.argv.includes("--deploy") ? "deploy" : "template";
 const argument = (name, fallback) => process.argv.find((item) => item.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
 const stagingFilename = argument("staging-config", "wrangler.ipaws.staging.jsonc");
 const productionFilename = argument("production-config", "wrangler.ipaws.production.jsonc");
+const generalFilename = argument("general-config", "wrangler.jsonc");
 
 function parseJsonc(filename) {
 	const source = readFileSync(resolve(root, filename), "utf8");
@@ -31,6 +32,7 @@ function parseJsonc(filename) {
 
 const staging = parseJsonc(stagingFilename);
 const production = parseJsonc(productionFilename);
+const general = parseJsonc(generalFilename);
 const failures = [];
 const fail = (condition, message) => { if (condition) failures.push(message); };
 const allowedProductionKeys = new Set([
@@ -51,6 +53,12 @@ const productionRoute = production.config.routes?.[0];
 const routePattern = typeof productionRoute === "string" ? productionRoute : productionRoute?.pattern;
 const routeZone = typeof productionRoute === "object" ? productionRoute?.zone_name : undefined;
 const productionEndpoint = production.config.vars?.IPAWS_PRODUCTION_ENDPOINT;
+const generalKvIds = new Set((general.config.kv_namespaces ?? []).map((item) => item.id).filter(Boolean));
+const generalRoutes = (general.config.routes ?? []).map((route) => typeof route === "string" ? route : route.pattern).filter(Boolean);
+const routeHost = (route) => String(route).split("/")[0].replace(/^\*\./, "");
+const generalHosts = new Set(generalRoutes.map(routeHost));
+const productionHosts = new Set(productionRoutes.map(routeHost));
+const generalDoClasses = new Set((general.config.durable_objects?.bindings ?? []).map((binding) => binding.class_name));
 
 fail(production.config.main !== "src/ipaws/worker.ts", "production main must be src/ipaws/worker.ts");
 fail(production.config.workers_dev !== false, "production workers_dev must be false");
@@ -66,8 +74,12 @@ fail(!Array.isArray(production.config.migrations) || production.config.migration
 	|| production.config.migrations[0]?.new_sqlite_classes?.[0] !== "IpawsIdempotencyCoordinator", "production must contain exactly one coordinator SQLite migration");
 
 fail(staging.config.name === production.config.name, "staging and production Worker names must differ");
+fail(general.config.name === production.config.name, "general-production and IPAWS-production Worker names must differ");
 fail(!stagingKv || !productionKv || stagingKv === productionKv, "staging and production KV namespaces must differ");
+fail(Boolean(productionKv) && generalKvIds.has(productionKv), "general-production and IPAWS-production KV namespaces must differ");
 fail(productionRoutes.some((route) => stagingRoutes.has(route)), "staging and production routes must differ");
+fail(productionRoutes.some((route) => generalRoutes.includes(route)), "general-production and IPAWS-production routes must differ");
+fail([...productionHosts].some((host) => generalHosts.has(host)), "general-production and IPAWS-production route hostnames must differ");
 const stagingMigrationTags = new Set((staging.config.migrations ?? []).map((migration) => migration.tag));
 fail((production.config.migrations ?? []).some((migration) => stagingMigrationTags.has(migration.tag)), "staging and production Durable Object migration tags must differ");
 fail(production.source.includes(staging.config.name), "staging Worker identifier appears in production configuration");
@@ -78,6 +90,7 @@ fail(Boolean(productionKv) && staging.source.includes(productionKv), "production
 fail(Boolean(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS) && staging.source.includes(production.config.vars.IPAWS_ALLOWED_TOPIC_ARNS), "production TopicArn appears in staging configuration");
 fail(productionRoutes.some((route) => staging.source.includes(route)), "production route appears in staging configuration");
 fail(stagingDoBindings.some((binding) => !productionDoBindings.some((candidate) => candidate.name === binding.name && candidate.class_name === binding.class_name)), "staging and production must use the reviewed coordinator class contract");
+fail(productionDoBindings.some((binding) => generalDoClasses.has(binding.class_name)), "general-production Durable Object classes must not be reused by IPAWS production");
 
 const requiredVariables = [
 	"IPAWS_INGESTION_ENABLED", "IPAWS_ENVIRONMENT", "IPAWS_ALLOWED_TOPIC_ARNS", "IPAWS_AUTO_CONFIRM_SUBSCRIPTION",
@@ -85,6 +98,10 @@ const requiredVariables = [
 	"IPAWS_RECORD_TTL_SECONDS", "IPAWS_SUBSCRIPTION_TTL_SECONDS", "IPAWS_PARSE_BYTE_LIMIT", "IPAWS_SNS_MAX_AGE_SECONDS",
 	"IPAWS_SNS_MAX_FUTURE_SKEW_SECONDS",
 ];
+const allowedProductionVariables = new Set(requiredVariables);
+for (const variable of Object.keys(production.config.vars ?? {})) {
+	fail(!allowedProductionVariables.has(variable), `unapproved production variable: ${variable}`);
+}
 for (const variable of requiredVariables) fail(typeof production.config.vars?.[variable] !== "string" || production.config.vars[variable].length === 0, `production variable ${variable} is required`);
 fail(production.config.vars?.IPAWS_ENVIRONMENT !== "production", "production environment marker must be production");
 fail(staging.config.vars?.IPAWS_ENVIRONMENT !== "staging", "staging environment marker must be staging");
@@ -107,7 +124,8 @@ if (mode === "deploy") {
 	fail(!/^arn:(?:aws|aws-us-gov):sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+(?:,arn:(?:aws|aws-us-gov):sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+)*$/.test(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS ?? ""), "production TopicArn allowlist is invalid");
 	try {
 		const endpoint = new URL(productionEndpoint);
-		fail(endpoint.protocol !== "https:" || endpoint.pathname !== "/v1/ipaws/pubsub" || endpoint.host !== routeZone || routePattern !== `${endpoint.host}/v1/ipaws/*`, "production endpoint must be HTTPS and match the configured zone route");
+		const endpointInZone = endpoint.hostname === routeZone || endpoint.hostname.endsWith(`.${routeZone}`);
+		fail(endpoint.protocol !== "https:" || endpoint.pathname !== "/v1/ipaws/pubsub" || !endpointInZone || routePattern !== `${endpoint.host}/v1/ipaws/*`, "production endpoint must be HTTPS and match the configured zone route");
 	} catch { failures.push("production endpoint must be a valid HTTPS URL"); }
 }
 
