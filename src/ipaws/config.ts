@@ -26,7 +26,7 @@ function parseTopicArns(value: string | undefined): string[] {
 		.filter(Boolean);
 }
 
-function parseEnvironment(value: string | undefined): "staging" | "production" {
+export function parseIpawsEnvironment(value: string | undefined): "staging" | "production" {
 	if (value === "staging" || value === "production") return value;
 	throw new Error("ipaws_environment_invalid");
 }
@@ -35,7 +35,7 @@ export function loadIpawsConfig(env: Pick<Env, "IPAWS_INGESTION_ENABLED" | "IPAW
 ): IpawsIngestionConfig {
 	return {
 		enabled: envBoolean(env.IPAWS_INGESTION_ENABLED, false),
-		environment: parseEnvironment(env.IPAWS_ENVIRONMENT),
+		environment: parseIpawsEnvironment(env.IPAWS_ENVIRONMENT),
 		allowedTopicArns: parseTopicArns(env.IPAWS_ALLOWED_TOPIC_ARNS),
 		autoConfirmSubscription: envBoolean(env.IPAWS_AUTO_CONFIRM_SUBSCRIPTION, false),
 		notificationsEnabled: envBoolean(env.IPAWS_NOTIFICATIONS_ENABLED, false),

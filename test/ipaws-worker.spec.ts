@@ -119,6 +119,20 @@ describe("standalone IPAWS Worker", () => {
 		expect((await worker.fetch(request(`/v1/ipaws/metrics?${query}&attacker=cache-bypass`), env, executionContext)).status).toBe(400);
 	});
 
+	it.each([undefined, "", "stagng", "preview"])("fails closed before metrics access or caching for invalid environment %s", async (environment) => {
+		const env = createEnvironment();
+		if (environment === undefined) delete (env as Partial<IpawsStandaloneEnv>).IPAWS_ENVIRONMENT;
+		else env.IPAWS_ENVIRONMENT = environment;
+		const cache = { match: vi.fn(), put: vi.fn() };
+		vi.stubGlobal("caches", { default: cache });
+		const response = await worker.fetch(request("/v1/ipaws/metrics"), env, executionContext);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({ status: "error", code: "ipaws_environment_invalid" });
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(cache.match).not.toHaveBeenCalled();
+		expect(env.BEACH_DATA.get).not.toHaveBeenCalled();
+	});
+
 	it("rejects partial, non-canonical, inverted, and oversized metrics windows", async () => {
 		vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-30T12:30:00.000Z"));
 		const env = createEnvironment();

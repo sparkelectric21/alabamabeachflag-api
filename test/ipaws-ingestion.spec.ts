@@ -156,6 +156,17 @@ describe("IPAWS CAP parser", () => {
 		expect(parseCapPayload("<alert><identifier></alert>")).toMatchObject({ status: "parse_failed" });
 	});
 
+	it.each([
+		`<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><${"ATTACKER".repeat(2_000)}></alert>`,
+		`<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">&ATTACKER_SECRET;</alert>`,
+		`<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><open></different></alert>`,
+	] as const)("uses a fixed diagnostic for malformed XML without retaining parser exception text", (maliciousXml) => {
+		const parsed = parseCapPayload(maliciousXml);
+		expect(parsed).toMatchObject({ status: "parse_failed", reason: "cap_xml_malformed" });
+		expect(JSON.stringify(parsed)).not.toContain("ATTACKER_SECRET");
+		expect(JSON.stringify(parsed)).not.toContain("unexpected close tag");
+	});
+
 	it("rejects namespace confusion and entity-bearing documents", () => {
 		expect(parseCapPayload(CAP_XML.replace("urn:oasis:names:tc:emergency:cap:1.2", "https://attacker.example/cap"))).toMatchObject({ status: "parse_failed" });
 		expect(parseCapPayload(`<!DOCTYPE alert [<!ENTITY x "injected">]><alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><identifier>&x;</identifier></alert>`)).toMatchObject({ status: "parse_failed" });
@@ -251,7 +262,10 @@ describe("IPAWS pub/sub handler", () => {
 		const legacy = { ...current.record } as Partial<typeof current.record>;
 		delete legacy.environment;
 		env.BEACH_DATA.map.set(`ipaws:ingest:${baseNotification.MessageId}`, JSON.stringify(legacy));
-		expect((await upsertIngestionRecord(env, baseNotification, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600)).record.environment).toBe("production");
+		await expect(upsertIngestionRecord(env, baseNotification, "production", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600))
+			.rejects.toThrow("ipaws_legacy_ingestion_environment_unverified");
+		expect((await upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600)).record.environment).toBe("staging");
+		delete legacy.environment;
 		env.BEACH_DATA.map.set(`ipaws:ingest:${baseNotification.MessageId}`, JSON.stringify({ ...legacy, rawMessage: "different" }));
 		await expect(upsertIngestionRecord(env, baseNotification, "staging", "signature_verified", CAP_JSON_STRING, "success", parsed, baseNotification.TopicArn, 3600))
 			.rejects.toThrow("ipaws_legacy_ingestion_record_mismatch");
@@ -494,6 +508,26 @@ describe("IPAWS pub/sub handler", () => {
 		expect(recovered.status).toBe(200);
 		expect(JSON.parse(env.BEACH_DATA.map.get(ingestionKey) ?? "{}").environment).toBe("staging");
 		expect(JSON.parse(env.BEACH_DATA.map.get(`ipaws:normalized:${baseNotification.MessageId}`) ?? "{}").environment).toBe("staging");
+	});
+
+	it.each([
+		["missing", (map: Map<string, string>, key: string) => map.delete(key)],
+		["malformed", (map: Map<string, string>, key: string) => map.set(key, "{not-json")],
+		["mismatched", (map: Map<string, string>, key: string) => map.set(key, JSON.stringify({ schemaVersion: 1, messageId: "another-message", environment: "staging" }))],
+		["cross-environment", (map: Map<string, string>, key: string) => map.set(key, JSON.stringify({ schemaVersion: 1, messageId: baseNotification.MessageId, environment: "production" }))],
+	] as const)("repairs a %s normalized record before acknowledging a completed duplicate", async (_case, corrupt) => {
+		vi.spyOn(sns, "verifySnsSignature").mockResolvedValue({ valid: true, algorithm: "SHA-256" });
+		const env = createEnv();
+		const body = JSON.stringify({ ...baseNotification, SignatureVersion: "2", Message: CAP_JSON_STRING });
+		expect((await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env)).status).toBe(200);
+		const normalizedKey = `ipaws:normalized:${baseNotification.MessageId}`;
+		corrupt(env.BEACH_DATA.map, normalizedKey);
+		const response = await handleIpawsPubSubRequest(new Request("https://example.com/v1/ipaws/pubsub", { method: "POST", body }), env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ outcome: "accepted" });
+		expect(JSON.parse(env.BEACH_DATA.map.get(normalizedKey) ?? "{}")).toMatchObject({
+			schemaVersion: 1, messageId: baseNotification.MessageId, environment: "staging",
+		});
 	});
 
 	it("fails closed on invalid signatures", async () => {

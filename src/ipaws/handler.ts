@@ -63,7 +63,11 @@ async function deliveryOutputsComplete(env: Env, messageId: string, environment:
 	if (record.type === "Notification") {
 		if (record.processingState === "notification_parse_failed" || record.processingState === "notification_unsupported") return await readSubscriptionState(env) === "confirmed";
 		if (record.processingState !== "notification_done") return false;
-		return Boolean(await readNormalizedAlert(env, messageId)) && await readSubscriptionState(env) === "confirmed";
+		const normalized = await readNormalizedAlert(env, messageId);
+		return normalized?.schemaVersion === 1
+			&& normalized.messageId === messageId
+			&& normalized.environment === environment
+			&& await readSubscriptionState(env) === "confirmed";
 	}
 	if (record.type === "SubscriptionConfirmation") {
 		if (record.processingState === "subscription_confirmed") return await readSubscriptionState(env) === "confirmed";

@@ -192,15 +192,17 @@ export function reconciliationKeySets(input: {
 	versions: readonly { versionKey: string; inboxKey: string; expectedLineageKeys: readonly string[]; terminal: boolean }[];
 	inbox: readonly string[];
 	effects: readonly ProductionEffectRecord[];
-}): { missingVersions: string[]; missingInbox: string[]; missingEffects: string[]; orphanEffects: string[]; duplicateDecisions: string[]; terminalAllowedEffects: string[] } {
+}): { missingVersions: string[]; missingInbox: string[]; missingEffects: string[]; orphanEffects: string[]; unexpectedEffects: string[]; duplicateEffects: string[]; terminalAllowedEffects: string[] } {
 	const inbox = new Set(input.inbox);
-	const versionKeys = new Set(input.versions.map(({ versionKey }) => versionKey));
+	const versionsByKey = new Map(input.versions.map((version) => [version.versionKey, version]));
 	const versionInbox = new Set(input.versions.map(({ inboxKey }) => inboxKey));
+	const expectedRelationships = new Set(input.versions.flatMap(({ inboxKey, versionKey, expectedLineageKeys }) =>
+		expectedLineageKeys.map((target) => stableKey([inboxKey, versionKey, target]))));
 	const effectRelationships = new Set(input.effects.map(({ inboxKey, versionKey, lineageKey }) => stableKey([inboxKey, versionKey, lineageKey])));
-	const decisionCounts = new Map<string, number>();
+	const relationshipCounts = new Map<string, number>();
 	for (const effect of input.effects) {
-		const relationship = stableKey([effect.inboxKey, effect.lineageKey]);
-		decisionCounts.set(relationship, (decisionCounts.get(relationship) ?? 0) + 1);
+		const relationship = stableKey([effect.inboxKey, effect.versionKey, effect.lineageKey]);
+		relationshipCounts.set(relationship, (relationshipCounts.get(relationship) ?? 0) + 1);
 	}
 	const terminalVersionKeys = new Set(input.versions.filter(({ terminal }) => terminal).map(({ versionKey }) => versionKey));
 	return {
@@ -209,8 +211,12 @@ export function reconciliationKeySets(input: {
 		missingEffects: input.versions.flatMap(({ inboxKey, versionKey, expectedLineageKeys }) => expectedLineageKeys
 			.filter((target) => !effectRelationships.has(stableKey([inboxKey, versionKey, target])))
 			.map((target) => stableKey([versionKey, target]))).sort(),
-		orphanEffects: input.effects.filter(({ inboxKey, versionKey }) => !inbox.has(inboxKey) || !versionKeys.has(versionKey)).map(({ effectKey }) => effectKey).sort(),
-		duplicateDecisions: [...decisionCounts].filter(([, count]) => count > 1).map(([relationship]) => relationship).sort(),
+		orphanEffects: input.effects.filter(({ inboxKey, versionKey }) => !inbox.has(inboxKey) || !versionsByKey.has(versionKey)).map(({ effectKey }) => effectKey).sort(),
+		unexpectedEffects: input.effects.filter(({ inboxKey, versionKey, lineageKey }) => {
+			const version = versionsByKey.get(versionKey);
+			return Boolean(version) && inbox.has(inboxKey) && !expectedRelationships.has(stableKey([inboxKey, versionKey, lineageKey]));
+		}).map(({ effectKey }) => effectKey).sort(),
+		duplicateEffects: [...relationshipCounts].filter(([, count]) => count > 1).map(([relationship]) => relationship).sort(),
 		terminalAllowedEffects: input.effects.filter(({ versionKey, decision }) => terminalVersionKeys.has(versionKey) && decision.allowed).map(({ effectKey }) => effectKey).sort(),
 	};
 }

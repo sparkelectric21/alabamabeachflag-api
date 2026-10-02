@@ -153,13 +153,45 @@ describe("IPAWS production lifecycle prerequisites", () => {
 			],
 		})).toEqual({
 			missingVersions: ["ingress-b"], missingInbox: ["version-c"], missingEffects: ["9:version-c|9:lineage-c"], orphanEffects: ["effect-orphan"],
-			duplicateDecisions: [], terminalAllowedEffects: [],
+			unexpectedEffects: [], duplicateEffects: [], terminalAllowedEffects: [],
 		});
+	});
+
+	it("flags additional wrong-lineage, cross-paired, and duplicate effects even when valid effects exist", () => {
+		const denied = { allowed: false, policyVersion: "disabled-baseline-v1", reason: "disabled" as const };
+		const effectA = { effectKey: "effect-a", inboxKey: "inbox-a", versionKey: "version-a", lineageKey: "lineage-a", decision: denied };
+		const result = reconciliationKeySets({
+			ingress: [{ ingressKey: "ingress-a", inboxKey: "inbox-a" }, { ingressKey: "ingress-b", inboxKey: "inbox-b" }],
+			versions: [
+				{ versionKey: "version-a", inboxKey: "inbox-a", expectedLineageKeys: ["lineage-a"], terminal: false },
+				{ versionKey: "version-b", inboxKey: "inbox-b", expectedLineageKeys: ["lineage-b"], terminal: false },
+			],
+			inbox: ["inbox-a", "inbox-b"],
+			effects: [
+				effectA,
+				{ ...effectA, effectKey: "effect-a-duplicate" },
+				{ ...effectA, effectKey: "effect-wrong-lineage", lineageKey: "lineage-z" },
+				{ effectKey: "effect-cross-paired", inboxKey: "inbox-a", versionKey: "version-b", lineageKey: "lineage-b", decision: denied },
+				{ effectKey: "effect-b", inboxKey: "inbox-b", versionKey: "version-b", lineageKey: "lineage-b", decision: denied },
+			],
+		});
+		expect(result.missingEffects).toEqual([]);
+		expect(result.orphanEffects).toEqual([]);
+		expect(result.unexpectedEffects).toEqual(["effect-cross-paired", "effect-wrong-lineage"]);
+		expect(result.duplicateEffects).toEqual(["7:inbox-a|9:version-a|9:lineage-a"]);
 	});
 });
 
 describe("IPAWS deployment policy", () => {
 	const generalKvId = readFileSync("wrangler.jsonc", "utf8").match(/"binding":\s*"BEACH_DATA",\s*"id":\s*"([^"]+)"/)?.[1];
+	const generalMigrationTag = readFileSync("wrangler.jsonc", "utf8").match(/"tag":\s*"([^"]+)"/)?.[1];
+	function resolveProduction(config: Record<string, any>) {
+		config.name = "ipaws-production-test-fixture";
+		config.kv_namespaces[0].id = "1234567890abcdef1234567890abcdef";
+		config.routes = [{ pattern: "ipaws-production-test.example/v1/ipaws/*", zone_name: "ipaws-production-test.example" }];
+		config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws-us-gov:sns:us-gov-west-1:111111111111:TEST_ONLY";
+		config.vars.IPAWS_PRODUCTION_ENDPOINT = "https://ipaws-production-test.example/v1/ipaws/pubsub";
+	}
 	function runPolicy(productionMutation?: (config: Record<string, any>) => void, stagingMutation?: (config: Record<string, any>) => void, deploy = false) {
 		const scratch = mkdtempSync(resolve(tmpdir(), "ipaws-policy-"));
 		try {
@@ -198,13 +230,28 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { config.analytics_engine_datasets = [{ binding: "UNREVIEWED" }]; }).status).toBe(1);
 	});
 
+	it("rejects every unreviewed nested binding, route, and migration property", () => {
+		expect(runPolicy((config) => { config.kv_namespaces[0].preview_id = "1234567890abcdef1234567890abcdef"; }).status).toBe(1);
+		expect(runPolicy((config) => { config.durable_objects.bindings[0].script_name = "another-worker"; }).status).toBe(1);
+		expect(runPolicy((config) => { config.migrations[0].deleted_classes = ["OtherClass"]; }).status).toBe(1);
+		expect(runPolicy((config) => { config.routes[0].custom_domain = true; }).status).toBe(1);
+		expect(generalMigrationTag).toBeTruthy();
+		expect(runPolicy((config) => { config.migrations[0].tag = generalMigrationTag; }).status).toBe(1);
+	});
+
+	it.each([
+		"https://user:password@ipaws-production-test.example/v1/ipaws/pubsub",
+		"https://ipaws-production-test.example:8443/v1/ipaws/pubsub",
+		"https://ipaws-production-test.example/v1/ipaws/pubsub?token=value",
+		"https://ipaws-production-test.example/v1/ipaws/pubsub#fragment",
+	])("rejects non-canonical reviewed endpoint %s", (endpoint) => {
+		const result = runPolicy((config) => { resolveProduction(config); config.vars.IPAWS_PRODUCTION_ENDPOINT = endpoint; }, undefined, true);
+		expect(result.status).toBe(1);
+	});
+
 	it("accepts a structurally valid resolved test fixture in deploy mode", () => {
 		const result = runPolicy((config) => {
-			config.name = "ipaws-production-test-fixture";
-			config.kv_namespaces[0].id = "1234567890abcdef1234567890abcdef";
-			config.routes = [{ pattern: "ipaws-production-test.example/v1/ipaws/*", zone_name: "ipaws-production-test.example" }];
-			config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws-us-gov:sns:us-gov-west-1:111111111111:TEST_ONLY";
-			config.vars.IPAWS_PRODUCTION_ENDPOINT = "https://ipaws-production-test.example/v1/ipaws/pubsub";
+			resolveProduction(config);
 		}, undefined, true);
 		expect(result.stderr).toBe("");
 		expect(result.status).toBe(0);

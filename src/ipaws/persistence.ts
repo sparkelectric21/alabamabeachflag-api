@@ -53,6 +53,7 @@ export async function upsertIngestionRecord(
 	if (existing) {
 		if (existing.environment === environment) return { duplicate: true, record: existing };
 		if (existing.environment !== undefined) throw new Error("ipaws_ingestion_environment_mismatch");
+		if (environment !== "staging") throw new Error("ipaws_legacy_ingestion_environment_unverified");
 		// Compatibility for authenticated records written before environment provenance existed.
 		// Backfill only when the currently verified envelope proves this is the same delivery.
 		if (existing.messageId !== message.MessageId || existing.topicArn !== messageTopicArn || existing.rawMessage !== rawMessage) {

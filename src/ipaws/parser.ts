@@ -165,6 +165,25 @@ function hasCapFields(details: IpawsRawCapDetails): boolean {
 	return Boolean(details.identifier || details.event || details.headline || details.info?.length || details.description || details.scope);
 }
 
+const FIXED_XML_PARSE_FAILURES = new Set([
+	"cap_invalid_root_or_namespace",
+	"cap_missing_required_field",
+	"cap_invalid_sent",
+	"cap_invalid_status",
+	"cap_invalid_msg_type",
+	"cap_invalid_scope",
+	"unsafe_xml_doctype",
+	"unsafe_xml_processing_instruction",
+	"xml_complexity_limit",
+	"xml_text_limit",
+	"multiple_xml_roots",
+	"xml_missing_root",
+]);
+
+function fixedXmlFailure(error: unknown): string {
+	return error instanceof Error && FIXED_XML_PARSE_FAILURES.has(error.message) ? error.message : "cap_xml_malformed";
+}
+
 export function parseCapPayload(raw: string, byteLimit = 262_144): IpawsCapParseResult {
 	if (!raw.trim()) {
 		return { status: "parse_failed", message: { source: "unknown", parsed: {} }, reason: "empty_message" };
@@ -193,10 +212,10 @@ export function parseCapPayload(raw: string, byteLimit = 262_144): IpawsCapParse
 				expires: firstInfo?.expires, headline: firstInfo?.headline, description: firstInfo?.description,
 				instruction: firstInfo?.instruction, area: firstInfo?.area, info,
 			};
-			return { status: "parsed", message: { source: "cap", parsed: details } };
-		} catch (error) {
-			return { status: "parse_failed", message: { source: "cap", parsed: {} }, reason: error instanceof Error ? error.message : "cap_xml_invalid" };
-		}
+				return { status: "parsed", message: { source: "cap", parsed: details } };
+			} catch (error) {
+				return { status: "parse_failed", message: { source: "cap", parsed: {} }, reason: fixedXmlFailure(error) };
+			}
 	}
 
 	try {

@@ -35,6 +35,9 @@ const production = parseJsonc(productionFilename);
 const general = parseJsonc(generalFilename);
 const failures = [];
 const fail = (condition, message) => { if (condition) failures.push(message); };
+const rejectUnknownKeys = (value, allowed, label) => {
+	for (const key of Object.keys(value ?? {})) fail(!allowed.has(key), `unapproved ${label} property: ${key}`);
+};
 const allowedProductionKeys = new Set([
 	"$schema", "name", "main", "compatibility_date", "compatibility_flags", "workers_dev", "preview_urls",
 	"observability", "upload_source_maps", "routes", "kv_namespaces", "durable_objects", "migrations", "vars",
@@ -60,6 +63,13 @@ const generalHosts = new Set(generalRoutes.map(routeHost));
 const productionHosts = new Set(productionRoutes.map(routeHost));
 const generalDoClasses = new Set((general.config.durable_objects?.bindings ?? []).map((binding) => binding.class_name));
 
+for (const binding of productionKvBindings) rejectUnknownKeys(binding, new Set(["binding", "id"]), "production KV binding");
+for (const binding of productionDoBindings) rejectUnknownKeys(binding, new Set(["name", "class_name"]), "production Durable Object binding");
+for (const migration of production.config.migrations ?? []) rejectUnknownKeys(migration, new Set(["tag", "new_sqlite_classes"]), "production migration");
+for (const route of production.config.routes ?? []) {
+	if (typeof route === "object" && route !== null) rejectUnknownKeys(route, new Set(["pattern", "zone_name"]), "production route");
+}
+
 fail(production.config.main !== "src/ipaws/worker.ts", "production main must be src/ipaws/worker.ts");
 fail(production.config.workers_dev !== false, "production workers_dev must be false");
 fail(production.config.preview_urls !== false, "production preview_urls must be false");
@@ -81,7 +91,9 @@ fail(productionRoutes.some((route) => stagingRoutes.has(route)), "staging and pr
 fail(productionRoutes.some((route) => generalRoutes.includes(route)), "general-production and IPAWS-production routes must differ");
 fail([...productionHosts].some((host) => generalHosts.has(host)), "general-production and IPAWS-production route hostnames must differ");
 const stagingMigrationTags = new Set((staging.config.migrations ?? []).map((migration) => migration.tag));
+const generalMigrationTags = new Set((general.config.migrations ?? []).map((migration) => migration.tag));
 fail((production.config.migrations ?? []).some((migration) => stagingMigrationTags.has(migration.tag)), "staging and production Durable Object migration tags must differ");
+fail((production.config.migrations ?? []).some((migration) => generalMigrationTags.has(migration.tag)), "general-production and IPAWS-production Durable Object migration tags must differ");
 fail(production.source.includes(staging.config.name), "staging Worker identifier appears in production configuration");
 fail(Boolean(stagingKv) && production.source.includes(stagingKv), "staging KV identifier appears in production configuration");
 fail(Boolean(staging.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS) && production.source.includes(staging.config.vars.IPAWS_ALLOWED_TOPIC_ARNS), "staging TopicArn appears in production configuration");
@@ -125,7 +137,10 @@ if (mode === "deploy") {
 	try {
 		const endpoint = new URL(productionEndpoint);
 		const endpointInZone = endpoint.hostname === routeZone || endpoint.hostname.endsWith(`.${routeZone}`);
-		fail(endpoint.protocol !== "https:" || endpoint.pathname !== "/v1/ipaws/pubsub" || !endpointInZone || routePattern !== `${endpoint.host}/v1/ipaws/*`, "production endpoint must be HTTPS and match the configured zone route");
+		const canonicalEndpoint = `https://${endpoint.hostname}/v1/ipaws/pubsub`;
+		fail(endpoint.protocol !== "https:" || endpoint.username !== "" || endpoint.password !== "" || endpoint.port !== ""
+			|| endpoint.search !== "" || endpoint.hash !== "" || productionEndpoint !== canonicalEndpoint
+			|| !endpointInZone || routePattern !== `${endpoint.hostname}/v1/ipaws/*`, "production endpoint must be canonical HTTPS and match the configured zone route");
 	} catch { failures.push("production endpoint must be a valid HTTPS URL"); }
 }
 

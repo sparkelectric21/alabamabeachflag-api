@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { handleIpawsPubSubRequest } from "./handler";
 import { IPAWS_METRICS_DEFAULT_REPORT_HOURS, readIpawsMetrics, reportForEnvironment, validMetricsWindow } from "./metrics";
 import { logWarn } from "../utils/logger";
+import { parseIpawsEnvironment } from "./config";
 export { IpawsIdempotencyCoordinator } from "./idempotency";
 
 export type IpawsStandaloneEnv = Pick<
@@ -61,8 +62,13 @@ async function authorizedMetricsRequest(request: Request, secret: string | undef
 export default {
 	async fetch(request: Request, env: IpawsStandaloneEnv, ctx: ExecutionContext): Promise<Response> {
 		const pathname = new URL(request.url).pathname;
+		let environment: "staging" | "production";
+		try {
+			environment = parseIpawsEnvironment(env.IPAWS_ENVIRONMENT);
+		} catch {
+			return json({ status: "error", code: "ipaws_environment_invalid" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+		}
 		if (pathname === "/v1/ipaws/metrics" && request.method === "GET") {
-			const environment = env.IPAWS_ENVIRONMENT === "production" ? "production" : "staging";
 			if (environment === "production" && !env.IPAWS_METRICS_READ_TOKEN) return json({ status: "error", code: "ipaws_metrics_auth_unconfigured" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 			if (environment === "production" && !(await authorizedMetricsRequest(request, env.IPAWS_METRICS_READ_TOKEN))) return json({ status: "error", code: "ipaws_metrics_unauthorized" }, { status: 401, headers: { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" } });
 			const window = metricsWindow(new URL(request.url));
