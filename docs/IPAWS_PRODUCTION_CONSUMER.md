@@ -2,7 +2,7 @@
 
 This is a design contract, not an enabled production path. The staging receiver remains storage-only and cannot notify users.
 
-`wrangler.ipaws.production.jsonc` is a reviewed disabled-baseline configuration, not an authorization to deploy. Its dedicated Worker name, KV namespace, route, and endpoint passed collision and isolation checks; its TopicArn allowlist remains deliberately empty. `npm run validate:ipaws-production-deploy` validates this repository configuration, while the separate complete-evidence gate must continue to fail until the FEMA, SNS, auxiliary-format, analytics, and independent-review evidence is supplied. The initial baseline keeps ingestion, automatic subscription confirmation, notifications, and downstream effects set to `false` and contains no queue, email, service, D1, R2, AI, or asset binding.
+`wrangler.ipaws.production.jsonc` is a reviewed disabled-baseline configuration, not an authorization to deploy. Its dedicated Worker name, KV namespace, route, and endpoint passed collision and isolation checks; its TopicArn allowlist remains deliberately empty. `npm run validate:ipaws-production-deploy` validates this repository configuration. The disabled-baseline evidence gate requires only information that can exist before the endpoint is deployed; it does not require FEMA TopicArn or SNS subscription evidence. The initial baseline keeps ingestion, automatic subscription confirmation, notifications, and downstream effects set to `false` and contains no queue, email, service, D1, R2, AI, or asset binding.
 
 Production release governance, the automatic-deployment incident, and the manual disabled-baseline workflow are documented in `IPAWS_PRODUCTION_RELEASE_GOVERNANCE.md`. The general Worker's automatic build now uploads inactive versions only; the dedicated IPAWS production workflow remains manual, evidence-gated, and disabled until a separate approval supplies its release credential and enablement variable.
 
@@ -103,6 +103,18 @@ Reviewed isolated resource identities:
 - callback: `https://ipaws.alabamabeachflag.com/v1/ipaws/pubsub`
 
 The Worker, hostname, route, and Durable Object namespace do not yet exist. Creating the empty KV namespace was the only Cloudflare resource write in this preparation phase. DNS, route creation, the Worker and its Durable Object migration, secrets, and all FEMA/AWS subscription state remain unprovisioned.
+
+## Phase-specific evidence gates
+
+The release model has two explicit phases. A consumer/effects phase is reserved for future design and has no deploy command or evidence schema.
+
+### Disabled baseline
+
+`config/ipaws-production-disabled-baseline-evidence.json` covers only pre-endpoint evidence: exact reviewed configuration, independent technical review, isolation, automatic-deployment governance, the dedicated KV and proposed Worker/hostname/route/Durable Object identities, disabled flags, empty TopicArn allowlist, fixed pre-routing 503 behavior, owners, aggregate analytics access, rollback/readback plans, and DNS/metrics-secret/release-credential/GitHub-environment readiness. The manual baseline workflow accepts only this phase and pins its digest. FEMA and SNS onboarding evidence is neither accepted nor required by this gate.
+
+### Passive ingestion
+
+`config/ipaws-production-passive-ingestion-evidence.json` is a distinct later manifest. It requires evidence of the deployed disabled baseline plus the exact FEMA TopicArn, verified AWS partition/region, subscription initiation and ARN/state, delivery/retry settings, raw-message-delivery and DLQ/redrive behavior, auxiliary-format decision, reviewed nonempty allowlist, and a separate ingestion-enablement approval. Automatic confirmation, notifications, and downstream effects must remain disabled. The passive gate rejects the baseline configuration because its allowlist is empty and ingestion is false; the baseline gate rejects a passive configuration for the inverse reason. Neither schema accepts `not-applicable` or evidence fields from the other phase. Every evidence packet is cryptographically bound to its phase and requirement, packet reuse is rejected within and across phases, and passive validation requires the exact preserved baseline configuration, exact baseline evidence manifest, and independently verified deployment-readback packet.
 
 ## Disabled production baseline
 

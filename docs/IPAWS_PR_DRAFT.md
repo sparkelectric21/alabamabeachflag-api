@@ -39,7 +39,7 @@ Final verification must use the locked Node.js 24 and Wrangler versions and reco
 
 ### Staging evidence
 
-The staging Worker remains separately named and configured with staging KV, its Worker-scoped idempotency Durable Object, staging variables, and storage-only normalized records with notifications disabled. The production file contains reviewed, isolated Cloudflare identifiers but an empty TopicArn allowlist and disabled capabilities. Complete-evidence validation still blocks release until the external evidence and a separate deployment approval exist. This PR itself performs no deployment.
+The staging Worker remains separately named and configured with staging KV, its Worker-scoped idempotency Durable Object, staging variables, and storage-only normalized records with notifications disabled. The production file contains reviewed, isolated Cloudflare identifiers but an empty TopicArn allowlist and disabled capabilities. The disabled-baseline gate requires pre-endpoint readiness only; the separate passive-ingestion gate requires all later FEMA/SNS evidence and a nonempty reviewed allowlist. This PR itself performs no deployment.
 
 ### Dependency audit
 
@@ -61,7 +61,7 @@ Wrangler was upgraded within major version 4 and safe transitive fixes were appl
 - [ ] Confirm no production secret value, notification/downstream binding, or enabled effect path is present, and that the PR itself performs no deployment.
 - [ ] Review SNS canonical signing and both signature versions.
 - [ ] Independently approve or reject the certificate trust model.
-- [ ] Confirm the FEMA TopicArn and actual SNS HTTP/S delivery policy.
+- [ ] Confirm FEMA TopicArn and SNS delivery evidence are excluded from the disabled-baseline gate and mandatory in the passive-ingestion gate.
 - [ ] Review Durable Object migration safety and rollback procedure.
 - [ ] Review the normalized-alert production consumer design before any implementation.
 - [ ] Confirm dependency advisory dispositions and Node 24 CI evidence.

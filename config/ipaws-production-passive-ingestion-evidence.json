@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 2,
+  "phase": "passive-ingestion",
+  "configurationSha256": null,
+  "disabledBaseline": {
+    "configurationSha256": null,
+    "evidenceManifestSha256": null,
+    "deploymentPacketSha256": null
+  },
+  "evidence": {
+    "disabledBaselineDeployment": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "femaProductionTopic": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "awsPartitionAndRegion": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "subscriptionInitiation": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "subscriptionArnAndState": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "deliveryRetryPolicy": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "rawMessageDelivery": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "dlqRedrive": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "auxiliaryFormats": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "nonemptyTopicAllowlistReview": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "ingestionEnablementApproval": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "automaticConfirmationDisabled": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "notificationsAndEffectsDisabled": { "status": "unverified", "packetSha256": null, "evidenceSha256": null }
+  },
+  "owners": {
+    "monitoring": "william-dickens",
+    "privacy": "william-dickens",
+    "incidentResponse": "william-dickens",
+    "femaCoordination": "william-dickens",
+    "secretCustody": "william-dickens",
+    "rollback": "william-dickens"
+  }
+}

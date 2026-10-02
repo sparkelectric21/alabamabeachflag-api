@@ -20,10 +20,13 @@
     "cf-typecheck:staging": "node scripts/check-worker-types.mjs worker-configuration.ipaws-staging.d.ts",
     "cf-typecheck:ipaws-production": "node scripts/check-worker-types.mjs worker-configuration.ipaws-production.d.ts",
     "validate:ipaws-deployment-policy": "node scripts/validate-ipaws-deployment-policy.mjs",
-    "validate:ipaws-production-deploy": "node scripts/validate-ipaws-deployment-policy.mjs --deploy",
+    "validate:ipaws-production-deploy": "node scripts/validate-ipaws-deployment-policy.mjs --deploy --phase=disabled-baseline",
+    "validate:ipaws-passive-ingestion-deploy": "node scripts/validate-ipaws-deployment-policy.mjs --deploy --phase=passive-ingestion",
     "validate:production-release-governance": "node scripts/validate-production-release-governance.mjs",
-    "validate:ipaws-production-evidence": "node scripts/validate-ipaws-production-evidence.mjs",
-    "inventory:ipaws-production-inputs": "node scripts/report-ipaws-production-inputs.mjs"
+    "validate:ipaws-production-evidence": "node scripts/validate-ipaws-production-evidence.mjs --phase=disabled-baseline",
+    "validate:ipaws-passive-ingestion-evidence": "node scripts/validate-ipaws-production-evidence.mjs --phase=passive-ingestion",
+    "inventory:ipaws-production-inputs": "node scripts/report-ipaws-production-inputs.mjs --phase=disabled-baseline",
+    "inventory:ipaws-passive-ingestion-inputs": "node scripts/report-ipaws-production-inputs.mjs --phase=passive-ingestion"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

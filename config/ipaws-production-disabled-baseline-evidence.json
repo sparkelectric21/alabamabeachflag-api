@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 2,
+  "phase": "disabled-baseline",
+  "configurationSha256": "d40e96d590885d27c5ed0dca2afd1ddecd8327d00d4ea45d21a5e48e0564258c",
+  "evidence": {
+    "independentTechnicalReview": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "resourceIsolation": { "status": "verified", "packetSha256": "f4860c69524855505285c2c738e3990b698ee046f225450df9e18afa5da93186", "evidenceSha256": "50d96536193e634d7ca4696799831f2ce006fde3d4c79e3b21de16dba7ce97b4" },
+    "automaticDeploymentGovernance": { "status": "verified", "packetSha256": "083ead98214b34d737a58208abfa7af0191969174d11ea6b7a75037dbd6f1f35", "evidenceSha256": "17474d354eaa0d64405a566bf20e4e688e857142668482a424a5962a5fad5c4b" },
+    "dedicatedKvIdentity": { "status": "verified", "packetSha256": "8aa4ba31842acba3ea9ac1701b16a90e9026319a33efe3f496ca6f667079cf3f", "evidenceSha256": "1dacbb4ff1830639cbd90e0a4eb06d8c717a80c2bb25c81e850bdf8c2cd5a20f" },
+    "proposedResourceIdentities": { "status": "verified", "packetSha256": "5be8323ce1a08c019981af50ac95602552fbd566b83eb43f03eeabda4e5a15a9", "evidenceSha256": "74fc4dddff8db5737c3be2bbebf32c6c73f95b25d67f864aeffb59ba80e597a4" },
+    "disabledCapabilityBaseline": { "status": "verified", "packetSha256": "d40e96d590885d27c5ed0dca2afd1ddecd8327d00d4ea45d21a5e48e0564258c", "evidenceSha256": "a168fafe3c91e933c5715e4753bc9339d5eaf04660a59dd6b4cdaafdfe4385d7" },
+    "inertPreRoutingResponse": { "status": "verified", "packetSha256": "3fd435f6ff724dc7dac92d2990284872e17aa4198b3a65f1b9110c4e7bb2b5a3", "evidenceSha256": "2a4c6d038853f50b320fd16f2b4c3b014bcb84e867f53c5293a23691dd7594d6" },
+    "analyticsAccess": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "rollbackAndVerificationPlan": { "status": "verified", "packetSha256": "766c6dc1318f2ea94fdd6a3227c057cf9748be6c7e4c3daab053816c662fc148", "evidenceSha256": "61cdf155dc8b04e416a7908cb8ed186525c063fbae69d322be93113234be3bd1" },
+    "dnsReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "metricsSecretReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "releaseCredentialReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "githubEnvironmentReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null }
+  },
+  "owners": {
+    "monitoring": "william-dickens",
+    "privacy": "william-dickens",
+    "incidentResponse": "william-dickens",
+    "femaCoordination": "william-dickens",
+    "secretCustody": "william-dickens",
+    "rollback": "william-dickens"
+  }
+}
