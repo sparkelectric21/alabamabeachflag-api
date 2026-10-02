@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,6 +9,7 @@ const run = (args: string[]) => spawnSync(process.execPath, args, { encoding: "u
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 function completeEvidence(manifest: any, phase: "disabled-baseline" | "passive-ingestion") {
 	for (const [key, item] of Object.entries(manifest.evidence) as Array<[string, any]>) {
+		if (item.status === "verified") continue;
 		item.status = "verified";
 		item.packetSha256 = sha256(`${phase}:packet:${key}`);
 		item.evidenceSha256 = sha256(`${phase}:${key}:${item.packetSha256}`);
@@ -41,6 +42,38 @@ describe("production release governance", () => {
 	it("rejects credential exposure before deployment", () => {
 		const result = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].steps[4].env = { CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}" }; }));
 		expect(result.status).toBe(1); expect(result.stderr).toContain("deployment credential is exposed before deployment");
+	});
+	it("requires the metrics secret only on the atomic deployment step", () => {
+		const missing = governance((directory) => mutateRelease(directory, (workflow) => { delete workflow.jobs["deploy-disabled-baseline"].steps[8].env.IPAWS_METRICS_READ_TOKEN; }));
+		expect(missing.status).toBe(1); expect(missing.stderr).toContain("metrics secret must be scoped only to the deployment step");
+		const early = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].steps[4].env = { IPAWS_METRICS_READ_TOKEN: "${{ secrets.IPAWS_METRICS_READ_TOKEN }}" }; }));
+		expect(early.status).toBe(1); expect(early.stderr).toContain("metrics secret must not be exposed outside deployment");
+		const extra = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].steps[8].env.UNREVIEWED_SECRET = "${{ secrets.UNREVIEWED_SECRET }}"; }));
+		expect(extra.status).toBe(1); expect(extra.stderr).toContain("deployment step environment has unapproved properties");
+	});
+	it("uploads the metrics secret atomically without exposing it to Wrangler's environment and removes the temporary file", () => {
+		const scratch = mkdtempSync(resolve(tmpdir(), "ipaws-deploy-wrapper-"));
+		const deployedVersionFile = "/tmp/ipaws-production-deployed-version";
+		try {
+			mkdirSync(resolve(scratch, "scripts")); mkdirSync(resolve(scratch, "node_modules/.bin"), { recursive: true });
+			copyFileSync("scripts/deploy-ipaws-production-disabled-baseline.mjs", resolve(scratch, "scripts/deploy-ipaws-production-disabled-baseline.mjs"));
+			const fakeWrangler = resolve(scratch, "node_modules/.bin/wrangler");
+			writeFileSync(fakeWrangler, `#!/usr/bin/env node\nimport { readFileSync, statSync, writeFileSync } from "node:fs";\nconst index = process.argv.indexOf("--secrets-file");\nconst secretFile = process.argv[index + 1];\nconst parsed = JSON.parse(readFileSync(secretFile, "utf8"));\nwriteFileSync(process.env.IPAWS_DEPLOY_TEST_CAPTURE, JSON.stringify({ args: process.argv.slice(2), secretFile, mode: statSync(secretFile).mode & 0o777, tokenBytes: Buffer.byteLength(parsed.IPAWS_METRICS_READ_TOKEN), envExposed: process.env.IPAWS_METRICS_READ_TOKEN !== undefined }));\nconsole.log("Current Version ID: 11111111-1111-4111-8111-111111111111");\n`);
+			chmodSync(fakeWrangler, 0o700);
+			const capture = resolve(scratch, "capture.json");
+			const secret = "s".repeat(32);
+			const result = spawnSync(process.execPath, [resolve(scratch, "scripts/deploy-ipaws-production-disabled-baseline.mjs")], { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, APPROVED_COMMIT: "a".repeat(40), IPAWS_METRICS_READ_TOKEN: secret, IPAWS_DEPLOY_TEST_CAPTURE: capture } });
+			expect(result.status).toBe(0); expect(result.stdout).not.toContain(secret); expect(result.stderr).not.toContain(secret);
+			const observed = JSON.parse(readFileSync(capture, "utf8"));
+			expect(observed.args).toContain("--secrets-file"); expect(observed.mode).toBe(0o600); expect(observed.tokenBytes).toBe(32); expect(observed.envExposed).toBe(false);
+			expect(existsSync(observed.secretFile)).toBe(false);
+		} finally { rmSync(scratch, { recursive: true, force: true }); rmSync(deployedVersionFile, { force: true }); }
+	});
+	it("refuses a missing or short metrics secret before invoking Wrangler", () => {
+		for (const secret of ["", "short"]) {
+			const result = spawnSync(process.execPath, ["scripts/deploy-ipaws-production-disabled-baseline.mjs"], { encoding: "utf8", env: { ...process.env, APPROVED_COMMIT: "a".repeat(40), IPAWS_METRICS_READ_TOKEN: secret } });
+			expect(result.status).toBe(1); expect(result.stderr).toBe("metrics_secret_invalid\n");
+		}
 	});
 	it("requires the final immutable-tree recheck", () => {
 		const result = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].steps[6].run = "true"; }));

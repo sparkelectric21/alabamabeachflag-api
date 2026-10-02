@@ -16,7 +16,7 @@ for (const name of files) fail(!allowedWorkflowNames.has(name), `unreviewed work
 let workflow;
 try {
 	const releaseSource = readFileSync(resolve(workflowDirectory, releaseName), "utf8");
-	fail(createHash("sha256").update(releaseSource).digest("hex") !== "8ee013bb824ddd5463de4fc558103dcf4eb96c129a97b9a45638adb882b096f1", "manual release workflow differs byte-for-byte from the reviewed definition");
+	fail(createHash("sha256").update(releaseSource).digest("hex") !== "913362661a84d9390aab3261de025b82a4babb9ab3a39940551a0298dd39e59c", "manual release workflow differs byte-for-byte from the reviewed definition");
 	workflow = JSON.parse(releaseSource);
 } catch { failures.push(`missing or non-canonical manual release workflow: ${releaseName}`); }
 
@@ -49,11 +49,15 @@ if (workflow) {
 		fail(!allText.includes(required), `release workflow is missing required gate: ${required}`);
 	const deploy = job?.steps?.[8], verify = job?.steps?.[9];
 	fail(deploy?.run !== "node scripts/deploy-ipaws-production-disabled-baseline.mjs", "live deployment command differs from the reviewed command");
+	exactKeys(deploy?.env, ["CLOUDFLARE_API_TOKEN", "IPAWS_METRICS_READ_TOKEN"], "deployment step environment");
+	fail(deploy?.env?.IPAWS_METRICS_READ_TOKEN !== "${{ secrets.IPAWS_METRICS_READ_TOKEN }}", "metrics secret must be scoped only to the deployment step");
 	fail(verify?.run !== "node scripts/verify-ipaws-production-deployment.mjs --version-file=/tmp/ipaws-production-deployed-version --approved-commit=${APPROVED_COMMIT}", "post-deployment verification command differs from the reviewed command");
+	exactKeys(verify?.env, ["CLOUDFLARE_API_TOKEN"], "verification step environment");
 	for (const [index, step] of (job?.steps ?? []).entries()) {
 		const token = step.env?.CLOUDFLARE_API_TOKEN;
 		fail(index < 8 && token !== undefined, "deployment credential is exposed before deployment");
 		fail(index >= 8 && token !== "${{ secrets.CLOUDFLARE_API_TOKEN }}", "deployment credential must be scoped to deploy and verification steps");
+		fail(index !== 8 && step.env?.IPAWS_METRICS_READ_TOKEN !== undefined, "metrics secret must not be exposed outside deployment");
 	}
 }
 

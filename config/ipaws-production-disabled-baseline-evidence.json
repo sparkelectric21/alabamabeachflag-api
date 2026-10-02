@@ -1,21 +1,21 @@
 {
   "schemaVersion": 2,
   "phase": "disabled-baseline",
-  "configurationSha256": "d40e96d590885d27c5ed0dca2afd1ddecd8327d00d4ea45d21a5e48e0564258c",
+  "configurationSha256": "e2e454cc0420bad47339076aa493e9f0365cc0809a0d8a17abbed76d89d21479",
   "evidence": {
     "independentTechnicalReview": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
     "resourceIsolation": { "status": "verified", "packetSha256": "f4860c69524855505285c2c738e3990b698ee046f225450df9e18afa5da93186", "evidenceSha256": "50d96536193e634d7ca4696799831f2ce006fde3d4c79e3b21de16dba7ce97b4" },
     "automaticDeploymentGovernance": { "status": "verified", "packetSha256": "083ead98214b34d737a58208abfa7af0191969174d11ea6b7a75037dbd6f1f35", "evidenceSha256": "17474d354eaa0d64405a566bf20e4e688e857142668482a424a5962a5fad5c4b" },
     "dedicatedKvIdentity": { "status": "verified", "packetSha256": "8aa4ba31842acba3ea9ac1701b16a90e9026319a33efe3f496ca6f667079cf3f", "evidenceSha256": "1dacbb4ff1830639cbd90e0a4eb06d8c717a80c2bb25c81e850bdf8c2cd5a20f" },
     "proposedResourceIdentities": { "status": "verified", "packetSha256": "5be8323ce1a08c019981af50ac95602552fbd566b83eb43f03eeabda4e5a15a9", "evidenceSha256": "74fc4dddff8db5737c3be2bbebf32c6c73f95b25d67f864aeffb59ba80e597a4" },
-    "disabledCapabilityBaseline": { "status": "verified", "packetSha256": "d40e96d590885d27c5ed0dca2afd1ddecd8327d00d4ea45d21a5e48e0564258c", "evidenceSha256": "a168fafe3c91e933c5715e4753bc9339d5eaf04660a59dd6b4cdaafdfe4385d7" },
+    "disabledCapabilityBaseline": { "status": "verified", "packetSha256": "e2e454cc0420bad47339076aa493e9f0365cc0809a0d8a17abbed76d89d21479", "evidenceSha256": "d40a45d84d6a65e5d5c02ea7fdc32c63df575a30e293fa25cd80bc88537b1a68" },
     "inertPreRoutingResponse": { "status": "verified", "packetSha256": "3fd435f6ff724dc7dac92d2990284872e17aa4198b3a65f1b9110c4e7bb2b5a3", "evidenceSha256": "2a4c6d038853f50b320fd16f2b4c3b014bcb84e867f53c5293a23691dd7594d6" },
-    "analyticsAccess": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "analyticsAccess": { "status": "verified", "packetSha256": "ab0dfcb720e478521d3f7975badaa214e24baf59bc02a4707a05b711bf7cbc29", "evidenceSha256": "5b38de0b95c40ad7b09358c9571a4c2fb2113dce9b92c30a84d8b97ced9f76a2" },
     "rollbackAndVerificationPlan": { "status": "verified", "packetSha256": "766c6dc1318f2ea94fdd6a3227c057cf9748be6c7e4c3daab053816c662fc148", "evidenceSha256": "61cdf155dc8b04e416a7908cb8ed186525c063fbae69d322be93113234be3bd1" },
-    "dnsReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
+    "dnsReadiness": { "status": "verified", "packetSha256": "a5b5356040b5576bfe16d5c5b601031966be5e6a15358b2e0588c25b5bdcebca", "evidenceSha256": "4ec11404326db69e6635f158e64de7c97a9866689530c05515534297a6e73c82" },
     "metricsSecretReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
-    "releaseCredentialReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
-    "githubEnvironmentReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null }
+    "releaseCredentialReadiness": { "status": "verified", "packetSha256": "898aeaf52d25f67bc92debd7b023196f099538e8cce6854fcf717e2cfc2e5474", "evidenceSha256": "c8ffc75f9beb1d66bb11c8adab2fb87bea8ad4263e43044849d63663a1251fb1" },
+    "githubEnvironmentReadiness": { "status": "verified", "packetSha256": "210c8019c614009f0b62aa8f709128a649c4413de247ce9ff32a7d5fedb48d50", "evidenceSha256": "edd2933517f5ce077ae5fdadbd7b4af420493b073b09fe08f33c86814373c014" }
   },
   "owners": {
     "monitoring": "william-dickens",

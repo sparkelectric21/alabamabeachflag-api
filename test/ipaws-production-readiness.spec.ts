@@ -228,6 +228,7 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { delete config.durable_objects; }).status).toBe(1);
 		expect(runPolicy((config) => { delete config.observability; }).status).toBe(1);
 		expect(runPolicy((config) => { config.analytics_engine_datasets = [{ binding: "UNREVIEWED" }]; }).status).toBe(1);
+		expect(runPolicy((config) => { delete config.secrets; }).status).toBe(1);
 	});
 
 	it("rejects every unreviewed nested binding, route, and migration property", () => {
@@ -235,6 +236,8 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { config.durable_objects.bindings[0].script_name = "another-worker"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.migrations[0].deleted_classes = ["OtherClass"]; }).status).toBe(1);
 		expect(runPolicy((config) => { config.routes[0].custom_domain = true; }).status).toBe(1);
+		expect(runPolicy((config) => { config.secrets.required.push("UNREVIEWED_SECRET"); }).status).toBe(1);
+		expect(runPolicy((config) => { config.secrets.extra = true; }).status).toBe(1);
 		expect(generalMigrationTag).toBeTruthy();
 		expect(runPolicy((config) => { config.migrations[0].tag = generalMigrationTag; }).status).toBe(1);
 	});

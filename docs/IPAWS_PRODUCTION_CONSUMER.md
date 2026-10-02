@@ -90,7 +90,7 @@ FEMA's current redistribution guidance requires no IPAWS Users Portal applicatio
 - dedicated production Worker name, KV namespace ID, route/zone, endpoint, and Durable Object ownership;
 - William Dickens is the Cloudflare account operator authorized to deploy and roll back;
 - a secret binding named `IPAWS_METRICS_READ_TOKEN` containing a newly generated value of at least 32 bytes;
-- a read-only Cloudflare API token with `Account Analytics: Read`, its custodian, and expiry/rotation owner;
+- verified aggregate Cloudflare analytics access for the operator; a separate read-only API token with `Account Analytics: Read` remains required before automated denominator collection;
 - William Dickens owns monitoring, privacy, incident response, FEMA coordination, secret custody, and rollback; no separate GitHub-account reviewer is required;
 - confirmation whether authenticated JSON arrays, scalar JSON, or opaque text are expected auxiliary FEMA messages.
 
@@ -102,7 +102,7 @@ Reviewed isolated resource identities:
 - hostname: `ipaws.alabamabeachflag.com`
 - callback: `https://ipaws.alabamabeachflag.com/v1/ipaws/pubsub`
 
-The Worker, hostname, route, and Durable Object namespace do not yet exist. Creating the empty KV namespace was the only Cloudflare resource write in this preparation phase. DNS, route creation, the Worker and its Durable Object migration, secrets, and all FEMA/AWS subscription state remain unprovisioned.
+The Worker, route, and Durable Object namespace do not yet exist. The dedicated empty KV namespace and a proxied, non-serving AAAA record for the hostname exist. The DNS record targets the documented Worker-only placeholder `100::` and returns no application origin before a route exists. Worker creation, route creation, migration application, secrets, and all FEMA/AWS subscription state remain unprovisioned.
 
 ## Phase-specific evidence gates
 
@@ -120,11 +120,12 @@ The release model has two explicit phases. A consumer/effects phase is reserved 
 
 1. Reconfirm the reviewed identifiers in `wrangler.ipaws.production.jsonc` and verify that no staging or general-production identifier is reused.
 2. Keep the TopicArn allowlist empty and keep `IPAWS_INGESTION_ENABLED`, `IPAWS_AUTO_CONFIRM_SUBSCRIPTION`, `IPAWS_NOTIFICATIONS_ENABLED`, and `IPAWS_DOWNSTREAM_EFFECTS_ENABLED` set to `false`.
-3. The dedicated KV namespace already exists and is empty. Provisioning the Worker, route/DNS, metrics secret, and dedicated SQLite Durable Object namespace remains a separate authorized change.
+3. The dedicated KV namespace already exists and is empty. The proxied placeholder DNS record exists but has no Worker route. Provisioning the Worker route, metrics secret, and dedicated SQLite Durable Object namespace remains a separate authorized change.
 4. Run the full Node.js 24 suite, all declaration checks, `npm run validate:ipaws-production-deploy`, audits, and the production-template dry run.
 5. Review resolved dry-run bindings against the approved inventory. Verify the staging config contains none of the production identifiers.
-6. After explicit approval, deploy the disabled baseline with `wrangler deploy`; a new Durable Object lifecycle migration cannot be introduced with `wrangler versions upload`.
-7. Record the resulting version as the production IPAWS rollback target before uploading any enabled candidate.
+6. Before explicit deployment approval, create `IPAWS_METRICS_READ_TOKEN` as a protected GitHub environment secret with at least 32 random bytes. Do not use `wrangler secret put`, because Cloudflare documents that it immediately deploys a new Worker version. The reviewed workflow supplies the secret through a mode-0600 temporary `--secrets-file` during the same first `wrangler deploy` that creates the disabled Worker and applies its Durable Object migration, removes the temporary file in a `finally` block, and refuses to invoke Wrangler when the secret is absent or too short.
+7. After explicit approval, deploy the disabled baseline with that atomic secret upload; a new Durable Object lifecycle migration cannot be introduced with `wrangler versions upload`.
+8. Record the resulting version as the production IPAWS rollback target before uploading any enabled candidate.
 
 ## Independent analytics denominator
 

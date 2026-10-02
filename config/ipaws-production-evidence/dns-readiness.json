@@ -1,0 +1,10 @@
+{
+  "observedAtUtc": "2026-10-02T20:15:00Z",
+  "hostname": "ipaws.alabamabeachflag.com",
+  "recordType": "AAAA",
+  "placeholderOrigin": "100::",
+  "proxied": true,
+  "workerRoutePresent": false,
+  "applicationServing": false,
+  "observedHttpStatus": 522
+}
