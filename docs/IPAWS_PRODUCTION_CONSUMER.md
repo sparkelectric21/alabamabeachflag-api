@@ -4,6 +4,8 @@ This is a design contract, not an enabled production path. The staging receiver 
 
 `wrangler.ipaws.production.jsonc` is an inert repository template, not an approved deployment configuration. Its Worker, KV, route, endpoint, and TopicArn values are recognizable placeholders. `npm run validate:ipaws-production-deploy` must fail until an operator replaces every placeholder with independently verified production identifiers. The initial baseline must keep ingestion, automatic subscription confirmation, notifications, and downstream effects set to `false` and must contain no queue, email, service, D1, R2, AI, or asset binding.
 
+Production release governance, the automatic-deployment incident, and the manual disabled-baseline workflow are documented in `IPAWS_PRODUCTION_RELEASE_GOVERNANCE.md`. Until the live Cloudflare Workers Builds trigger is separately reviewed and changed, merging to `main` is itself a production deployment and is prohibited for IPAWS readiness work.
+
 ## Contract and authorization boundary
 
 The production receiver should emit a versioned immutable envelope only after SNS validation and CAP parsing:
@@ -74,6 +76,8 @@ The authorizer should default deny. It must validate the approved FEMA feed, pro
 - Reconciliation detects each modeled Durable Object/KV/queue partial failure.
 
 The repository provides deterministic lifecycle projection, per-lineage default-deny authorization from a strongly consistent transactional snapshot, a transactional ledger contract for inbox/version/projection/effect-decision writes, and relationship-based reconciliation in `src/ipaws/production-lifecycle.ts`. Every modeled effect decision carries explicit inbox, immutable-version, and lineage references so missing, orphaned, duplicate, and terminally inconsistent decisions can be detected without comparing unrelated key spaces. This module is modeled and tested but is not called by the receiver runtime. These are prerequisites, not an enabled consumer: a strongly consistent production store and its binding still require separate approval, provisioning, and integration. The stored “effect” is only an idempotent authorization-decision record; no user-facing transport is implemented.
+
+The lifecycle ledger is not required for the isolated disabled baseline or for a later passive receiver that only authenticates and retains input while all effects remain disabled. It becomes mandatory before any consumer authorization decision, queue/outbox publication, notification, or downstream effect is enabled.
 
 ## Required operator and FEMA inputs
 

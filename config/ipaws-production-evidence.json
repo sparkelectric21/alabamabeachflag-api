@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "configurationSha256": null,
+  "evidence": {
+    "femaProductionContract": { "status": "unverified", "evidenceSha256": null },
+    "snsSubscriptionAndDeliveryPolicy": { "status": "unverified", "evidenceSha256": null },
+    "auxiliaryMessageFormats": { "status": "unverified", "evidenceSha256": null },
+    "cloudflareResourceIsolation": { "status": "unverified", "evidenceSha256": null },
+    "cloudflareBuildsGovernance": { "status": "unverified", "evidenceSha256": null },
+    "analyticsAccess": { "status": "unverified", "evidenceSha256": null },
+    "independentSecurityReview": { "status": "unverified", "evidenceSha256": null }
+  },
+  "owners": {
+    "monitoring": null,
+    "privacy": null,
+    "incidentResponse": null,
+    "femaCoordination": null,
+    "secretCustody": null,
+    "rollback": null
+  }
+}
