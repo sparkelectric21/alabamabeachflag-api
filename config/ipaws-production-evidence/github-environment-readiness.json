@@ -1,6 +1,6 @@
 {
-  "observedAtUtc": "2026-10-02T21:43:00Z",
-  "environment": "ipaws-production",
+  "observedAtUtc": "2026-10-02T22:33:11Z",
+  "environment": "ipaws-production-release",
   "deploymentBranches": ["main"],
   "secretNames": ["CLOUDFLARE_API_TOKEN", "IPAWS_METRICS_READ_TOKEN"],
   "variableNames": ["CLOUDFLARE_ACCOUNT_ID"],

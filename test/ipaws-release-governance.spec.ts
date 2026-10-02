@@ -14,6 +14,7 @@ const packetFiles: Record<string, string> = {
 	metricsSecretReadiness: "config/ipaws-production-evidence/metrics-secret-readiness.json",
 	releaseCredentialReadiness: "config/ipaws-production-evidence/release-credential-readiness.json",
 	githubEnvironmentReadiness: "config/ipaws-production-evidence/github-environment-readiness.json",
+	runnerDiagnostic: "config/ipaws-production-evidence/runner-diagnostic.json",
 };
 function completeEvidence(manifest: any, phase: "disabled-baseline" | "passive-ingestion") {
 	for (const [key, item] of Object.entries(manifest.evidence) as Array<[string, any]>) {
@@ -75,7 +76,7 @@ describe("production release governance", () => {
 			"environment", "generation", "minimumRandomBytes", "observedAtUtc", "secretName", "secretValueRetainedInRepository", "secretValueRetrievedForVerification", "storedAs", "workflowDispatched",
 		].sort());
 		expect(readiness).toMatchObject({
-			environment: "ipaws-production", secretName: "IPAWS_METRICS_READ_TOKEN", minimumRandomBytes: 32,
+			environment: "ipaws-production-release", secretName: "IPAWS_METRICS_READ_TOKEN", minimumRandomBytes: 32,
 			secretValueRetainedInRepository: false, secretValueRetrievedForVerification: false, workflowDispatched: false,
 		});
 		expect(readinessSource).not.toMatch(/secret(Value|Hash|Digest|Sha256)\s*":\s*"/i);
@@ -99,6 +100,11 @@ describe("production release governance", () => {
 			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.releaseEnableGatePresent = true; }],
 			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.workflowDispatched = true; }],
 			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.extra = "bypass"; }],
+			["releaseCredentialReadiness", "release-credential-readiness.json", (packet) => { packet.permissions.push("KV Storage:Edit"); }],
+			["releaseCredentialReadiness", "release-credential-readiness.json", (packet) => { packet.expiresOn = "2027-10-09"; }],
+			["releaseCredentialReadiness", "release-credential-readiness.json", (packet) => { packet.tokenValueRetrievedForVerification = true; }],
+			["runnerDiagnostic", "runner-diagnostic.json", (packet) => { packet.laterStepsExecuted = true; }],
+			["runnerDiagnostic", "runner-diagnostic.json", (packet) => { packet.failureClass = "unknown"; }],
 		];
 		for (const [key, filename, mutate] of cases) {
 			const scratch = mkdtempSync(resolve(tmpdir(), "readiness-semantics-"));
