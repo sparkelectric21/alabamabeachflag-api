@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const mode = process.argv.includes("--deploy") ? "deploy" : "template";
 const argument = (name, fallback) => process.argv.find((item) => item.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
+const phase = argument("phase", "disabled-baseline");
 const stagingFilename = argument("staging-config", "wrangler.ipaws.staging.jsonc");
 const productionFilename = argument("production-config", "wrangler.ipaws.production.jsonc");
 const generalFilename = argument("general-config", "wrangler.jsonc");
@@ -35,6 +36,7 @@ const production = parseJsonc(productionFilename);
 const general = parseJsonc(generalFilename);
 const failures = [];
 const fail = (condition, message) => { if (condition) failures.push(message); };
+fail(!["disabled-baseline", "passive-ingestion"].includes(phase), "deployment phase must be disabled-baseline or passive-ingestion");
 const rejectUnknownKeys = (value, allowed, label) => {
 	for (const key of Object.keys(value ?? {})) fail(!allowed.has(key), `unapproved ${label} property: ${key}`);
 };
@@ -120,9 +122,9 @@ for (const variable of requiredVariables) {
 }
 fail(production.config.vars?.IPAWS_ENVIRONMENT !== "production", "production environment marker must be production");
 fail(staging.config.vars?.IPAWS_ENVIRONMENT !== "staging", "staging environment marker must be staging");
-for (const name of ["IPAWS_INGESTION_ENABLED", "IPAWS_AUTO_CONFIRM_SUBSCRIPTION", "IPAWS_NOTIFICATIONS_ENABLED", "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"]) {
-	fail(production.config.vars?.[name] !== "false", `${name} must be false in the initial production baseline`);
-}
+fail(production.config.vars?.IPAWS_INGESTION_ENABLED !== (phase === "passive-ingestion" ? "true" : "false"), `IPAWS_INGESTION_ENABLED must match the ${phase} phase`);
+for (const name of ["IPAWS_AUTO_CONFIRM_SUBSCRIPTION", "IPAWS_NOTIFICATIONS_ENABLED", "IPAWS_DOWNSTREAM_EFFECTS_ENABLED"])
+	fail(production.config.vars?.[name] !== "false", `${name} must remain false in the ${phase} phase`);
 
 const placeholders = [];
 function findPlaceholders(value, path = "config") {
@@ -136,7 +138,8 @@ if (mode === "deploy") {
 	fail(placeholders.length > 0, `unresolved production placeholders: ${placeholders.join(", ")}`);
 	fail(!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(production.config.name ?? ""), "production Worker name is invalid");
 	fail(!/^[a-f0-9]{32}$/.test(productionKv ?? "") || /^0{32}$/.test(productionKv ?? ""), "production KV namespace ID must be a non-placeholder 32-character lowercase hexadecimal ID");
-	fail(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS !== "", "initial disabled production baseline must use an empty deny-all TopicArn allowlist");
+	if (phase === "disabled-baseline") fail(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS !== "", "disabled-baseline must use an empty deny-all TopicArn allowlist");
+	else fail(!/^arn:(?:aws|aws-us-gov):sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+$/.test(production.config.vars?.IPAWS_ALLOWED_TOPIC_ARNS ?? ""), "passive-ingestion must use exactly one structurally valid reviewed TopicArn");
 	try {
 		const endpoint = new URL(productionEndpoint);
 		const endpointInZone = endpoint.hostname === routeZone || endpoint.hostname.endsWith(`.${routeZone}`);
@@ -151,4 +154,4 @@ if (failures.length) {
 	console.error(failures.map((failure) => `- ${failure}`).join("\n"));
 	process.exit(1);
 }
-console.log(`IPAWS deployment policy passed (${mode}; ${placeholders.length} repository-template placeholders).`);
+console.log(`IPAWS deployment policy passed (${phase}; ${mode}; ${placeholders.length} repository-template placeholders).`);

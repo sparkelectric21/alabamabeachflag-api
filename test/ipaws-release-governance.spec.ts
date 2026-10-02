@@ -6,6 +6,14 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const run = (args: string[]) => spawnSync(process.execPath, args, { encoding: "utf8" });
+const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+function completeEvidence(manifest: any, phase: "disabled-baseline" | "passive-ingestion") {
+	for (const [key, item] of Object.entries(manifest.evidence) as Array<[string, any]>) {
+		item.status = "verified";
+		item.packetSha256 = sha256(`${phase}:packet:${key}`);
+		item.evidenceSha256 = sha256(`${phase}:${key}:${item.packetSha256}`);
+	}
+}
 function governance(mutate?: (directory: string) => void) {
 	const scratch = mkdtempSync(resolve(tmpdir(), "release-governance-"));
 	try { cpSync(".github/workflows", scratch, { recursive: true }); mutate?.(scratch); return run(["scripts/validate-production-release-governance.mjs", `--workflow-dir=${scratch}`]); }
@@ -44,7 +52,7 @@ describe("production release governance", () => {
 	it("emits only statuses even when configuration contains realistic identifiers", () => {
 		const scratch = mkdtempSync(resolve(tmpdir(), "inventory-"));
 		try {
-			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("ipaws-production-placeholder", "secret-worker-name").replace("00000000000000000000000000000000", "1234567890abcdef1234567890abcdef").replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:sensitive-topic"');
+			const config = readFileSync("wrangler.ipaws.production.jsonc", "utf8").replace("alabamabeachflag-ipaws-production", "secret-worker-name").replace("9c56e6dc43b14cf091ca8f7211123fca", "1234567890abcdef1234567890abcdef").replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:sensitive-topic"');
 			const path = resolve(scratch, "config.jsonc"); writeFileSync(path, config);
 			const result = run(["scripts/report-ipaws-production-inputs.mjs", `--config=${path}`]);
 			expect(result.status).toBe(0); expect(result.stdout).not.toMatch(/secret-worker-name|1234567890abcdef|sensitive-topic|arn:aws/);
@@ -56,18 +64,98 @@ describe("production release governance", () => {
 		expect(result.status).toBe(0);
 		expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
 	});
-	it("requires pinned verified evidence and assigned owners", () => {
+	it("keeps disabled-baseline and passive-ingestion evidence complete, distinct, and phase-bound", () => {
 		const template = run(["scripts/validate-ipaws-production-evidence.mjs"]); expect(template.status).toBe(0);
+		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion"]).status).toBe(1);
 		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]).status).toBe(1);
 		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-"));
 		try {
-			const evidence = JSON.parse(readFileSync("config/ipaws-production-evidence.json", "utf8"));
-			evidence.configurationSha256 = createHash("sha256").update(readFileSync("wrangler.ipaws.production.jsonc")).digest("hex");
-			for (const item of Object.values(evidence.evidence) as any[]) { item.status = "verified"; item.evidenceSha256 = "a".repeat(64); }
-			for (const key of Object.keys(evidence.owners)) evidence.owners[key] = `owner:${key}`;
-			const path = resolve(scratch, "evidence.json"); writeFileSync(path, JSON.stringify(evidence));
-			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete", `--evidence=${path}`]).status).toBe(0);
+			const configSource = readFileSync("wrangler.ipaws.production.jsonc", "utf8");
+			const baseline = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
+			baseline.configurationSha256 = sha256(configSource);
+			completeEvidence(baseline, "disabled-baseline");
+			const baselinePath = resolve(scratch, "baseline.json"); writeFileSync(baselinePath, JSON.stringify(baseline));
+			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=disabled-baseline", "--require-complete", `--evidence=${baselinePath}`]).status).toBe(0);
+
+			const passiveConfig = configSource.replace('"IPAWS_INGESTION_ENABLED": "false"', '"IPAWS_INGESTION_ENABLED": "true"').replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:reviewed-topic"');
+			const configPath = resolve(scratch, "passive.jsonc"); writeFileSync(configPath, passiveConfig);
+			const passive = JSON.parse(readFileSync("config/ipaws-production-passive-ingestion-evidence.json", "utf8"));
+			passive.configurationSha256 = sha256(passiveConfig);
+			completeEvidence(passive, "passive-ingestion");
+			passive.disabledBaseline.configurationSha256 = baseline.configurationSha256;
+			passive.disabledBaseline.evidenceManifestSha256 = sha256(readFileSync(baselinePath));
+			passive.disabledBaseline.deploymentPacketSha256 = sha256("verified-deployment-readback");
+			const deploymentPacket = sha256(`disabled-baseline-deployment:${passive.disabledBaseline.configurationSha256}:${passive.disabledBaseline.evidenceManifestSha256}:${passive.disabledBaseline.deploymentPacketSha256}`);
+			passive.evidence.disabledBaselineDeployment.packetSha256 = deploymentPacket;
+			passive.evidence.disabledBaselineDeployment.evidenceSha256 = sha256(`passive-ingestion:disabledBaselineDeployment:${deploymentPacket}`);
+			const passivePath = resolve(scratch, "passive.json"); writeFileSync(passivePath, JSON.stringify(passive));
+			const baselineConfigPath = resolve(scratch, "baseline.jsonc"); writeFileSync(baselineConfigPath, configSource);
+			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion", "--require-complete", `--config=${configPath}`, `--evidence=${passivePath}`, `--baseline-evidence=${baselinePath}`, `--baseline-config=${baselineConfigPath}`]).status).toBe(0);
+			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion", `--config=${configPath}`, `--evidence=${baselinePath}`]).status).toBe(1);
+			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=disabled-baseline", `--evidence=${passivePath}`]).status).toBe(1);
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
+	});
+	it("rejects invalid digests and not-applicable evidence markers", () => {
+		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-digest-"));
+		try {
+			const evidence = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
+			evidence.evidence.resourceIsolation.evidenceSha256 = "invalid";
+			const path = resolve(scratch, "evidence.json"); writeFileSync(path, JSON.stringify(evidence));
+			const result = run(["scripts/validate-ipaws-production-evidence.mjs", `--evidence=${path}`]);
+			expect(result.status).toBe(1); expect(result.stderr).toContain("not bound to its phase and requirement");
+			evidence.evidence.resourceIsolation = { status: "not-applicable", packetSha256: null, evidenceSha256: null };
+			writeFileSync(path, JSON.stringify(evidence));
+			expect(run(["scripts/validate-ipaws-production-evidence.mjs", `--evidence=${path}`]).status).toBe(1);
+		} finally { rmSync(scratch, { recursive: true, force: true }); }
+	});
+	it("rejects downgraded baseline prerequisites, owner drift, and evidence reuse", () => {
+		const scratch = mkdtempSync(resolve(tmpdir(), "phase-bypass-"));
+		try {
+			const baselineConfig = readFileSync("wrangler.ipaws.production.jsonc", "utf8");
+			const passiveConfig = baselineConfig.replace('"IPAWS_INGESTION_ENABLED": "false"', '"IPAWS_INGESTION_ENABLED": "true"').replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:reviewed-topic"');
+			const baselineConfigPath = resolve(scratch, "baseline.jsonc"); writeFileSync(baselineConfigPath, baselineConfig);
+			const passiveConfigPath = resolve(scratch, "passive.jsonc"); writeFileSync(passiveConfigPath, passiveConfig);
+			const originalBaseline = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
+			originalBaseline.configurationSha256 = sha256(baselineConfig); completeEvidence(originalBaseline, "disabled-baseline");
+			const originalPassive = JSON.parse(readFileSync("config/ipaws-production-passive-ingestion-evidence.json", "utf8"));
+			originalPassive.configurationSha256 = sha256(passiveConfig); completeEvidence(originalPassive, "passive-ingestion");
+			originalPassive.disabledBaseline.configurationSha256 = originalBaseline.configurationSha256;
+			originalPassive.disabledBaseline.deploymentPacketSha256 = sha256("verified-deployment-readback");
+			const check = (mutateBaseline: (value: any) => void, mutatePassive: (value: any) => void = () => undefined) => {
+				const baseline = structuredClone(originalBaseline); const passive = structuredClone(originalPassive);
+				mutateBaseline(baseline);
+				const baselinePath = resolve(scratch, "baseline-evidence.json"); writeFileSync(baselinePath, JSON.stringify(baseline));
+				passive.disabledBaseline.evidenceManifestSha256 = sha256(readFileSync(baselinePath));
+				const deploymentPacket = sha256(`disabled-baseline-deployment:${passive.disabledBaseline.configurationSha256}:${passive.disabledBaseline.evidenceManifestSha256}:${passive.disabledBaseline.deploymentPacketSha256}`);
+				passive.evidence.disabledBaselineDeployment.packetSha256 = deploymentPacket;
+				passive.evidence.disabledBaselineDeployment.evidenceSha256 = sha256(`passive-ingestion:disabledBaselineDeployment:${deploymentPacket}`);
+				mutatePassive(passive);
+				const passivePath = resolve(scratch, "passive-evidence.json"); writeFileSync(passivePath, JSON.stringify(passive));
+				return run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion", "--require-complete", `--config=${passiveConfigPath}`, `--evidence=${passivePath}`, `--baseline-evidence=${baselinePath}`, `--baseline-config=${baselineConfigPath}`]);
+			};
+			expect(check((value) => { value.owners.monitoring = "another-owner"; }).status).toBe(1);
+			expect(check((value) => { delete value.owners.rollback; }).status).toBe(1);
+			expect(check((value) => { value.extra = true; }).status).toBe(1);
+			expect(check((value) => { value.evidence.resourceIsolation.extra = true; }).status).toBe(1);
+			expect(check((value) => { value.configurationSha256 = "c".repeat(64); }, (value) => { value.disabledBaseline.configurationSha256 = "c".repeat(64); }).status).toBe(1);
+			expect(check(() => undefined, (value) => { value.disabledBaseline.deploymentPacketSha256 = "d".repeat(64); }).status).toBe(1);
+			expect(check(() => undefined, (value) => {
+				value.evidence.femaProductionTopic.packetSha256 = value.evidence.awsPartitionAndRegion.packetSha256;
+				value.evidence.femaProductionTopic.evidenceSha256 = sha256(`passive-ingestion:femaProductionTopic:${value.evidence.femaProductionTopic.packetSha256}`);
+			}).status).toBe(1);
+			expect(check(() => undefined, (value) => {
+				value.evidence.femaProductionTopic.packetSha256 = originalBaseline.evidence.resourceIsolation.packetSha256;
+				value.evidence.femaProductionTopic.evidenceSha256 = sha256(`passive-ingestion:femaProductionTopic:${value.evidence.femaProductionTopic.packetSha256}`);
+			}).status).toBe(1);
+		} finally { rmSync(scratch, { recursive: true, force: true }); }
+	});
+	it("reports passive ingestion as blocked by an empty TopicArn and disabled ingestion", () => {
+		const result = run(["scripts/report-ipaws-production-inputs.mjs", "--phase=passive-ingestion", "--require-configured"]);
+		expect(result.status).toBe(1);
+		const report = JSON.parse(result.stdout);
+		expect(report.phase).toBe("passive-ingestion");
+		expect(report.configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
+		expect(report.safetyBaseline).toContainEqual({ field: "passive-ingestion.IPAWS_INGESTION_ENABLED", status: "unsafe" });
 	});
 });
 
@@ -84,7 +172,7 @@ describe("sanitized post-deployment verification", () => {
 				{ name: "IPAWS_METRICS_READ_TOKEN", type: "secret_text" },
 				...Object.entries(config.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
 			] } },
-			routes: { result: [{ script: "ipaws-production-placeholder", pattern: "ipaws-production.invalid/v1/ipaws/*" }] }, domains: { result: [] },
+			routes: { result: [{ script: "alabamabeachflag-ipaws-production", pattern: "ipaws.alabamabeachflag.com/v1/ipaws/*" }] }, domains: { result: [] },
 			"protected-durable-ids": ["staging-do", "general-production-do"],
 		};
 		change?.(docs); for (const [name, value] of Object.entries(docs)) writeFileSync(resolve(scratch, `${name}.json`), JSON.stringify(value)); return scratch;

@@ -192,7 +192,7 @@ describe("IPAWS deployment policy", () => {
 		config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "";
 		config.vars.IPAWS_PRODUCTION_ENDPOINT = "https://ipaws-production-test.example/v1/ipaws/pubsub";
 	}
-	function runPolicy(productionMutation?: (config: Record<string, any>) => void, stagingMutation?: (config: Record<string, any>) => void, deploy = false) {
+	function runPolicy(productionMutation?: (config: Record<string, any>) => void, stagingMutation?: (config: Record<string, any>) => void, deploy = false, phase = "disabled-baseline") {
 		const scratch = mkdtempSync(resolve(tmpdir(), "ipaws-policy-"));
 		try {
 			const staging = JSON.parse(readFileSync("wrangler.ipaws.staging.jsonc", "utf8").replace(/^\s*\/\/.*$/gm, ""));
@@ -201,13 +201,13 @@ describe("IPAWS deployment policy", () => {
 			productionMutation?.(production); stagingMutation?.(staging);
 			const stagingPath = resolve(scratch, "staging.json"); const productionPath = resolve(scratch, "production.json");
 			writeFileSync(stagingPath, JSON.stringify(staging)); writeFileSync(productionPath, JSON.stringify(production));
-			return spawnSync(process.execPath, ["scripts/validate-ipaws-deployment-policy.mjs", ...(deploy ? ["--deploy"] : []), `--staging-config=${stagingPath}`, `--production-config=${productionPath}`], { encoding: "utf8" });
+			return spawnSync(process.execPath, ["scripts/validate-ipaws-deployment-policy.mjs", ...(deploy ? ["--deploy"] : []), `--phase=${phase}`, `--staging-config=${stagingPath}`, `--production-config=${productionPath}`], { encoding: "utf8" });
 		} finally { rmSync(scratch, { recursive: true, force: true }); }
 	}
 
-	it("accepts the inert repository template but rejects unresolved real deployment", () => {
+	it("accepts the configured inert baseline in both template and deploy policy modes", () => {
 		expect(runPolicy().status).toBe(0);
-		expect(runPolicy(undefined, undefined, true).status).toBe(1);
+		expect(runPolicy(undefined, undefined, true).status).toBe(0);
 	});
 
 	it("rejects enabled baseline behavior and staging/production resource crossover", () => {
@@ -215,7 +215,7 @@ describe("IPAWS deployment policy", () => {
 		expect(runPolicy((config) => { config.kv_namespaces[0].id = "60f732dff736438bbb53edb2815059bb"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.vars.IPAWS_AUTO_CONFIRM_SUBSCRIPTION = "true"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.queues = { producers: [] }; }).status).toBe(1);
-		 expect(runPolicy(undefined, (config) => { config.name = "ipaws-production-placeholder"; }).status).toBe(1);
+		expect(runPolicy(undefined, (config) => { config.name = "alabamabeachflag-ipaws-production"; }).status).toBe(1);
 		expect(runPolicy((config) => { config.name = "alabamabeachflag-api"; }).status).toBe(1);
 		expect(generalKvId).toBeTruthy();
 		expect(runPolicy((config) => { config.kv_namespaces[0].id = generalKvId; }).status).toBe(1);
@@ -260,5 +260,27 @@ describe("IPAWS deployment policy", () => {
 	it("requires a deny-all TopicArn bootstrap and rejects invented or staged production allowlists", () => {
 		expect(runPolicy((config) => { resolveProduction(config); config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws:sns:us-east-1:111111111111:EAS_PUBLIC_FEED"; }, undefined, true).status).toBe(1);
 		expect(runPolicy((config) => { resolveProduction(config); config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws-us-gov:sns:us-gov-west-1:594897668655:EAS_PUBLIC_FEED"; }, undefined, true).status).toBe(1);
+	});
+
+	it("requires a reviewed nonempty TopicArn and explicit ingestion only in passive-ingestion", () => {
+		expect(runPolicy(undefined, undefined, true, "passive-ingestion").status).toBe(1);
+		const valid = runPolicy((config) => {
+			config.vars.IPAWS_INGESTION_ENABLED = "true";
+			config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws:sns:us-east-1:123456789012:reviewed-topic";
+		}, undefined, true, "passive-ingestion");
+		expect(valid.status).toBe(0);
+		expect(runPolicy((config) => {
+			config.vars.IPAWS_INGESTION_ENABLED = "true";
+			config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "";
+		}, undefined, true, "passive-ingestion").status).toBe(1);
+		expect(runPolicy((config) => {
+			config.vars.IPAWS_INGESTION_ENABLED = "true";
+			config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws:sns:us-east-1:123456789012:one,arn:aws:sns:us-east-1:123456789012:two";
+		}, undefined, true, "passive-ingestion").status).toBe(1);
+		expect(runPolicy((config) => {
+			config.vars.IPAWS_INGESTION_ENABLED = "true";
+			config.vars.IPAWS_ALLOWED_TOPIC_ARNS = "arn:aws:sns:us-east-1:123456789012:reviewed-topic";
+			config.vars.IPAWS_AUTO_CONFIRM_SUBSCRIPTION = "true";
+		}, undefined, true, "passive-ingestion").status).toBe(1);
 	});
 });

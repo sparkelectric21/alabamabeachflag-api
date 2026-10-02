@@ -6,7 +6,7 @@ The staging aggregate endpoint remains intended for controlled staging-soak use.
 
 ## Recommended decision
 
-Approve the staging receiver for continued staging use. Do not approve a production receiver solely from this review. Before production access, an independent security reviewer must explicitly accept the certificate trust model described below, the FEMA/AWS TopicArn and HTTP/S delivery policy must be recorded, and the production consumer boundary in `IPAWS_PRODUCTION_CONSUMER.md` must be implemented and reviewed.
+Approve the staging receiver for continued staging use. Do not approve passive production ingestion solely from this review. The inert disabled baseline may be deployed first so its fixed-503 endpoint can be supplied to FEMA, but only after its distinct pre-endpoint evidence gate passes. Before passive ingestion, an independent security reviewer must explicitly accept the certificate trust model described below, the FEMA/AWS TopicArn and HTTP/S delivery policy must be recorded in the passive-ingestion evidence phase, and the production consumer boundary in `IPAWS_PRODUCTION_CONSUMER.md` must be implemented and reviewed before any effects.
 
 ## Exact certificate trust model
 

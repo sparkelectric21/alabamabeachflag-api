@@ -16,7 +16,7 @@ for (const name of files) fail(!allowedWorkflowNames.has(name), `unreviewed work
 let workflow;
 try {
 	const releaseSource = readFileSync(resolve(workflowDirectory, releaseName), "utf8");
-	fail(createHash("sha256").update(releaseSource).digest("hex") !== "c7a97630a456b9e0aeaa8c432d7cae4f3996c3d398087ef2476ca578da961321", "manual release workflow differs byte-for-byte from the reviewed definition");
+	fail(createHash("sha256").update(releaseSource).digest("hex") !== "8ee013bb824ddd5463de4fc558103dcf4eb96c129a97b9a45638adb882b096f1", "manual release workflow differs byte-for-byte from the reviewed definition");
 	workflow = JSON.parse(releaseSource);
 } catch { failures.push(`missing or non-canonical manual release workflow: ${releaseName}`); }
 
