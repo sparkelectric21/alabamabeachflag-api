@@ -7,11 +7,21 @@ import { describe, expect, it } from "vitest";
 
 const run = (args: string[]) => spawnSync(process.execPath, args, { encoding: "utf8" });
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+const packetFiles: Record<string, string> = {
+	independentTechnicalReview: "config/ipaws-production-evidence/independent-review.json",
+	analyticsAccess: "config/ipaws-production-evidence/analytics-access.json",
+	dnsReadiness: "config/ipaws-production-evidence/dns-readiness.json",
+	metricsSecretReadiness: "config/ipaws-production-evidence/metrics-secret-readiness.json",
+	releaseCredentialReadiness: "config/ipaws-production-evidence/release-credential-readiness.json",
+	githubEnvironmentReadiness: "config/ipaws-production-evidence/github-environment-readiness.json",
+};
 function completeEvidence(manifest: any, phase: "disabled-baseline" | "passive-ingestion") {
 	for (const [key, item] of Object.entries(manifest.evidence) as Array<[string, any]>) {
 		if (item.status === "verified") continue;
 		item.status = "verified";
-		item.packetSha256 = sha256(`${phase}:packet:${key}`);
+		item.packetSha256 = phase === "disabled-baseline" && packetFiles[key]
+			? sha256(readFileSync(packetFiles[key]))
+			: sha256(`${phase}:packet:${key}`);
 		item.evidenceSha256 = sha256(`${phase}:${key}:${item.packetSha256}`);
 	}
 }
@@ -50,6 +60,53 @@ describe("production release governance", () => {
 		expect(early.status).toBe(1); expect(early.stderr).toContain("metrics secret must not be exposed outside deployment");
 		const extra = governance((directory) => mutateRelease(directory, (workflow) => { workflow.jobs["deploy-disabled-baseline"].steps[8].env.UNREVIEWED_SECRET = "${{ secrets.UNREVIEWED_SECRET }}"; }));
 		expect(extra.status).toBe(1); expect(extra.stderr).toContain("deployment step environment has unapproved properties");
+	});
+	it("records metrics-secret readiness without secret material or a self-referential commit", () => {
+		const readinessSource = readFileSync("config/ipaws-production-evidence/metrics-secret-readiness.json", "utf8");
+		const readiness = JSON.parse(readinessSource);
+		expect(Object.keys(readiness).sort()).toEqual([
+			"environment", "generation", "minimumRandomBytes", "observedAtUtc", "secretName", "secretValueRetainedInRepository", "secretValueRetrievedForVerification", "storedAs", "workflowDispatched",
+		].sort());
+		expect(readiness).toMatchObject({
+			environment: "ipaws-production", secretName: "IPAWS_METRICS_READ_TOKEN", minimumRandomBytes: 32,
+			secretValueRetainedInRepository: false, secretValueRetrievedForVerification: false, workflowDispatched: false,
+		});
+		expect(readinessSource).not.toMatch(/secret(Value|Hash|Digest|Sha256)\s*":\s*"/i);
+		const review = JSON.parse(readFileSync("config/ipaws-production-evidence/independent-review.json", "utf8"));
+		expect(review.exactCommitAcceptance).toBe("external-workflow-input-after-merge");
+		expect(review.reviewedHeadStoredInManifest).toBe(false);
+		expect(JSON.stringify(review)).not.toMatch(/[a-f0-9]{40}/);
+	});
+	it("rejects unsafe readiness semantics even when packet and evidence hashes are recomputed", () => {
+		const cases: Array<[string, string, (packet: any) => void]> = [
+			["independentTechnicalReview", "independent-review.json", (packet) => { packet.verdict = "changes-required"; }],
+			["independentTechnicalReview", "independent-review.json", (packet) => { packet.reviewedHeadStoredInManifest = true; }],
+			["metricsSecretReadiness", "metrics-secret-readiness.json", (packet) => { packet.minimumRandomBytes = 1; }],
+			["metricsSecretReadiness", "metrics-secret-readiness.json", (packet) => { packet.storedAs = "repository-file"; }],
+			["metricsSecretReadiness", "metrics-secret-readiness.json", (packet) => { packet.secretValueRetainedInRepository = true; }],
+			["metricsSecretReadiness", "metrics-secret-readiness.json", (packet) => { packet.secretValueRetrievedForVerification = true; }],
+			["metricsSecretReadiness", "metrics-secret-readiness.json", (packet) => { packet.workflowDispatched = true; }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.deploymentBranches = ["feature"]; }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.secretNames.push("UNREVIEWED_SECRET"); }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.variableNames.push("IPAWS_PRODUCTION_RELEASE_ENABLED"); }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.releaseEnableGatePresent = true; }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.workflowDispatched = true; }],
+			["githubEnvironmentReadiness", "github-environment-readiness.json", (packet) => { packet.extra = "bypass"; }],
+		];
+		for (const [key, filename, mutate] of cases) {
+			const scratch = mkdtempSync(resolve(tmpdir(), "readiness-semantics-"));
+			try {
+				const packetDirectory = resolve(scratch, "packets");
+				cpSync("config/ipaws-production-evidence", packetDirectory, { recursive: true });
+				const packetPath = resolve(packetDirectory, filename);
+				const packet = JSON.parse(readFileSync(packetPath, "utf8")); mutate(packet); writeFileSync(packetPath, `${JSON.stringify(packet, null, 2)}\n`);
+				const manifest = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
+				manifest.evidence[key].packetSha256 = sha256(readFileSync(packetPath));
+				manifest.evidence[key].evidenceSha256 = sha256(`disabled-baseline:${key}:${manifest.evidence[key].packetSha256}`);
+				const evidencePath = resolve(scratch, "evidence.json"); writeFileSync(evidencePath, JSON.stringify(manifest));
+				expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete", `--evidence=${evidencePath}`, `--packet-dir=${packetDirectory}`]).status).toBe(1);
+			} finally { rmSync(scratch, { recursive: true, force: true }); }
+		}
 	});
 	it("uploads the metrics secret atomically without exposing it to Wrangler's environment and removes the temporary file", () => {
 		const scratch = mkdtempSync(resolve(tmpdir(), "ipaws-deploy-wrapper-"));
@@ -100,7 +157,7 @@ describe("production release governance", () => {
 	it("keeps disabled-baseline and passive-ingestion evidence complete, distinct, and phase-bound", () => {
 		const template = run(["scripts/validate-ipaws-production-evidence.mjs"]); expect(template.status).toBe(0);
 		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion"]).status).toBe(1);
-		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]).status).toBe(1);
+		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]).status).toBe(0);
 		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-"));
 		try {
 			const configSource = readFileSync("wrangler.ipaws.production.jsonc", "utf8");

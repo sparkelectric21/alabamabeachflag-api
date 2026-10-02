@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const rawArgument = (name) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -13,8 +13,10 @@ const evidenceKeys = {
 };
 const evidencePacketFiles = {
 	"disabled-baseline": {
+		independentTechnicalReview: "config/ipaws-production-evidence/independent-review.json",
 		analyticsAccess: "config/ipaws-production-evidence/analytics-access.json",
 		dnsReadiness: "config/ipaws-production-evidence/dns-readiness.json",
+		metricsSecretReadiness: "config/ipaws-production-evidence/metrics-secret-readiness.json",
 		releaseCredentialReadiness: "config/ipaws-production-evidence/release-credential-readiness.json",
 		githubEnvironmentReadiness: "config/ipaws-production-evidence/github-environment-readiness.json",
 	},
@@ -25,6 +27,8 @@ const hex = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 if (!(phase in evidenceDefaults)) { console.error("- evidence phase must be disabled-baseline or passive-ingestion"); process.exit(1); }
 const file = (value) => resolve(root, value);
+const packetDirectory = rawArgument("packet-dir");
+const packetFile = (value) => packetDirectory ? resolve(packetDirectory, basename(value)) : file(value);
 const evidencePath = file(rawArgument("evidence") ?? evidenceDefaults[phase]);
 const configPath = file(rawArgument("config") ?? "wrangler.ipaws.production.jsonc");
 const evidenceSource = readFileSync(evidencePath);
@@ -44,6 +48,40 @@ for (let index = 0; index < configSource.length; index++) {
 const config = JSON.parse(json);
 const failures = [];
 const fail = (condition, message) => { if (condition) failures.push(message); };
+const exactProperties = (value, properties, name) => fail(!value || Object.keys(value).sort().join(",") !== [...properties].sort().join(","), `${name} contains unapproved properties`);
+
+function validateDisabledBaselinePacket(key, packet) {
+	if (key === "independentTechnicalReview") {
+		exactProperties(packet, ["reviewPhase", "scope", "reviewedAtUtc", "verdict", "exactCommitAcceptance", "reviewedHeadStoredInManifest"], "independent review packet");
+		fail(packet?.reviewPhase !== "disabled-baseline-final-evidence", "independent review phase is invalid");
+		fail(packet?.scope !== "configuration-evidence-governance-and-secret-readiness-contract", "independent review scope is invalid");
+		fail(packet?.verdict !== "approve", "independent review verdict must be approve");
+		fail(packet?.exactCommitAcceptance !== "external-workflow-input-after-merge", "exact-head acceptance must remain external");
+		fail(packet?.reviewedHeadStoredInManifest !== false, "review packet must not embed a reviewed head");
+		fail(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(packet?.reviewedAtUtc ?? ""), "independent review timestamp is invalid");
+	}
+	if (key === "metricsSecretReadiness") {
+		exactProperties(packet, ["observedAtUtc", "environment", "secretName", "generation", "minimumRandomBytes", "storedAs", "secretValueRetainedInRepository", "secretValueRetrievedForVerification", "workflowDispatched"], "metrics secret packet");
+		fail(packet?.environment !== "ipaws-production", "metrics secret environment is invalid");
+		fail(packet?.secretName !== "IPAWS_METRICS_READ_TOKEN", "metrics secret name is invalid");
+		fail(packet?.generation !== "cryptographically-secure-operating-system-randomness", "metrics secret generation method is invalid");
+		fail(!Number.isInteger(packet?.minimumRandomBytes) || packet.minimumRandomBytes < 32, "metrics secret must contain at least 32 random bytes");
+		fail(packet?.storedAs !== "protected-github-environment-secret", "metrics secret storage is invalid");
+		fail(packet?.secretValueRetainedInRepository !== false || packet?.secretValueRetrievedForVerification !== false, "metrics secret value must not be retained or retrieved");
+		fail(packet?.workflowDispatched !== false, "metrics readiness must not claim a workflow dispatch");
+		fail(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(packet?.observedAtUtc ?? ""), "metrics secret observation timestamp is invalid");
+	}
+	if (key === "githubEnvironmentReadiness") {
+		exactProperties(packet, ["observedAtUtc", "environment", "deploymentBranches", "secretNames", "variableNames", "releaseEnableGatePresent", "workflowDispatched"], "GitHub environment packet");
+		fail(packet?.environment !== "ipaws-production", "GitHub environment name is invalid");
+		fail(JSON.stringify(packet?.deploymentBranches) !== JSON.stringify(["main"]), "GitHub environment must be restricted to main");
+		fail(JSON.stringify([...(packet?.secretNames ?? [])].sort()) !== JSON.stringify(["CLOUDFLARE_API_TOKEN", "IPAWS_METRICS_READ_TOKEN"].sort()), "GitHub environment secret names are invalid");
+		fail(JSON.stringify(packet?.variableNames) !== JSON.stringify(["CLOUDFLARE_ACCOUNT_ID"]), "GitHub environment variable names are invalid");
+		fail(packet?.releaseEnableGatePresent !== false, "release-enable gate must remain absent");
+		fail(packet?.workflowDispatched !== false, "GitHub environment must not claim a workflow dispatch");
+		fail(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(packet?.observedAtUtc ?? ""), "GitHub environment observation timestamp is invalid");
+	}
+}
 
 function validateManifest(manifest, expectedPhase, complete, expectedConfigurationDigest) {
 	const allowedEvidence = new Set(evidenceKeys[expectedPhase]);
@@ -63,8 +101,12 @@ function validateManifest(manifest, expectedPhase, complete, expectedConfigurati
 		if (item?.status === "verified") {
 			fail(!hex(item.packetSha256), `${expectedPhase}.${key} verified evidence must contain a packet SHA-256`);
 			fail(item.evidenceSha256 !== hash(`${expectedPhase}:${key}:${item.packetSha256}`), `${expectedPhase}.${key} evidence is not bound to its phase and requirement`);
-			const packetFile = evidencePacketFiles[expectedPhase]?.[key];
-			if (packetFile) fail(item.packetSha256 !== hash(readFileSync(file(packetFile))), `${expectedPhase}.${key} packet digest does not match its reviewed repository evidence`);
+			const packetPath = evidencePacketFiles[expectedPhase]?.[key];
+			if (packetPath) {
+				const packetSource = readFileSync(packetFile(packetPath));
+				fail(item.packetSha256 !== hash(packetSource), `${expectedPhase}.${key} packet digest does not match its reviewed repository evidence`);
+				if (expectedPhase === "disabled-baseline") validateDisabledBaselinePacket(key, JSON.parse(packetSource));
+			}
 			fail(packets.has(item.packetSha256), `${expectedPhase} evidence packets must not be reused across requirements`);
 			packets.add(item.packetSha256);
 		}
