@@ -14,7 +14,7 @@
     "rollbackAndVerificationPlan": { "status": "verified", "packetSha256": "766c6dc1318f2ea94fdd6a3227c057cf9748be6c7e4c3daab053816c662fc148", "evidenceSha256": "61cdf155dc8b04e416a7908cb8ed186525c063fbae69d322be93113234be3bd1" },
     "dnsReadiness": { "status": "verified", "packetSha256": "a5b5356040b5576bfe16d5c5b601031966be5e6a15358b2e0588c25b5bdcebca", "evidenceSha256": "4ec11404326db69e6635f158e64de7c97a9866689530c05515534297a6e73c82" },
     "metricsSecretReadiness": { "status": "verified", "packetSha256": "08a8c0ace6e1567e8ed570760784c21a891b8c569fa8147153b0dfcc4c826656", "evidenceSha256": "9349ad3c46f5fa3eafedc9c5234aef8f6f7524c77a3bda68df1c54507d371806" },
-    "releaseCredentialReadiness": { "status": "verified", "packetSha256": "4b5f4c7b63c168536a23ffc2c1b53efe03550255efde7736f61430180967e56f", "evidenceSha256": "23df50822bbcf995a5d655416ba74747ab56da95bdb7d5cbbcc8a13ef0440bc7" },
+    "releaseCredentialReadiness": { "status": "unverified", "packetSha256": null, "evidenceSha256": null },
     "githubEnvironmentReadiness": { "status": "verified", "packetSha256": "cd2c26cc3b374e9dab53e10a7a224e11f3c518bda91acc7462b8a0c9c1aa330c", "evidenceSha256": "787ff806c8ed2d5a954975e4c4565a4e0099f4a611226aa1c93ff7d0284618bf" },
     "runnerDiagnostic": { "status": "verified", "packetSha256": "cd36f49b81e5f0c8dbcc20cabcc21030ebfbfc1ca6617612fa20c104e7fa6af4", "evidenceSha256": "75f3bb5e418c068e6f0cd30f3dd6401fed7e5cd07c68c388829c8ca743836da4" }
   },
