@@ -83,14 +83,18 @@ function validateDisabledBaselinePacket(key, packet) {
 		fail(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(packet?.observedAtUtc ?? ""), "GitHub environment observation timestamp is invalid");
 	}
 	if (key === "releaseCredentialReadiness") {
-		exactProperties(packet, ["observedAtUtc", "credentialName", "environment", "expiresOn", "accountScope", "zoneScope", "permissions", "excludedPermissions", "tokenValueRetainedInRepository", "tokenValueRetrievedForVerification"], "release credential packet");
+		exactProperties(packet, ["recordType", "observedAtUtc", "credentialName", "environment", "expiresOn", "expired", "replacementStatus", "replacementStatusAsOf", "accountScope", "zoneScope", "permissions", "excludedPermissions", "tokenValueRetainedInRepository", "tokenValueRetrievedForVerification"], "release credential packet");
+		fail(packet?.recordType !== "historical-expired-credential", "release credential packet must preserve the expired credential as historical evidence");
 		fail(packet?.credentialName !== "IPAWS production release bootstrap", "release credential name is invalid");
 		fail(packet?.environment !== "ipaws-production-release", "release credential environment is invalid");
 		fail(packet?.expiresOn !== "2026-10-09", "release credential expiration is invalid");
+		fail(packet?.expired !== true, "historical release credential must be marked expired");
+		fail(packet?.replacementStatus !== "unverified" || packet?.replacementStatusAsOf !== "2026-10-12", "replacement release credential status must remain unverified");
 		fail(packet?.accountScope !== "approved-cloudflare-account-only" || packet?.zoneScope !== "alabamabeachflag.com-only", "release credential resource scope is invalid");
 		fail(JSON.stringify(packet?.permissions) !== JSON.stringify(["Workers Scripts:Edit", "Workers Routes:Edit"]), "release credential permissions are invalid");
 		for (const permission of ["DNS:Edit", "KV Storage:Edit", "D1:Edit", "R2:Edit", "Queues:Edit", "Workers AI:Edit", "Billing:Edit", "Memberships:Edit", "Account Administration:Edit"]) fail(!packet?.excludedPermissions?.includes(permission), `release credential must exclude ${permission}`);
 		fail(packet?.tokenValueRetainedInRepository !== false || packet?.tokenValueRetrievedForVerification !== false, "release credential value must not be retained or retrieved");
+		fail(true, "expired historical credential cannot satisfy current release credential readiness");
 	}
 	if (key === "runnerDiagnostic") {
 		exactProperties(packet, ["observedAtUtc", "environment", "runId", "headSha", "runner", "checkoutCompleted", "stoppingStep", "failureClass", "laterStepsExecuted", "cloudflareCommandExecuted", "workflowDispatchedForDeployment"], "runner diagnostic packet");

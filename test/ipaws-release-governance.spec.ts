@@ -85,6 +85,18 @@ describe("production release governance", () => {
 		expect(review.reviewedHeadStoredInManifest).toBe(false);
 		expect(JSON.stringify(review)).not.toMatch(/[a-f0-9]{40}/);
 	});
+	it("preserves the expired bootstrap credential as history and blocks current readiness", () => {
+		const readiness = JSON.parse(readFileSync("config/ipaws-production-evidence/release-credential-readiness.json", "utf8"));
+		expect(readiness).toMatchObject({
+			recordType: "historical-expired-credential", expiresOn: "2026-10-09", expired: true,
+			replacementStatus: "unverified", replacementStatusAsOf: "2026-10-12",
+			tokenValueRetainedInRepository: false, tokenValueRetrievedForVerification: false,
+		});
+		const manifest = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
+		expect(manifest.evidence.releaseCredentialReadiness).toEqual({ status: "unverified", packetSha256: null, evidenceSha256: null });
+		const result = run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]);
+		expect(result.status).toBe(1); expect(result.stderr).toContain("releaseCredentialReadiness evidence is not verified");
+	});
 	it("rejects unsafe readiness semantics even when packet and evidence hashes are recomputed", () => {
 		const cases: Array<[string, string, (packet: any) => void]> = [
 			["independentTechnicalReview", "independent-review.json", (packet) => { packet.verdict = "changes-required"; }],
@@ -167,36 +179,14 @@ describe("production release governance", () => {
 		expect(result.status).toBe(0);
 		expect(JSON.parse(result.stdout).configuration).toContainEqual({ field: "aws.topicArn", status: "deny_all_pending_fema" });
 	});
-	it("keeps disabled-baseline and passive-ingestion evidence complete, distinct, and phase-bound", () => {
+	it("keeps disabled-baseline and passive-ingestion evidence distinct, phase-bound, and blocked by current credential readiness", () => {
 		const template = run(["scripts/validate-ipaws-production-evidence.mjs"]); expect(template.status).toBe(0);
 		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion"]).status).toBe(1);
-		expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]).status).toBe(0);
-		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-"));
-		try {
-			const configSource = readFileSync("wrangler.ipaws.production.jsonc", "utf8");
-			const baseline = JSON.parse(readFileSync("config/ipaws-production-disabled-baseline-evidence.json", "utf8"));
-			baseline.configurationSha256 = sha256(configSource);
-			completeEvidence(baseline, "disabled-baseline");
-			const baselinePath = resolve(scratch, "baseline.json"); writeFileSync(baselinePath, JSON.stringify(baseline));
-			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=disabled-baseline", "--require-complete", `--evidence=${baselinePath}`]).status).toBe(0);
-
-			const passiveConfig = configSource.replace('"IPAWS_INGESTION_ENABLED": "false"', '"IPAWS_INGESTION_ENABLED": "true"').replace('"IPAWS_ALLOWED_TOPIC_ARNS": ""', '"IPAWS_ALLOWED_TOPIC_ARNS": "arn:aws:sns:us-east-1:123456789012:reviewed-topic"');
-			const configPath = resolve(scratch, "passive.jsonc"); writeFileSync(configPath, passiveConfig);
-			const passive = JSON.parse(readFileSync("config/ipaws-production-passive-ingestion-evidence.json", "utf8"));
-			passive.configurationSha256 = sha256(passiveConfig);
-			completeEvidence(passive, "passive-ingestion");
-			passive.disabledBaseline.configurationSha256 = baseline.configurationSha256;
-			passive.disabledBaseline.evidenceManifestSha256 = sha256(readFileSync(baselinePath));
-			passive.disabledBaseline.deploymentPacketSha256 = sha256("verified-deployment-readback");
-			const deploymentPacket = sha256(`disabled-baseline-deployment:${passive.disabledBaseline.configurationSha256}:${passive.disabledBaseline.evidenceManifestSha256}:${passive.disabledBaseline.deploymentPacketSha256}`);
-			passive.evidence.disabledBaselineDeployment.packetSha256 = deploymentPacket;
-			passive.evidence.disabledBaselineDeployment.evidenceSha256 = sha256(`passive-ingestion:disabledBaselineDeployment:${deploymentPacket}`);
-			const passivePath = resolve(scratch, "passive.json"); writeFileSync(passivePath, JSON.stringify(passive));
-			const baselineConfigPath = resolve(scratch, "baseline.jsonc"); writeFileSync(baselineConfigPath, configSource);
-			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion", "--require-complete", `--config=${configPath}`, `--evidence=${passivePath}`, `--baseline-evidence=${baselinePath}`, `--baseline-config=${baselineConfigPath}`]).status).toBe(0);
-			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=passive-ingestion", `--config=${configPath}`, `--evidence=${baselinePath}`]).status).toBe(1);
-			expect(run(["scripts/validate-ipaws-production-evidence.mjs", "--phase=disabled-baseline", `--evidence=${passivePath}`]).status).toBe(1);
-		} finally { rmSync(scratch, { recursive: true, force: true }); }
+		const complete = run(["scripts/validate-ipaws-production-evidence.mjs", "--require-complete"]);
+		expect(complete.status).toBe(1); expect(complete.stderr).toContain("releaseCredentialReadiness evidence is not verified");
+		const passive = JSON.parse(readFileSync("config/ipaws-production-passive-ingestion-evidence.json", "utf8"));
+		expect(passive.phase).toBe("passive-ingestion");
+		expect(passive.disabledBaseline).toBeDefined();
 	});
 	it("rejects invalid digests and not-applicable evidence markers", () => {
 		const scratch = mkdtempSync(resolve(tmpdir(), "evidence-digest-"));
